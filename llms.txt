@@ -54,6 +54,18 @@ All via environment variables:
 2. Kubernetes: Kustomize manifests in deploy/kubernetes/
 3. Docker Compose: Remote deployment via WebSocket in deploy/docker-compose.yaml
 
+## For Beginners
+
+docs/getting-started.md is a complete 6-step tutorial for users new to Kubernetes:
+1. Sign up for Omni (free tier available for homelab)
+2. Prepare TrueNAS (check version, identify ZFS pool, create network bridge)
+3. Install the provider as a TrueNAS app
+4. Create MachineClasses and first Kubernetes cluster via Omni
+5. Install kubectl, download kubeconfig, verify nodes
+6. Deploy a test app (nginx) and access it via NodePort
+
+Includes: Windows/macOS/Linux instructions, inline troubleshooting at each step, hardware sizing guide, 13-question FAQ (cost, performance, disk usage, internet requirements, SSH, reboots), and a 20-term glossary (bridge, zvol, DHCP, kubeconfig, Helm, pod, etc.).
+
 ## Project Structure
 
 - cmd/omni-infra-provider-truenas/main.go: Entry point
@@ -76,7 +88,7 @@ All via environment variables:
 - docs/architecture.md: Detailed architecture with Mermaid diagrams
 - docs/troubleshooting.md: Common issues and solutions
 - docs/testing.md: Unit, integration, and E2E test setup
-- docs/getting-started.md: Beginner tutorial from NAS to running Kubernetes cluster (no prior experience needed)
+- docs/getting-started.md: Beginner tutorial from NAS to running Kubernetes cluster (no prior experience needed, includes Windows/macOS/Linux instructions, glossary, inline troubleshooting, FAQ)
 - docs/upgrading.md: Version upgrade guide and breaking changes
 - docs/provider-research.md: Internal research on all existing Omni provider implementations
 - docs/backlog.md: Feature roadmap

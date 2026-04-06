@@ -6,6 +6,8 @@ This file helps AI assistants guide users through setting up and operating the O
 
 A service that connects Sidero Omni (Kubernetes management platform) to TrueNAS SCALE (storage/virtualization). When a user creates or scales a Kubernetes cluster in Omni, this provider automatically creates Talos Linux VMs on TrueNAS SCALE. When machines are removed, it cleans them up.
 
+> **If the user is new to Kubernetes**, direct them to `docs/getting-started.md` first. It's a complete 6-step tutorial (NAS to running cluster) with Windows/macOS/Linux instructions, a glossary, inline troubleshooting, and an FAQ. The guide below is for users who already understand the concepts and just need setup reference.
+
 ## Before You Start — Prerequisites Checklist
 
 Walk the user through each of these before attempting deployment:
@@ -321,7 +323,7 @@ No breaking changes have been introduced from v0.1.0 through v0.7.0. Rolling bac
 ## For More Information
 
 - Full README: `README.md`
-- Beginner tutorial: `docs/getting-started.md` (NAS to Kubernetes, no prior experience needed)
+- Beginner tutorial: `docs/getting-started.md` (NAS to Kubernetes, no prior experience needed — Windows/macOS/Linux, glossary, inline troubleshooting, FAQ)
 - Architecture with diagrams: `docs/architecture.md`
 - Detailed troubleshooting: `docs/troubleshooting.md`
 - Upgrade guide: `docs/upgrading.md`
