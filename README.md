@@ -202,17 +202,19 @@ pool: "default"      # Optional. ZFS pool (defaults to DEFAULT_POOL)
 nic_attach: "br100"  # Optional. NIC target (defaults to DEFAULT_NIC_ATTACH)
 boot_method: "UEFI"  # Optional. UEFI or BIOS (defaults to UEFI)
 architecture: "amd64" # Optional. amd64 or arm64 (defaults to amd64)
+extensions:           # Optional. Additional Talos extensions beyond defaults
+  - "siderolabs/iscsi-tools"
 ```
 
 ### Talos System Extensions
 
-The provider automatically includes the `qemu-guest-agent` extension in every VM — it's required for hypervisor-to-guest communication. You do **not** need to add it manually.
+Every VM automatically includes these extensions — you do **not** need to add them:
 
-Additional Talos extensions (e.g., `nfs-utils`, `util-linux-tools`) are managed through **Omni's extension system**, not the provider or Talos config patches. The Omni SDK merges user-requested extensions with the provider's required ones when generating the image schematic.
+- `siderolabs/qemu-guest-agent` — hypervisor-to-guest communication
+- `siderolabs/nfs-utils` — NFS client support for storage
+- `siderolabs/util-linux-tools` — required for mount/block device operations
 
-To add extensions, use the Omni UI: **Cluster > select a machine set > Extensions** and pick the extensions you need.
-
-The resulting ISO schematic will contain both `qemu-guest-agent` (from provider) and any extensions you select (from Omni).
+To add more extensions (e.g., `iscsi-tools`), use the `extensions` field in the MachineClass config. These are merged with the defaults when generating the image schematic.
 
 ## Development
 

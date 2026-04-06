@@ -18,6 +18,13 @@ import (
 	"github.com/zclifton/omni-infra-provider-truenas/internal/resources"
 )
 
+// Default extensions included in every TrueNAS VM.
+var defaultExtensions = []string{
+	"siderolabs/qemu-guest-agent",
+	"siderolabs/nfs-utils",
+	"siderolabs/util-linux-tools",
+}
+
 // stepCreateSchematic generates a Talos image factory schematic ID.
 func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) error {
 	// Connection params include SideroLink endpoint and join token with encoded request ID.
@@ -25,9 +32,17 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 	// with WithEncodeRequestIDsIntoTokens), then pass them ourselves via WithExtraKernelArgs.
 	extraArgs := append([]string{"console=ttyS0"}, pctx.ConnectionParams.KernelArgs...)
 
+	// Merge default extensions with any extras from MachineClass config
+	var data Data
+	if err := pctx.UnmarshalProviderData(&data); err != nil {
+		return fmt.Errorf("failed to unmarshal provider data: %w", err)
+	}
+
+	extensions := append(defaultExtensions, data.Extensions...)
+
 	schematic, err := pctx.GenerateSchematicID(ctx, logger,
 		provision.WithExtraKernelArgs(extraArgs...),
-		provision.WithExtraExtensions("siderolabs/qemu-guest-agent"),
+		provision.WithExtraExtensions(extensions...),
 		provision.WithoutConnectionParams(),
 	)
 	if err != nil {

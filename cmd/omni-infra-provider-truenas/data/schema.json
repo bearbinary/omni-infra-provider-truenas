@@ -45,6 +45,12 @@
       "enum": ["amd64", "arm64"],
       "default": "amd64",
       "description": "CPU architecture"
+    },
+    "extensions": {
+      "type": "array",
+      "title": "Extra Extensions",
+      "items": { "type": "string" },
+      "description": "Additional Talos system extensions (e.g., siderolabs/iscsi-tools). qemu-guest-agent, nfs-utils, and util-linux-tools are always included."
     }
   },
   "required": [
