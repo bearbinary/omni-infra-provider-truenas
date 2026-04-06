@@ -1,0 +1,29 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+_out/
+*.exe
+/omni-infra-provider-truenas
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Environment / secrets
+.env
+.env.test
+config.yaml
+*.pem
+*.key
+
+# Claude Code
+.agents/
+.claude/
+skills-lock.json

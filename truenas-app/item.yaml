@@ -1,0 +1,11 @@
+categories:
+  - networking
+  - management
+icon_url: https://raw.githubusercontent.com/zclifton/omni-infra-provider-truenas/main/cmd/omni-infra-provider-truenas/data/icon.svg
+screenshots: []
+tags:
+  - kubernetes
+  - omni
+  - talos
+  - infrastructure
+title: Omni TrueNAS Provider

@@ -1,0 +1,40 @@
+# Omni TrueNAS Provider — Docker Compose
+#
+# Requires TrueNAS SCALE 25.04+ (JSON-RPC 2.0 API). REST v2.0 is NOT supported.
+#
+# Transport auto-detection:
+#   - If /var/run/middleware is mounted: uses Unix socket (no API key needed)
+#   - Otherwise: uses WebSocket (requires TRUENAS_HOST + TRUENAS_API_KEY)
+
+services:
+  omni-infra-provider-truenas:
+    image: ghcr.io/zclifton/omni-infra-provider-truenas:latest
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Mount the TrueNAS middleware socket for zero-config auth.
+      # Remove this line if running on a different host (and set TRUENAS_HOST + TRUENAS_API_KEY instead).
+      - /var/run/middleware:/var/run/middleware:ro
+    environment:
+      # --- Required: Omni ---
+      OMNI_ENDPOINT: "${OMNI_ENDPOINT:-https://omni.example.com}"
+      OMNI_SERVICE_ACCOUNT_KEY: "${OMNI_SERVICE_ACCOUNT_KEY}"
+      OMNI_INSECURE_SKIP_VERIFY: "${OMNI_INSECURE_SKIP_VERIFY:-false}"
+
+      # --- TrueNAS (only needed for remote/WebSocket transport) ---
+      TRUENAS_HOST: "${TRUENAS_HOST:-}"
+      TRUENAS_API_KEY: "${TRUENAS_API_KEY:-}"
+      TRUENAS_INSECURE_SKIP_VERIFY: "${TRUENAS_INSECURE_SKIP_VERIFY:-true}"
+
+      # --- Provider ---
+      PROVIDER_ID: "${PROVIDER_ID:-truenas}"
+      PROVIDER_NAME: "${PROVIDER_NAME:-TrueNAS}"
+      DEFAULT_POOL: "${DEFAULT_POOL:-default}"
+      # ISOs are cached automatically under <pool>/talos-iso/ — no config needed
+      DEFAULT_NIC_ATTACH: "${DEFAULT_NIC_ATTACH:-}"
+      DEFAULT_BOOT_METHOD: "${DEFAULT_BOOT_METHOD:-UEFI}"
+      CONCURRENCY: "${CONCURRENCY:-4}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    network_mode: host

@@ -1,0 +1,186 @@
+groups:
+  - name: Omni Connection
+    description: Configure the connection to the Omni control plane
+  - name: TrueNAS Connection
+    description: Configure the connection to the TrueNAS API
+  - name: Provider Identity
+    description: How this provider appears in Omni
+  - name: VM Defaults
+    description: Default settings for provisioned VMs
+  - name: Advanced
+    description: Advanced provider settings
+  - name: Resources
+    description: Container resource limits
+
+questions:
+
+  # --- Omni Connection ---
+
+  - variable: omniEndpoint
+    label: Omni Endpoint
+    description: Full URL of your Omni instance (e.g., https://omni.example.com)
+    group: Omni Connection
+    schema:
+      type: string
+      required: true
+
+  - variable: omniServiceAccountKey
+    label: Omni Service Account Key
+    description: >
+      Base64-encoded service account key. Create with:
+      omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
+    group: Omni Connection
+    schema:
+      type: string
+      required: true
+      private: true
+
+  - variable: omniInsecureSkipVerify
+    label: Skip Omni TLS Verification
+    description: Disable TLS certificate verification for the Omni endpoint
+    group: Omni Connection
+    schema:
+      type: boolean
+      default: false
+
+  # --- TrueNAS Connection ---
+
+  - variable: truenasUrl
+    label: TrueNAS API URL
+    description: >
+      TrueNAS REST API base URL. Use https://127.0.0.1/api/v2.0 when
+      running as a TrueNAS app on the same host.
+    group: TrueNAS Connection
+    schema:
+      type: string
+      default: "https://127.0.0.1/api/v2.0"
+      required: true
+
+  - variable: truenasApiKey
+    label: TrueNAS API Key
+    description: API key from TrueNAS System > API Keys
+    group: TrueNAS Connection
+    schema:
+      type: string
+      required: true
+      private: true
+
+  - variable: truenasInsecureSkipVerify
+    label: Skip TrueNAS TLS Verification
+    description: Disable TLS certificate verification for self-signed TrueNAS certs
+    group: TrueNAS Connection
+    schema:
+      type: boolean
+      default: true
+
+  # --- Provider Identity ---
+
+  - variable: providerId
+    label: Provider ID
+    description: Unique provider identifier — must match what you registered in Omni
+    group: Provider Identity
+    schema:
+      type: string
+      default: "truenas"
+      required: true
+
+  - variable: providerName
+    label: Provider Display Name
+    description: How this provider appears in the Omni UI
+    group: Provider Identity
+    schema:
+      type: string
+      default: "TrueNAS"
+
+  - variable: providerDescription
+    label: Provider Description
+    group: Provider Identity
+    schema:
+      type: string
+      default: "TrueNAS SCALE infrastructure provider"
+
+  # --- VM Defaults ---
+
+  - variable: defaultPool
+    label: Default ZFS Pool
+    description: ZFS pool used for VM zvols and cached ISO images
+    group: VM Defaults
+    schema:
+      type: string
+      default: "default"
+      required: true
+
+  - variable: defaultBridge
+    label: Default Network Bridge
+    description: >
+      Network bridge interface for VM NICs. Must already exist
+      under Network > Interfaces.
+    group: VM Defaults
+    schema:
+      type: string
+      default: "br0"
+      required: true
+
+  - variable: defaultBootMethod
+    label: Default Boot Method
+    group: VM Defaults
+    schema:
+      type: string
+      default: "UEFI"
+      enum:
+        - value: "UEFI"
+          description: UEFI boot (recommended)
+        - value: "BIOS"
+          description: Legacy BIOS boot
+
+  # --- Advanced ---
+
+  - variable: concurrency
+    label: Concurrency
+    description: Maximum number of parallel provision/deprovision operations
+    group: Advanced
+    schema:
+      type: int
+      default: 4
+      min: 1
+      max: 16
+
+  - variable: logLevel
+    label: Log Level
+    group: Advanced
+    schema:
+      type: string
+      default: "info"
+      enum:
+        - value: "debug"
+          description: Debug
+        - value: "info"
+          description: Info
+        - value: "warn"
+          description: Warning
+        - value: "error"
+          description: Error
+
+  # --- Resources ---
+
+  - variable: resources
+    label: Container Resources
+    group: Resources
+    schema:
+      type: dict
+      attrs:
+        - variable: limits
+          label: Limits
+          schema:
+            type: dict
+            attrs:
+              - variable: cpu
+                label: CPU Limit
+                schema:
+                  type: string
+                  default: "500m"
+              - variable: memory
+                label: Memory Limit
+                schema:
+                  type: string
+                  default: "256Mi"

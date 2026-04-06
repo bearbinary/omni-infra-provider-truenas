@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omni-infra-provider-truenas
+  namespace: omni-infra-provider
+  labels:
+    app.kubernetes.io/name: omni-infra-provider-truenas
+    app.kubernetes.io/part-of: omni
+data:
+  # Required — Omni control plane endpoint
+  OMNI_ENDPOINT: "https://omni.example.com"
+
+  # Required — TrueNAS host (WebSocket transport, since Unix socket is not available in k8s)
+  # This provider requires TrueNAS SCALE 25.04+ (JSON-RPC 2.0). REST v2.0 is NOT supported.
+  TRUENAS_HOST: "truenas.local"
+  TRUENAS_INSECURE_SKIP_VERIFY: "true"
+
+  # Provider identity
+  PROVIDER_ID: "truenas"
+  PROVIDER_NAME: "TrueNAS"
+  PROVIDER_DESCRIPTION: "TrueNAS SCALE infrastructure provider"
+
+  # VM provisioning defaults
+  DEFAULT_POOL: "default"
+  DEFAULT_BRIDGE: "br0"
+  DEFAULT_BOOT_METHOD: "UEFI"
+  CONCURRENCY: "4"
+  LOG_LEVEL: "info"

@@ -1,0 +1,37 @@
+{# TrueNAS App Catalog — Docker Compose Jinja2 Template #}
+{# Rendered by the TrueNAS catalog system using ix_values + questions.yaml #}
+{# #}
+{# This provider uses JSON-RPC 2.0 only. REST v2.0 is NOT supported. #}
+{# The middleware socket is mounted for zero-config auth (no API key needed). #}
+
+{% set app_name = "omni-infra-provider-truenas" %}
+
+services:
+  {{ app_name }}:
+    image: {{ ix_values.image.repository }}:{{ ix_values.image.tag }}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ values.resources.limits.cpu | default('0.5') }}"
+          memory: "{{ values.resources.limits.memory | default('256M') }}"
+    network_mode: host
+    user: "65534:65534"
+    read_only: true
+    volumes:
+      # Middleware Unix socket — enables zero-config auth (no API key needed)
+      - /var/run/middleware:/var/run/middleware:ro
+    environment:
+      OMNI_ENDPOINT: "{{ values.omniEndpoint }}"
+      OMNI_SERVICE_ACCOUNT_KEY: "{{ values.omniServiceAccountKey }}"
+      OMNI_INSECURE_SKIP_VERIFY: "{{ values.omniInsecureSkipVerify | default(false) | lower }}"
+
+      PROVIDER_ID: "{{ values.providerId | default('truenas') }}"
+      PROVIDER_NAME: "{{ values.providerName | default('TrueNAS') }}"
+      PROVIDER_DESCRIPTION: "{{ values.providerDescription | default('TrueNAS SCALE infrastructure provider') }}"
+
+      DEFAULT_POOL: "{{ values.defaultPool | default('default') }}"
+      DEFAULT_BRIDGE: "{{ values.defaultBridge | default('br0') }}"
+      DEFAULT_BOOT_METHOD: "{{ values.defaultBootMethod | default('UEFI') }}"
+      CONCURRENCY: "{{ values.concurrency | default(4) }}"
+      LOG_LEVEL: "{{ values.logLevel | default('info') }}"

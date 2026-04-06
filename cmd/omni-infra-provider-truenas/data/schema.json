@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "properties": {
+    "cpus": {
+      "type": "integer",
+      "title": "CPUs",
+      "minimum": 1,
+      "default": 2,
+      "description": "Number of virtual CPUs"
+    },
+    "memory": {
+      "type": "integer",
+      "title": "Memory (MiB)",
+      "minimum": 1024,
+      "default": 4096,
+      "description": "Memory in MiB"
+    },
+    "disk_size": {
+      "type": "integer",
+      "title": "Disk Size (GiB)",
+      "minimum": 10,
+      "default": 40,
+      "description": "Root disk size in GiB"
+    },
+    "pool": {
+      "type": "string",
+      "title": "ZFS Pool",
+      "description": "ZFS pool name (defaults to provider DEFAULT_POOL)"
+    },
+    "nic_attach": {
+      "type": "string",
+      "title": "NIC Attach",
+      "description": "Network interface for VM NIC — can be a bridge (br100), VLAN (vlan666), or physical interface (enp5s0). Defaults to provider DEFAULT_NIC_ATTACH."
+    },
+    "boot_method": {
+      "type": "string",
+      "title": "Boot Method",
+      "enum": ["UEFI", "BIOS"],
+      "default": "UEFI",
+      "description": "VM boot method"
+    },
+    "architecture": {
+      "type": "string",
+      "title": "Architecture",
+      "enum": ["amd64", "arm64"],
+      "default": "amd64",
+      "description": "CPU architecture"
+    }
+  },
+  "required": [
+    "cpus",
+    "memory",
+    "disk_size"
+  ]
+}

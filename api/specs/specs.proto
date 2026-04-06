@@ -1,0 +1,14 @@
+syntax = "proto3";
+package truenasspecs;
+
+option go_package = "github.com/zclifton/omni-infra-provider-truenas/api/specs";
+
+// MachineSpec is stored in Omni in the infra provisioner state.
+message MachineSpec {
+  string uuid = 1;
+  string schematic = 2;
+  string talos_version = 3;
+  string image_id = 4;
+  int32 vm_id = 5;
+  string zvol_path = 6;
+}
