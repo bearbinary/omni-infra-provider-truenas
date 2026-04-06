@@ -19,6 +19,7 @@ Tracked improvements for future releases.
 - **Prometheus Alerting Rules** — 7 rules: VM errors, API latency, pool space/health, provision speed (v0.9.0)
 - **Grafana Dashboard** — Pre-built dashboard auto-loaded with all provider metrics (v0.9.0)
 - **VM Resource Monitoring** — Per-VM runtime stats via host monitor (v0.9.0)
+- **Docker Image Signing + SBOM** — Cosign keyless signing + SPDX SBOM on every release (v0.9.1)
 
 ---
 
@@ -162,9 +163,6 @@ Already supported via the `pool` field in MachineClass config — just needs doc
 ---
 
 ## CI/CD & Release
-
-### Docker Image Signing + SBOM
-Sign container images with cosign and generate SBOM for supply chain security. Add to release pipeline.
 
 ### Integration Test CI
 Run integration tests against a real TrueNAS instance in CI (GitHub Actions self-hosted runner or cloud instance).
