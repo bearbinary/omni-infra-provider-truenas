@@ -2,6 +2,19 @@
 
 A complete walkthrough for setting up Kubernetes on your TrueNAS SCALE server using this provider. No prior Kubernetes experience required.
 
+## Why Kubernetes on Your NAS?
+
+TrueNAS SCALE already runs Docker apps. So why bother with Kubernetes?
+
+- **Self-healing** — if an app crashes, Kubernetes restarts it automatically. Docker just leaves it dead unless you manually set up restart policies.
+- **Scaling** — need 3 copies of an app? Change one number. Kubernetes handles the rest.
+- **Declarative config** — you describe *what* you want running, not *how* to set it up. Your entire homelab is defined in YAML files you can version control and recreate on any hardware.
+- **Rolling updates** — update an app with zero downtime. Kubernetes drains traffic from the old version, starts the new one, and switches over seamlessly.
+- **The ecosystem** — thousands of Helm charts for every homelab app. Monitoring, dashboards, storage, networking — all standardized.
+- **Resume-worthy** — Kubernetes is the industry standard for container orchestration. Learning it on your NAS translates directly to professional skills.
+
+If you just want to run a few Docker containers, TrueNAS's built-in app catalog is fine. But if you want to learn container orchestration, run complex multi-service apps, or build something that scales — Kubernetes is the next step.
+
 ## What You're Building
 
 By the end of this guide, you'll have:
@@ -89,10 +102,20 @@ curl -sL https://omni.siderolabs.com/omnictl/latest/omnictl-linux-amd64 -o /usr/
 chmod +x /usr/local/bin/omnictl
 ```
 
+**Windows (PowerShell):**
+```powershell
+# Download the binary
+Invoke-WebRequest -Uri "https://omni.siderolabs.com/omnictl/latest/omnictl-windows-amd64.exe" -OutFile "$env:USERPROFILE\omnictl.exe"
+# Add to PATH (or move to a directory already in PATH)
+Move-Item "$env:USERPROFILE\omnictl.exe" "C:\Windows\System32\omnictl.exe"
+```
+
+> **Windows users:** All the terminal commands in this guide use bash syntax. You can either use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) (recommended — gives you a full Linux terminal) or adapt the commands for PowerShell. WSL is worth setting up if you plan to work with Kubernetes regularly.
+
 **Authenticate omnictl with your Omni instance:**
 ```bash
 omnictl config url https://your-omni-instance.omni.siderolabs.com
-# Follow the browser-based login prompt
+# A browser window will open — log in with your Omni account
 ```
 
 ### Create the Service Account
@@ -189,7 +212,16 @@ Check the app logs in TrueNAS. You should see:
 
 If you see both lines, the provider is connected and ready.
 
-**If you see errors**, check [docs/troubleshooting.md](troubleshooting.md).
+**Common errors at this step:**
+
+| Error in logs | What's wrong | Fix |
+|---|---|---|
+| `OMNI_ENDPOINT is required` | Missing or empty Omni URL | Double-check `OMNI_ENDPOINT` in your compose config |
+| `TrueNAS API unreachable` | Can't connect to TrueNAS middleware | Make sure the volume mount `/var/run/middleware` is present and spelled correctly |
+| `pool "X" not found` | Wrong pool name | Check your pool name in **TrueNAS > Storage** — it's case-sensitive |
+| `NIC attach target "X" not found` | Bridge doesn't exist or name is wrong | Check your bridge name in **TrueNAS > Network > Interfaces** |
+
+For more details, see [troubleshooting.md](troubleshooting.md).
 
 ---
 
@@ -199,7 +231,9 @@ Now the fun part. Go to the **Omni web UI** in your browser.
 
 ### Create a MachineClass
 
-A MachineClass defines what a VM looks like (how many CPUs, how much RAM, etc.). Run this in your terminal:
+A MachineClass is a template that tells the provider what kind of VM to create — how many CPUs, how much RAM, how big the disk should be.
+
+Run this in your terminal to create a template for control plane nodes:
 
 ```bash
 cat <<'EOF' | omnictl apply -f -
@@ -219,9 +253,15 @@ spec:
 EOF
 ```
 
+> **What's `cat <<'EOF'`?** It's a way to pass multi-line text to a command. Everything between `EOF` and `EOF` gets sent to `omnictl apply`. The empty fields (`grpcendpoint: ""`, `icon: ""`) are required by Omni's format but can be left blank. The fields that matter are under `configpatch`: `cpus`, `memory` (in MiB), and `disk_size` (in GiB).
+
+> **Windows/PowerShell users:** Save the YAML between the `EOF` markers to a file called `machineclass.yaml`, then run: `omnictl apply -f machineclass.yaml`
+
 This creates a "small" machine template: 2 CPUs, 2 GB RAM, 10 GB disk — suitable for a control plane node.
 
 ### Create a Worker MachineClass
+
+Now create a larger template for worker nodes (the ones that run your apps):
 
 ```bash
 cat <<'EOF' | omnictl apply -f -
@@ -283,7 +323,7 @@ Once Omni shows your cluster as **Running**, you can get the kubeconfig and star
 
 ### Install kubectl
 
-If you don't have `kubectl` yet:
+`kubectl` (pronounced "cube-control") is the command-line tool for talking to Kubernetes. If you don't have it yet:
 
 **macOS:**
 ```bash
@@ -296,14 +336,32 @@ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stabl
 chmod +x kubectl && sudo mv kubectl /usr/local/bin/
 ```
 
+**Windows (PowerShell):**
+```powershell
+winget install Kubernetes.kubectl
+```
+
+Or download from [kubernetes.io/docs/tasks/tools](https://kubernetes.io/docs/tasks/tools/#kubectl).
+
 ### Download Your Kubeconfig
 
+A kubeconfig is a file that tells `kubectl` how to connect to your cluster. Download it from Omni:
+
 ```bash
+# Create the directory if it doesn't exist
+mkdir -p ~/.kube
+
 # Download the kubeconfig from Omni
 omnictl kubeconfig -c homelab > ~/.kube/config
 ```
 
 Replace `homelab` with whatever you named your cluster.
+
+> **Already have a kubeconfig?** If you have an existing `~/.kube/config` from another cluster, the command above will overwrite it. To keep both, save to a different file and set the `KUBECONFIG` env var:
+> ```bash
+> omnictl kubeconfig -c homelab > ~/.kube/homelab-config
+> export KUBECONFIG=~/.kube/homelab-config
+> ```
 
 ### Verify the Connection
 
@@ -343,12 +401,22 @@ NAME                    READY   STATUS    RESTARTS   AGE
 hello-abc123-xyz        1/1     Running   0          30s
 ```
 
-Find the NodePort to access it:
+Find the port and node IP to access it:
 ```bash
+# Get the NodePort (look for the port after the colon, e.g., 80:31234/TCP → 31234)
 kubectl get service hello
+
+# Get the IP address of any node
+kubectl get nodes -o wide
 ```
 
-Look for the port mapping (e.g., `80:31234/TCP`). Open `http://<any-vm-ip>:31234` in your browser. You should see the nginx welcome page.
+The `INTERNAL-IP` column shows each node's IP address (e.g., `192.168.1.50`). Combine it with the NodePort:
+
+```
+http://192.168.1.50:31234
+```
+
+Open that URL in your browser. You should see the nginx welcome page ("Welcome to nginx!").
 
 Congratulations — you just deployed an app on Kubernetes running on your NAS.
 
@@ -437,3 +505,31 @@ Yes. Omni can manage both VM-based nodes (from this provider) and physical bare-
 
 ### How do I update Kubernetes?
 Omni handles Kubernetes and Talos upgrades through its UI. You don't need to SSH into anything — just click "Upgrade" in the Omni dashboard.
+
+---
+
+## Glossary
+
+Terms you'll encounter in this guide and the project docs:
+
+| Term | What It Means |
+|---|---|
+| **Bridge** | A virtual network switch on TrueNAS that lets VMs share the NAS's physical network connection |
+| **Control plane** | The Kubernetes node(s) that run the "brain" — API server, scheduler, and database (etcd). Doesn't run your apps. |
+| **DHCP** | A protocol that automatically assigns IP addresses to devices on your network. Your router probably does this. |
+| **Helm** | A package manager for Kubernetes — like an app store. Install apps with one command instead of writing YAML. |
+| **kubeconfig** | A file that tells `kubectl` how to connect to your cluster (address, credentials). Usually lives at `~/.kube/config`. |
+| **kubectl** | The command-line tool for talking to Kubernetes. Pronounced "cube-control" or "cube-C-T-L". |
+| **MachineClass** | A template in Omni that defines VM specs (CPUs, RAM, disk). Like a VM "size" — small, medium, large. |
+| **MachineSet** | A group of machines in Omni of the same MachineClass. Set replicas to 3 and Omni ensures 3 VMs exist. |
+| **Node** | A single machine (VM in our case) that is part of a Kubernetes cluster. |
+| **NodePort** | A way to expose an app running in Kubernetes by opening a port on every node. Access it via `<node-ip>:<port>`. |
+| **Omni** | Sidero's platform for creating and managing Kubernetes clusters. The "management layer" above Kubernetes. |
+| **Pod** | The smallest unit in Kubernetes — one or more containers running together. Think of it as a running instance of your app. |
+| **SideroLink** | An outbound WireGuard VPN tunnel that Talos VMs use to connect to Omni. No inbound ports needed. |
+| **Talos Linux** | A minimal, immutable Linux OS built only for running Kubernetes. No SSH, no shell — managed entirely via APIs. |
+| **Worker** | A Kubernetes node that runs your actual applications. Needs more resources than control plane nodes. |
+| **WireGuard** | A modern VPN protocol. SideroLink uses it to securely connect your VMs to Omni's servers. |
+| **YAML** | A human-readable data format used for Kubernetes config files. Whitespace and indentation matter. |
+| **ZFS** | The filesystem TrueNAS uses. Supports compression, snapshots, and checksums. Very reliable. |
+| **zvol** | A ZFS volume — a block device backed by ZFS. Each VM gets a zvol as its virtual hard drive. |
