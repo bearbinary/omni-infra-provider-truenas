@@ -80,9 +80,14 @@ func (cl *Cleaner) runOnce(ctx context.Context) {
 	cl.cleanupOrphanZvols(ctx)
 }
 
-// cleanupISOs removes ISOs from <pool>/talos-iso/ that are not referenced by any active VM.
+// cleanupISOs removes stale ISOs from <pool>/talos-iso/.
+// TrueNAS JSON-RPC doesn't expose a file delete method, so we check if ALL
+// ISOs are stale. If so, we recreate the dataset (delete + create), which
+// removes all files. If any ISO is still active, we skip cleanup entirely —
+// active ISOs will be re-downloaded if needed after a full wipe.
 func (cl *Cleaner) cleanupISOs(ctx context.Context) {
 	isoDir := "/mnt/" + cl.config.Pool + "/talos-iso"
+	isoDataset := cl.config.Pool + "/talos-iso"
 
 	files, err := cl.client.ListFiles(ctx, isoDir)
 	if err != nil {
@@ -96,25 +101,47 @@ func (cl *Cleaner) cleanupISOs(ctx context.Context) {
 		return
 	}
 
+	var totalISOs, staleISOs int
+
 	for _, f := range files {
 		if f.Type != "FILE" || !strings.HasSuffix(f.Name, ".iso") {
 			continue
 		}
 
-		// ISO filename is <imageID>.iso
-		imageID := strings.TrimSuffix(f.Name, ".iso")
-		if activeIDs[imageID] {
-			continue
-		}
+		totalISOs++
 
-		cl.logger.Info("removing stale ISO",
-			zap.String("file", f.Name),
-			zap.String("path", f.Path),
+		imageID := strings.TrimSuffix(f.Name, ".iso")
+		if !activeIDs[imageID] {
+			staleISOs++
+		}
+	}
+
+	if staleISOs == 0 {
+		return
+	}
+
+	cl.logger.Info("found stale ISOs",
+		zap.Int("stale", staleISOs),
+		zap.Int("total", totalISOs),
+		zap.Int("active", totalISOs-staleISOs),
+	)
+
+	// Only wipe if ALL ISOs are stale (no active ISOs to preserve)
+	if staleISOs < totalISOs {
+		cl.logger.Info("skipping ISO cleanup — some ISOs are still active",
+			zap.Int("active", totalISOs-staleISOs),
 		)
 
-		if err := cl.client.DeleteFile(ctx, f.Path); err != nil {
-			cl.logger.Warn("failed to delete stale ISO", zap.String("path", f.Path), zap.Error(err))
-		}
+		return
+	}
+
+	cl.logger.Info("all ISOs are stale — recreating dataset",
+		zap.String("dataset", isoDataset),
+		zap.Int("removing", staleISOs),
+	)
+
+	if err := cl.client.RecreateDataset(ctx, isoDataset); err != nil {
+		cl.logger.Warn("failed to recreate ISO dataset", zap.Error(err))
 	}
 }
 
@@ -158,9 +185,9 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 
 // cleanupOrphanZvols finds zvols under <pool>/omni-vms/ that are not tracked by Omni.
 func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
-	zvolDir := "/mnt/" + cl.config.Pool + "/omni-vms"
+	parentPath := cl.config.Pool + "/omni-vms"
 
-	files, err := cl.client.ListFiles(ctx, zvolDir)
+	datasets, err := cl.client.ListChildDatasets(ctx, parentPath)
 	if err != nil {
 		cl.logger.Warn("failed to list zvols for orphan cleanup", zap.Error(err))
 
@@ -172,26 +199,24 @@ func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
 		return
 	}
 
-	for _, f := range files {
-		if f.Type != "DIRECTORY" {
-			continue
-		}
+	for _, ds := range datasets {
+		// Dataset ID is the full path (e.g., "default/omni-vms/talos-test-workers-abc")
+		// Extract the request ID (last segment)
+		parts := strings.Split(ds.ID, "/")
+		requestID := parts[len(parts)-1]
 
-		// zvol name under omni-vms/ maps to the request ID
 		// VM name is "omni_" + requestID with hyphens replaced by underscores
-		vmName := "omni_" + strings.ReplaceAll(f.Name, "-", "_")
+		vmName := "omni_" + strings.ReplaceAll(requestID, "-", "_")
 		if activeNames[vmName] {
 			continue
 		}
 
-		zvolPath := cl.config.Pool + "/omni-vms/" + f.Name
-
 		cl.logger.Info("removing orphan zvol",
-			zap.String("path", zvolPath),
+			zap.String("path", ds.ID),
 		)
 
-		if err := cl.client.DeleteDataset(ctx, zvolPath); err != nil {
-			cl.logger.Warn("failed to delete orphan zvol", zap.String("path", zvolPath), zap.Error(err))
+		if err := cl.client.DeleteDataset(ctx, ds.ID); err != nil {
+			cl.logger.Warn("failed to delete orphan zvol", zap.String("path", ds.ID), zap.Error(err))
 		}
 	}
 }

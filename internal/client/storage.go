@@ -117,18 +117,39 @@ type FileEntry struct {
 	Type string `json:"type"` // FILE, DIRECTORY, etc.
 }
 
-// DeleteFile removes a file from the TrueNAS filesystem.
-// JSON-RPC method: filesystem.remove
-func (c *Client) DeleteFile(ctx context.Context, path string) error {
-	if err := c.call(ctx, "filesystem.remove", []any{path}, nil); err != nil {
-		if IsNotFound(err) {
-			return nil
-		}
+// RecreateDataset deletes a dataset and recreates it empty.
+// Used for cleaning up files on a dataset when the TrueNAS API doesn't
+// expose a direct file delete method.
+func (c *Client) RecreateDataset(ctx context.Context, name string) error {
+	if err := c.DeleteDataset(ctx, name); err != nil {
+		return fmt.Errorf("failed to delete dataset %q: %w", name, err)
+	}
 
-		return fmt.Errorf("filesystem.remove %q failed: %w", path, err)
+	_, err := c.CreateDataset(ctx, CreateDatasetRequest{
+		Name: name,
+		Type: "FILESYSTEM",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to recreate dataset %q: %w", name, err)
 	}
 
 	return nil
+}
+
+// ListChildDatasets returns child datasets/zvols under a parent path.
+// JSON-RPC method: pool.dataset.query with filter [["id", "^", parentPath + "/"]]
+func (c *Client) ListChildDatasets(ctx context.Context, parentPath string) ([]Dataset, error) {
+	filter := []any{
+		[]any{[]any{"id", "^", parentPath + "/"}},
+	}
+
+	var datasets []Dataset
+
+	if err := c.call(ctx, "pool.dataset.query", filter, &datasets); err != nil {
+		return nil, fmt.Errorf("pool.dataset.query (parent=%s) failed: %w", parentPath, err)
+	}
+
+	return datasets, nil
 }
 
 // PoolExists checks if a ZFS pool exists.
