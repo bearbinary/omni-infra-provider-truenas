@@ -46,3 +46,20 @@ Uses the standard Omni VM provider pattern with `infra.NewProvider()` + `provisi
 
 ### Configuration
 All via environment variables (`.env` file loaded automatically). Key ones: `OMNI_ENDPOINT`, `OMNI_SERVICE_ACCOUNT_KEY`, `TRUENAS_HOST` (remote only), `TRUENAS_API_KEY` (remote only), `DEFAULT_POOL`, `DEFAULT_NIC_ATTACH`. See `.env.example`.
+
+## Documentation Map
+
+- **`README.md`** — Project overview, badges, quick start, configuration reference, usage guide
+- **`AGENT.md`** — Step-by-step setup guide designed for AI assistants to walk users through deployment
+- **`CONTRIBUTING.md`** — Issues-only contribution model (no PRs accepted)
+- **`SECURITY.md`** — Vulnerability disclosure policy
+- **`CHANGELOG.md`** — Curated release history (v0.1.0 through current)
+- **`llms.txt`** — Structured plaintext for AI/LLM discoverability
+- **`docs/architecture.md`** — Detailed architecture with Mermaid diagrams (system context, provision sequence, transport detection)
+- **`docs/troubleshooting.md`** — Common issues and solutions (startup failures, provisioning, debugging)
+- **`docs/testing.md`** — Unit, integration, and E2E test setup
+- **`docs/backlog.md`** — Feature roadmap and backlog items
+
+## Contribution Model
+
+This project uses an issues-only contribution model. No pull requests are accepted. Contributors open issues describing what they want, and can optionally prototype in a fork. The team handles merges.

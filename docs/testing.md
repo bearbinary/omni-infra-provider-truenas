@@ -15,7 +15,7 @@ make test        # quick
 make test-v      # verbose
 ```
 
-26 tests covering the TrueNAS API client: VM CRUD, device attachment, storage operations, error handling, SHA-256 dedup logic.
+147 tests covering the TrueNAS API client, provisioner, cleanup, and telemetry: VM CRUD, device attachment, storage operations, error handling, SHA-256 dedup logic, rate limiting, reconnect, chaos testing, and full E2E flows.
 
 ---
 
@@ -40,7 +40,7 @@ Exercises the full client CRUD lifecycle against a real TrueNAS instance. VMs ar
 
 ### Prerequisites
 
-1. **TrueNAS SCALE 24.10.x** installed (VM or bare metal)
+1. **TrueNAS SCALE 25.04+** installed (VM or bare metal)
 2. A **ZFS pool** (default: `tank`)
 3. A **network interface** for VM NICs — bridge (e.g., `br0`), VLAN (e.g., `vlan666`), or physical interface (e.g., `enp5s0`)
 4. A **TrueNAS API key** — create under System > API Keys

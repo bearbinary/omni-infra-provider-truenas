@@ -1,0 +1,79 @@
+# omni-infra-provider-truenas
+
+> TrueNAS SCALE infrastructure provider for the Sidero Omni Kubernetes management platform.
+
+Automatically provisions and manages Talos Linux virtual machines on TrueNAS SCALE through Sidero Omni. When Omni requests a machine (user scales a cluster), this provider creates a VM on TrueNAS with ZFS-backed storage and automatic cluster enrollment.
+
+## Key Facts
+
+- Language: Go
+- License: MIT
+- Author: Bear Binary
+- Requires: TrueNAS SCALE 25.04+ (Fangtooth), Sidero Omni instance
+- API: TrueNAS JSON-RPC 2.0 (NOT REST v2.0)
+- Transports: Unix socket (zero-auth, on TrueNAS) or WebSocket (API key, remote)
+- Container: ghcr.io/bearbinary/omni-infra-provider-truenas
+- Architectures: amd64, arm64
+
+## What It Does
+
+1. Watches Omni for MachineRequests (user scales a cluster)
+2. Generates a Talos Linux image schematic with extensions (qemu-guest-agent, nfs-utils, util-linux-tools)
+3. Downloads the Talos ISO from Image Factory (cached, SHA-256 deduplicated)
+4. Creates a VM on TrueNAS: zvol for disk, CDROM with ISO, NIC on bridge/VLAN
+5. VM boots Talos, joins Omni via SideroLink (outbound WireGuard)
+6. On removal: stops VM, deletes VM and zvol
+
+## Configuration
+
+All via environment variables:
+
+- OMNI_ENDPOINT (required): Omni instance URL
+- OMNI_SERVICE_ACCOUNT_KEY (required): Omni infra provider key
+- TRUENAS_HOST: TrueNAS hostname (WebSocket only)
+- TRUENAS_API_KEY: TrueNAS API key (WebSocket only)
+- DEFAULT_POOL: ZFS pool for zvols (default: "default")
+- DEFAULT_NIC_ATTACH: Network interface for VM NICs
+- DEFAULT_BOOT_METHOD: UEFI or BIOS (default: UEFI)
+- CONCURRENCY: Max parallel workers (default: 4)
+
+## MachineClass Config (configpatch)
+
+- cpus (int, required): Virtual CPUs, min 1
+- memory (int, required): Memory in MiB, min 1024
+- disk_size (int, required): Root disk in GiB, min 10
+- pool (string): ZFS pool override
+- nic_attach (string): Network interface override
+- boot_method (string): UEFI or BIOS
+- architecture (string): amd64 or arm64
+- extensions (list): Additional Talos system extensions
+
+## Deployment Options
+
+1. TrueNAS App (recommended): Docker container with Unix socket mounted, no API key
+2. Kubernetes: Kustomize manifests in deploy/kubernetes/
+3. Docker Compose: Remote deployment via WebSocket in deploy/docker-compose.yaml
+
+## Project Structure
+
+- cmd/omni-infra-provider-truenas/main.go: Entry point
+- internal/client/: TrueNAS JSON-RPC 2.0 client (transport, VM, storage, device ops)
+- internal/provisioner/: 3-step provision flow + deprovision
+- internal/cleanup/: Background stale resource cleanup
+- internal/resources/: COSI typed resources
+- internal/telemetry/: OpenTelemetry integration
+- api/specs/: Protobuf definitions
+- deploy/: Docker Compose, Kubernetes, observability configs
+
+## Documentation
+
+- README.md: Full setup and usage guide with badges, diagrams, and config reference
+- AGENT.md: Step-by-step deployment guide designed for AI assistants walking users through setup
+- CLAUDE.md: AI assistant context for developing this codebase
+- CONTRIBUTING.md: Issues-only contribution model (no PRs accepted)
+- SECURITY.md: Vulnerability disclosure policy
+- CHANGELOG.md: Curated release history (v0.1.0 through v0.7.0)
+- docs/architecture.md: Detailed architecture with Mermaid diagrams
+- docs/troubleshooting.md: Common issues and solutions
+- docs/testing.md: Unit, integration, and E2E test setup
+- .env.example: Environment variable reference

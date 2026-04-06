@@ -1,0 +1,317 @@
+# AGENT.md
+
+This file helps AI assistants guide users through setting up and operating the Omni TrueNAS infrastructure provider. If a user asks for help deploying, configuring, or troubleshooting this provider, use the information below.
+
+## What This Is
+
+A service that connects Sidero Omni (Kubernetes management platform) to TrueNAS SCALE (storage/virtualization). When a user creates or scales a Kubernetes cluster in Omni, this provider automatically creates Talos Linux VMs on TrueNAS SCALE. When machines are removed, it cleans them up.
+
+## Before You Start — Prerequisites Checklist
+
+Walk the user through each of these before attempting deployment:
+
+### 1. TrueNAS SCALE 25.04+ (Fangtooth)
+
+- **This is a hard requirement.** The provider uses the JSON-RPC 2.0 API, which is only available in 25.04+.
+- The legacy REST v2.0 API (`/api/v2.0/`) is NOT supported.
+- To check: TrueNAS UI > Dashboard shows the version, or run `midclt call system.version` via SSH.
+
+### 2. Sidero Omni Instance
+
+- The user needs an active Omni instance (self-hosted or SaaS at omni.siderolabs.com).
+- They need `omnictl` installed locally: https://omni.siderolabs.com/docs/how-to-guides/install-and-configure/install-omnictl/
+
+### 3. Omni Service Account
+
+Create an infra provider service account:
+
+```bash
+omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
+```
+
+**Important:** The output contains the `OMNI_SERVICE_ACCOUNT_KEY`. It is shown only once — save it immediately. If lost, delete and recreate the service account.
+
+### 4. ZFS Pool
+
+- At least one ZFS pool must exist on TrueNAS with enough free space for VM disks.
+- To check available pools: TrueNAS UI > Storage, or `midclt call pool.query` via SSH.
+- The pool name is case-sensitive. Common names: `default`, `tank`, `data`.
+- ISOs are cached automatically at `<pool>/talos-iso/` — no manual setup needed.
+
+### 5. Network Interface for VMs
+
+VMs need a network interface to attach to. This can be:
+- **Bridge** (recommended): e.g., `br0`, `br100` — create in TrueNAS UI > Network > Interfaces > Add > Bridge
+- **VLAN**: e.g., `vlan100` — create in TrueNAS UI > Network > Interfaces > Add > VLAN
+- **Physical NIC**: e.g., `enp5s0` — use an existing interface directly
+
+The interface must have:
+- Connectivity to the internet (VMs need outbound access to reach Omni via SideroLink/WireGuard on port 443)
+- DHCP available on the network (Talos uses DHCP by default)
+
+To list available choices: `midclt call vm.device.nic_attach_choices` via SSH.
+
+### 6. TrueNAS API Key (Remote Deployments Only)
+
+Only needed if NOT running directly on TrueNAS (e.g., running in external Kubernetes or Docker):
+
+- TrueNAS UI > Credentials > API Keys > Add
+- Save the key — it's shown only once.
+
+## Deployment — Three Options
+
+Ask the user which deployment method they prefer, then guide them through the appropriate section.
+
+### Option A: TrueNAS App (Recommended)
+
+Best for: Running directly on the TrueNAS server. Simplest setup — no API key needed.
+
+**Step 1:** In TrueNAS UI, go to Apps > Discover Apps > Install Custom App (or use the Docker Compose option).
+
+**Step 2:** Use this compose config:
+
+```yaml
+services:
+  omni-infra-provider-truenas:
+    image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/middleware:/var/run/middleware:ro
+    network_mode: host
+    environment:
+      OMNI_ENDPOINT: "https://<omni-url>"
+      OMNI_SERVICE_ACCOUNT_KEY: "<key-from-step-3-above>"
+      DEFAULT_POOL: "<pool-name>"
+      DEFAULT_NIC_ATTACH: "<interface-name>"
+```
+
+**Step 3:** Replace the four placeholder values:
+- `OMNI_ENDPOINT`: Their Omni URL (e.g., `https://omni.example.com`)
+- `OMNI_SERVICE_ACCOUNT_KEY`: The key from the service account creation step
+- `DEFAULT_POOL`: Their ZFS pool name (e.g., `default`, `tank`)
+- `DEFAULT_NIC_ATTACH`: Their network interface (e.g., `br0`, `vlan100`)
+
+**Step 4:** Deploy the app. Check logs for:
+```
+"starting TrueNAS infra provider"
+"startup checks passed"
+```
+
+If they see both lines, the provider is running and connected.
+
+### Option B: Kubernetes
+
+Best for: Running on an external Kubernetes cluster.
+
+**Step 1:** Clone or download the repo.
+
+**Step 2:** Edit `deploy/kubernetes/configmap.yaml`:
+```yaml
+data:
+  OMNI_ENDPOINT: "https://<omni-url>"
+  DEFAULT_POOL: "<pool-name>"
+  DEFAULT_NIC_ATTACH: "<interface-name>"
+  TRUENAS_HOST: "<truenas-hostname-or-ip>"
+```
+
+**Step 3:** Edit `deploy/kubernetes/secret.yaml`:
+```yaml
+stringData:
+  OMNI_SERVICE_ACCOUNT_KEY: "<key>"
+  TRUENAS_API_KEY: "<truenas-api-key>"
+```
+
+**Step 4:** Apply:
+```bash
+kubectl apply -k deploy/kubernetes/
+```
+
+**Step 5:** Check logs:
+```bash
+kubectl logs -n omni-infra-provider -l app.kubernetes.io/name=omni-infra-provider-truenas
+```
+
+### Option C: Docker Compose (Remote Host)
+
+Best for: Running on a separate Linux host (not TrueNAS, not Kubernetes).
+
+**Step 1:** Clone or download the repo.
+
+**Step 2:** Copy and edit the env file:
+```bash
+cp .env.example .env
+```
+
+**Step 3:** Fill in `.env`:
+```bash
+OMNI_ENDPOINT=https://<omni-url>
+OMNI_SERVICE_ACCOUNT_KEY=<key>
+TRUENAS_HOST=<truenas-hostname-or-ip>
+TRUENAS_API_KEY=<truenas-api-key>
+DEFAULT_POOL=<pool-name>
+DEFAULT_NIC_ATTACH=<interface-name>
+```
+
+**Step 4:** Start:
+```bash
+docker compose -f deploy/docker-compose.yaml up -d
+```
+
+**Step 5:** Check logs:
+```bash
+docker compose -f deploy/docker-compose.yaml logs -f
+```
+
+## Verifying the Deployment
+
+After deployment, guide the user through these checks:
+
+### 1. Provider Logs
+
+Look for these two lines in the logs:
+```
+"startup checks passed" transport=<socket|websocket> pool=<name> nic_attach=<name>
+"starting TrueNAS infra provider" provider_id=truenas omni_endpoint=https://...
+```
+
+If they don't appear, check the troubleshooting section below.
+
+### 2. Omni UI
+
+In the Omni web UI, navigate to the Infrastructure Providers section. The `truenas` provider should appear as healthy.
+
+### 3. Create a Test MachineClass
+
+```bash
+cat <<'EOF' | omnictl apply -f -
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: truenas-test
+spec:
+  autoprovision:
+    providerid: truenas
+    grpcendpoint: ""
+    icon: ""
+    configpatch: |
+      cpus: 2
+      memory: 2048
+      disk_size: 10
+EOF
+```
+
+### 4. Test Provisioning
+
+Create a single-node cluster using the MachineClass in Omni (UI or CLI). Watch:
+- Provider logs should show the 3 provision steps running
+- TrueNAS UI > Virtualization should show a new VM appearing
+- Omni UI should show the machine enrolling after 2-5 minutes
+
+## Creating MachineClasses for Production
+
+### Control Plane Nodes
+
+Minimal resources — runs etcd + Kubernetes API server, no container workloads:
+
+```yaml
+cpus: 2
+memory: 2048
+disk_size: 10
+```
+
+### Worker Nodes
+
+More resources — runs application workloads and stores container images:
+
+```yaml
+cpus: 4
+memory: 8192
+disk_size: 100
+```
+
+### Per-Class Overrides
+
+Any MachineClass can override provider defaults:
+
+```yaml
+cpus: 8
+memory: 16384
+disk_size: 200
+pool: "fast-nvme"           # Different ZFS pool
+nic_attach: "vlan100"       # Different network
+boot_method: "BIOS"         # Instead of UEFI
+architecture: "arm64"       # Instead of amd64
+extensions:
+  - "siderolabs/iscsi-tools"  # Extra Talos extensions
+```
+
+### Default Extensions (Always Included)
+
+These are included in every VM automatically — users do NOT need to add them:
+- `siderolabs/qemu-guest-agent`
+- `siderolabs/nfs-utils`
+- `siderolabs/util-linux-tools`
+
+## All Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `OMNI_ENDPOINT` | Yes | — | Omni instance URL |
+| `OMNI_SERVICE_ACCOUNT_KEY` | Yes | — | Omni infra provider service account key |
+| `TRUENAS_HOST` | Remote only | — | TrueNAS hostname or IP (WebSocket transport) |
+| `TRUENAS_API_KEY` | Remote only | — | TrueNAS API key (WebSocket transport) |
+| `TRUENAS_INSECURE_SKIP_VERIFY` | No | `true` | Skip TLS verification for self-signed certs |
+| `TRUENAS_SOCKET_PATH` | No | `/var/run/middleware/middlewared.sock` | Override Unix socket path |
+| `PROVIDER_ID` | No | `truenas` | Provider ID registered with Omni |
+| `PROVIDER_NAME` | No | `TrueNAS` | Display name in Omni UI |
+| `PROVIDER_DESCRIPTION` | No | `TrueNAS SCALE infrastructure provider` | Description in Omni UI |
+| `DEFAULT_POOL` | No | `default` | ZFS pool for VM zvols and ISO cache |
+| `DEFAULT_NIC_ATTACH` | No | — | Network interface for VM NICs |
+| `DEFAULT_BOOT_METHOD` | No | `UEFI` | VM boot method: `UEFI` or `BIOS` |
+| `CONCURRENCY` | No | `4` | Max parallel provision/deprovision workers |
+| `LOG_LEVEL` | No | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `OMNI_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification for Omni connection |
+| `TRUENAS_MAX_CONCURRENT_CALLS` | No | `8` | Max concurrent JSON-RPC calls to TrueNAS |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint |
+| `OTEL_EXPORTER_OTLP_INSECURE` | No | `true` | Use insecure gRPC for OTel |
+| `OTEL_SERVICE_NAME` | No | `omni-infra-provider-truenas` | OTel service name |
+| `PYROSCOPE_URL` | No | — | Pyroscope endpoint for continuous profiling |
+
+## Troubleshooting
+
+### Startup Errors
+
+| Error | Cause | Fix |
+|---|---|---|
+| `TrueNAS API unreachable` | Can't connect to TrueNAS | **Socket:** Check volume mount. **WebSocket:** Check `TRUENAS_HOST` is reachable and `TRUENAS_API_KEY` is valid. |
+| `pool "X" not found` | Pool name wrong or doesn't exist | Check pool name with `midclt call pool.query`. Names are case-sensitive. |
+| `NIC attach target "X" not found` | Interface doesn't exist | Check with `midclt call vm.device.nic_attach_choices`. May need to create a bridge first. |
+| `OMNI_ENDPOINT is required` | Missing env var | Set the `OMNI_ENDPOINT` environment variable. |
+
+### VMs Created But Don't Join Omni
+
+1. Check VM console in TrueNAS UI — is Talos booting?
+2. Verify the VM's network has outbound internet (SideroLink needs port 443 outbound)
+3. Verify DHCP is available on the VM's network
+4. Try switching `boot_method` between `UEFI` and `BIOS`
+5. Set `LOG_LEVEL=debug` and check provider logs for step-by-step output
+
+### Provider Shows Unhealthy in Omni
+
+The health check pings TrueNAS, verifies the pool exists, and validates the NIC. Check:
+1. TrueNAS is reachable from the provider
+2. The configured pool still exists
+3. The configured NIC interface still exists
+4. Restart the provider container
+
+### Detailed Debugging
+
+Set `LOG_LEVEL=debug` to see all JSON-RPC calls, provision step progress, and transport details.
+
+## For More Information
+
+- Full README: `README.md`
+- Architecture with diagrams: `docs/architecture.md`
+- Detailed troubleshooting: `docs/troubleshooting.md`
+- Test setup: `docs/testing.md`
+- Environment variable reference: `.env.example`
