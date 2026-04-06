@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 make build            # Build binary to _out/
 make test             # Run all unit tests
 make test-v           # Verbose tests
-make test-integration # Integration tests (requires TRUENAS_TEST_URL + TRUENAS_TEST_API_KEY)
+make test-integration # Integration tests (requires TRUENAS_TEST_HOST + TRUENAS_TEST_API_KEY)
 make lint             # Run golangci-lint
 make image            # Build Docker image
 make generate         # Regenerate protobuf from api/specs/specs.proto
@@ -45,4 +45,4 @@ Uses the standard Omni VM provider pattern with `infra.NewProvider()` + `provisi
 3. `createVM` — Create zvol, VM, attach CDROM+DISK+NIC, start VM, poll for RUNNING
 
 ### Configuration
-All via environment variables (`.env` file loaded automatically). Key ones: `OMNI_ENDPOINT`, `OMNI_SERVICE_ACCOUNT_KEY`, `TRUENAS_HOST` (remote only), `TRUENAS_API_KEY` (remote only), `DEFAULT_POOL`, `DEFAULT_BRIDGE`. See `.env.example`.
+All via environment variables (`.env` file loaded automatically). Key ones: `OMNI_ENDPOINT`, `OMNI_SERVICE_ACCOUNT_KEY`, `TRUENAS_HOST` (remote only), `TRUENAS_API_KEY` (remote only), `DEFAULT_POOL`, `DEFAULT_NIC_ATTACH`. See `.env.example`.

@@ -13,7 +13,7 @@ test:
 test-v:
 	go test ./... -v -count=1
 
-test-integration:  ## Run integration tests against a real TrueNAS (requires TRUENAS_TEST_URL + TRUENAS_TEST_API_KEY)
+test-integration:  ## Run integration tests against a real TrueNAS (requires TRUENAS_TEST_HOST + TRUENAS_TEST_API_KEY)
 	go test -tags=integration ./internal/client/... -v -count=1 -timeout=120s
 
 lint:

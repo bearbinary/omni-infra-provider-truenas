@@ -1,8 +1,6 @@
 groups:
   - name: Omni Connection
     description: Configure the connection to the Omni control plane
-  - name: TrueNAS Connection
-    description: Configure the connection to the TrueNAS API
   - name: Provider Identity
     description: How this provider appears in Omni
   - name: VM Defaults
@@ -43,36 +41,6 @@ questions:
       type: boolean
       default: false
 
-  # --- TrueNAS Connection ---
-
-  - variable: truenasUrl
-    label: TrueNAS API URL
-    description: >
-      TrueNAS REST API base URL. Use https://127.0.0.1/api/v2.0 when
-      running as a TrueNAS app on the same host.
-    group: TrueNAS Connection
-    schema:
-      type: string
-      default: "https://127.0.0.1/api/v2.0"
-      required: true
-
-  - variable: truenasApiKey
-    label: TrueNAS API Key
-    description: API key from TrueNAS System > API Keys
-    group: TrueNAS Connection
-    schema:
-      type: string
-      required: true
-      private: true
-
-  - variable: truenasInsecureSkipVerify
-    label: Skip TrueNAS TLS Verification
-    description: Disable TLS certificate verification for self-signed TrueNAS certs
-    group: TrueNAS Connection
-    schema:
-      type: boolean
-      default: true
-
   # --- Provider Identity ---
 
   - variable: providerId
@@ -110,16 +78,15 @@ questions:
       default: "default"
       required: true
 
-  - variable: defaultBridge
-    label: Default Network Bridge
+  - variable: defaultNicAttach
+    label: Default NIC Attach
     description: >
-      Network bridge interface for VM NICs. Must already exist
-      under Network > Interfaces.
+      Network interface for VM NICs — can be a bridge (br100),
+      VLAN interface (vlan666), or physical interface (enp5s0).
     group: VM Defaults
     schema:
       type: string
-      default: "br0"
-      required: true
+      default: ""
 
   - variable: defaultBootMethod
     label: Default Boot Method

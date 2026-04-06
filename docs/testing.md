@@ -167,7 +167,7 @@ Or via Docker Compose on TrueNAS: paste `deploy/docker-compose.yaml` into Apps >
 | Full teardown | Delete MachineSet. | All VMs and zvols cleaned up. |
 | Crash recovery | Kill provider container mid-provision, restart. | Provider resumes from last completed step. |
 | Concurrent provisioning | Request 5 machines simultaneously. | All 5 provision without race conditions. |
-| Invalid bridge | Set `network_bridge: "nonexistent"` in MachineClass. | Step fails with clear error in MachineRequestStatus. |
+| Invalid NIC attach | Set `nic_attach: "nonexistent"` in MachineClass. | Step fails with clear error in MachineRequestStatus. |
 
 #### Example MachineClass
 

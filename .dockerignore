@@ -1,0 +1,14 @@
+.git/
+.github/
+.env
+.env.*
+.claude/
+.agents/
+.idea/
+_out/
+*.md
+!README.md
+docs/
+deploy/
+truenas-app/
+skills-lock.json
