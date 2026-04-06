@@ -6,7 +6,7 @@ package main
 
 import (
 	"context"
-	_ "embed"
+	_ "embed" // Required for //go:embed directives (schema.json, icon.svg)
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -23,7 +23,11 @@ import (
 	truenasclient "github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/provisioner"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
+
+// version is set at build time via -ldflags.
+var version = "dev"
 
 //go:embed data/schema.json
 var schema string
@@ -64,6 +68,19 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
+
+	// Initialize telemetry (noop if OTEL_EXPORTER_OTLP_ENDPOINT is not set)
+	telemetryShutdown, err := telemetry.Init(ctx, telemetry.Config{
+		OTELEndpoint:   os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		OTELInsecure:   envBool("OTEL_EXPORTER_OTLP_INSECURE", true),
+		PyroscopeURL:   os.Getenv("PYROSCOPE_URL"),
+		ServiceName:    envString("OTEL_SERVICE_NAME", "omni-infra-provider-truenas"),
+		ServiceVersion: version,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize telemetry: %w", err)
+	}
+	defer telemetryShutdown(ctx)
 
 	// Read configuration from environment variables
 	omniEndpoint := os.Getenv("OMNI_ENDPOINT")

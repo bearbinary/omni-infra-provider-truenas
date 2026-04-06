@@ -7,8 +7,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   # Run tests before releasing — gate the release on CI passing
@@ -30,6 +29,9 @@ jobs:
   release:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     # Only release on tag pushes or main branch pushes
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     steps:

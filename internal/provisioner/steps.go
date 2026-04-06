@@ -12,11 +12,18 @@ import (
 
 	"github.com/siderolabs/omni/client/pkg/constants"
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
+
+var provTracer = otel.Tracer("truenas-provisioner")
 
 // Default extensions included in every TrueNAS VM.
 var defaultExtensions = []string{
@@ -26,7 +33,17 @@ var defaultExtensions = []string{
 }
 
 // stepCreateSchematic generates a Talos image factory schematic ID.
-func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) error {
+func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+	ctx, span := provTracer.Start(ctx, "provision.createSchematic",
+		trace.WithAttributes(attribute.String("request_id", pctx.GetRequestID())),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 	// Connection params include SideroLink endpoint and join token with encoded request ID.
 	// We use WithoutConnectionParams() to skip the SDK's built-in embedding (which conflicts
 	// with WithEncodeRequestIDsIntoTokens), then pass them ourselves via WithExtraKernelArgs.
@@ -57,7 +74,17 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 }
 
 // stepUploadISO downloads the Talos ISO and uploads it to TrueNAS.
-func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) error {
+func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+	ctx, span := provTracer.Start(ctx, "provision.uploadISO",
+		trace.WithAttributes(attribute.String("request_id", pctx.GetRequestID())),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 	pctx.State.TypedSpec().Value.TalosVersion = pctx.GetTalosVersion()
 
 	var data Data
@@ -146,7 +173,20 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 }
 
 // stepCreateVM creates the VM on TrueNAS with disk, CDROM, and NIC devices.
-func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) error {
+func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+	ctx, span := provTracer.Start(ctx, "provision.createVM",
+		trace.WithAttributes(attribute.String("request_id", pctx.GetRequestID())),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			if telemetry.VMsErrored != nil {
+				telemetry.VMsErrored.Add(ctx, 1)
+			}
+		}
+		span.End()
+	}()
 	state := pctx.State.TypedSpec().Value
 
 	// If we already have a VM ID, check its status
@@ -160,6 +200,9 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			state.VmId = 0
 		} else if vm.Status.State == "RUNNING" {
 			logger.Info("VM is already running", zap.Int("vm_id", vm.ID))
+			if telemetry.VMsProvisioned != nil {
+				telemetry.VMsProvisioned.Add(ctx, 1)
+			}
 
 			return nil
 		} else if vm.Status.State == "STOPPED" {

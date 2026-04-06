@@ -12,6 +12,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
 
 // Client wraps the TrueNAS JSON-RPC 2.0 API.
@@ -87,9 +95,32 @@ func (c *Client) Close() error {
 	return c.transport.Close()
 }
 
+var tracer = otel.Tracer("truenas-client")
+
 // call executes a JSON-RPC method and decodes the result.
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
-	return c.transport.Call(ctx, method, params, result)
+	ctx, span := tracer.Start(ctx, "truenas."+method,
+		trace.WithAttributes(attribute.String("rpc.method", method)),
+	)
+	defer span.End()
+
+	start := time.Now()
+
+	err := c.transport.Call(ctx, method, params, result)
+
+	duration := time.Since(start).Seconds()
+	if telemetry.APICallDuration != nil {
+		telemetry.APICallDuration.Record(ctx, duration,
+			telemetry.WithMethod(method),
+		)
+	}
+
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+
+	return err
 }
 
 // Ping checks if the TrueNAS API is reachable.

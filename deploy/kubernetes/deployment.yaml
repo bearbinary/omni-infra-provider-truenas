@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: provider
-          image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
+          image: ghcr.io/bearbinary/omni-infra-provider-truenas:v0.2.0  # Update to match your release tag
           envFrom:
             - configMapRef:
                 name: omni-infra-provider-truenas
