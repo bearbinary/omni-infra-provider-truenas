@@ -190,14 +190,39 @@ Fields left blank use the provider's defaults (`DEFAULT_POOL`, `DEFAULT_NIC_ATTA
 
 **4. Set the desired replica count** and create the cluster. The provider will automatically provision VMs on TrueNAS.
 
+### Recommended MachineClasses
+
+| Class | CPUs | Memory | Disk | Use Case |
+|---|---|---|---|---|
+| `truenas-control-plane` | 2 | 2048 MiB | 20 GiB | Control plane nodes (etcd + API server) |
+| `truenas-worker` | 4 | 8192 MiB | 80 GiB | Worker nodes (application workloads) |
+
+Example — control plane (smaller, runs etcd + API server):
+
+```yaml
+cpus: 2
+memory: 2048
+disk_size: 20
+```
+
+Example — worker (larger, runs application workloads):
+
+```yaml
+cpus: 4
+memory: 8192
+disk_size: 80
+```
+
+> **Note:** Talos requires a minimum of 2 GiB RAM for control plane nodes. 1 GiB is not supported.
+
 ### MachineClass Config Reference
 
 These fields go in the MachineClass `configpatch` (CLI) or the provider config form (UI):
 
 ```yaml
 cpus: 2              # Required. Virtual CPUs (minimum: 1)
-memory: 4096         # Required. Memory in MiB (minimum: 1024)
-disk_size: 40        # Required. Root disk in GiB (minimum: 10)
+memory: 2048         # Required. Memory in MiB (minimum: 1024, recommend 2048+ for control planes)
+disk_size: 20        # Required. Root disk in GiB (minimum: 10)
 pool: "default"      # Optional. ZFS pool (defaults to DEFAULT_POOL)
 nic_attach: "br100"  # Optional. NIC target (defaults to DEFAULT_NIC_ATTACH)
 boot_method: "UEFI"  # Optional. UEFI or BIOS (defaults to UEFI)
