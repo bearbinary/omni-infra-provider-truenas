@@ -51,10 +51,10 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 		if len(errs) > 0 {
 			return fmt.Errorf("telemetry shutdown errors: %v", errs)
 		}
+
 		return nil
 	}
 
-	// If no OTEL endpoint, skip SDK initialization entirely
 	if cfg.OTELEndpoint == "" && cfg.PyroscopeURL == "" {
 		return shutdown, nil
 	}
@@ -70,96 +70,97 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 	}
 
 	if cfg.OTELEndpoint != "" {
-		// Trace provider
-		traceOpts := []otlptracegrpc.Option{
-			otlptracegrpc.WithEndpoint(cfg.OTELEndpoint),
-		}
-		if cfg.OTELInsecure {
-			traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
-		}
-
-		traceExporter, err := otlptracegrpc.New(ctx, traceOpts...)
+		fns, err := initOTEL(ctx, cfg, res)
 		if err != nil {
-			return shutdown, fmt.Errorf("failed to create trace exporter: %w", err)
+			return shutdown, err
 		}
 
-		tp := sdktrace.NewTracerProvider(
-			sdktrace.WithBatcher(traceExporter),
-			sdktrace.WithResource(res),
-		)
-		otel.SetTracerProvider(tp)
-		shutdownFuncs = append(shutdownFuncs, tp.Shutdown)
-
-		// Metric provider
-		metricOpts := []otlpmetricgrpc.Option{
-			otlpmetricgrpc.WithEndpoint(cfg.OTELEndpoint),
-		}
-		if cfg.OTELInsecure {
-			metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
-		}
-
-		metricExporter, err := otlpmetricgrpc.New(ctx, metricOpts...)
-		if err != nil {
-			return shutdown, fmt.Errorf("failed to create metric exporter: %w", err)
-		}
-
-		mp := sdkmetric.NewMeterProvider(
-			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(15*time.Second))),
-			sdkmetric.WithResource(res),
-		)
-		otel.SetMeterProvider(mp)
-		shutdownFuncs = append(shutdownFuncs, mp.Shutdown)
-
-		// Log provider
-		logOpts := []otlploggrpc.Option{
-			otlploggrpc.WithEndpoint(cfg.OTELEndpoint),
-		}
-		if cfg.OTELInsecure {
-			logOpts = append(logOpts, otlploggrpc.WithInsecure())
-		}
-
-		logExporter, err := otlploggrpc.New(ctx, logOpts...)
-		if err != nil {
-			return shutdown, fmt.Errorf("failed to create log exporter: %w", err)
-		}
-
-		lp := sdklog.NewLoggerProvider(
-			sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
-			sdklog.WithResource(res),
-		)
-		global.SetLoggerProvider(lp)
-		shutdownFuncs = append(shutdownFuncs, lp.Shutdown)
-
-		initMetrics()
+		shutdownFuncs = append(shutdownFuncs, fns...)
 	}
 
-	// Pyroscope
 	if cfg.PyroscopeURL != "" {
-		profiler, err := pyroscope.Start(pyroscope.Config{
-			ApplicationName: cfg.ServiceName,
-			ServerAddress:   cfg.PyroscopeURL,
-			Tags:            map[string]string{"version": cfg.ServiceVersion},
-			ProfileTypes: []pyroscope.ProfileType{
-				pyroscope.ProfileCPU,
-				pyroscope.ProfileAllocObjects,
-				pyroscope.ProfileAllocSpace,
-				pyroscope.ProfileInuseObjects,
-				pyroscope.ProfileInuseSpace,
-				pyroscope.ProfileGoroutines,
-			},
-		})
+		fn, err := initPyroscope(cfg)
 		if err != nil {
-			return shutdown, fmt.Errorf("failed to start pyroscope: %w", err)
+			return shutdown, err
 		}
 
-		shutdownFuncs = append(shutdownFuncs, func(_ context.Context) error {
-			return profiler.Stop()
-		})
-
-		// Enable mutex and block profiling for richer flame graphs
-		runtime.SetMutexProfileFraction(5)
-		runtime.SetBlockProfileRate(5)
+		shutdownFuncs = append(shutdownFuncs, fn)
 	}
 
 	return shutdown, nil
+}
+
+func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(context.Context) error, error) {
+	var shutdownFuncs []func(context.Context) error
+
+	traceOpts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(cfg.OTELEndpoint)}
+	metricOpts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(cfg.OTELEndpoint)}
+	logOpts := []otlploggrpc.Option{otlploggrpc.WithEndpoint(cfg.OTELEndpoint)}
+
+	if cfg.OTELInsecure {
+		traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
+		metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
+		logOpts = append(logOpts, otlploggrpc.WithInsecure())
+	}
+
+	// Traces
+	traceExporter, err := otlptracegrpc.New(ctx, traceOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
+	}
+
+	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(traceExporter), sdktrace.WithResource(res))
+	otel.SetTracerProvider(tp)
+	shutdownFuncs = append(shutdownFuncs, tp.Shutdown)
+
+	// Metrics
+	metricExporter, err := otlpmetricgrpc.New(ctx, metricOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create metric exporter: %w", err)
+	}
+
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(15*time.Second))),
+		sdkmetric.WithResource(res),
+	)
+	otel.SetMeterProvider(mp)
+	shutdownFuncs = append(shutdownFuncs, mp.Shutdown)
+
+	// Logs
+	logExporter, err := otlploggrpc.New(ctx, logOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log exporter: %w", err)
+	}
+
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)), sdklog.WithResource(res))
+	global.SetLoggerProvider(lp)
+	shutdownFuncs = append(shutdownFuncs, lp.Shutdown)
+
+	initMetrics()
+
+	return shutdownFuncs, nil
+}
+
+func initPyroscope(cfg Config) (func(context.Context) error, error) {
+	profiler, err := pyroscope.Start(pyroscope.Config{
+		ApplicationName: cfg.ServiceName,
+		ServerAddress:   cfg.PyroscopeURL,
+		Tags:            map[string]string{"version": cfg.ServiceVersion},
+		ProfileTypes: []pyroscope.ProfileType{
+			pyroscope.ProfileCPU,
+			pyroscope.ProfileAllocObjects,
+			pyroscope.ProfileAllocSpace,
+			pyroscope.ProfileInuseObjects,
+			pyroscope.ProfileInuseSpace,
+			pyroscope.ProfileGoroutines,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to start pyroscope: %w", err)
+	}
+
+	runtime.SetMutexProfileFraction(5)
+	runtime.SetBlockProfileRate(5)
+
+	return func(_ context.Context) error { return profiler.Stop() }, nil
 }

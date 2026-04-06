@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
+	"github.com/bearbinary/omni-infra-provider-truenas/api/specs"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
@@ -189,32 +190,11 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		span.End()
 	}()
 	state := pctx.State.TypedSpec().Value
+	vmName := "omni_" + strings.ReplaceAll(pctx.GetRequestID(), "-", "_")
 
-	// If we already have a VM ID, check its status
-	if state.VmId != 0 {
-		vm, err := p.client.GetVM(ctx, int(state.VmId))
-		if err != nil {
-			if !isNotFound(err) {
-				return fmt.Errorf("failed to get VM: %w", err)
-			}
-			// VM was deleted externally, reset and recreate
-			state.VmId = 0
-		} else if vm.Status.State == "RUNNING" {
-			logger.Info("VM is already running", zap.Int("vm_id", vm.ID))
-			p.TrackVMName("omni_" + strings.ReplaceAll(pctx.GetRequestID(), "-", "_"))
-			if telemetry.VMsProvisioned != nil {
-				telemetry.VMsProvisioned.Add(ctx, 1)
-			}
-
-			return nil
-		} else if vm.Status.State == "STOPPED" {
-			// VM exists but stopped, start it
-			if err := p.client.StartVM(ctx, vm.ID); err != nil {
-				return fmt.Errorf("failed to start existing VM: %w", err)
-			}
-
-			return provision.NewRetryInterval(10 * time.Second)
-		}
+	// Check if VM already exists (by ID or name) — handles restarts and idempotency
+	if result := p.checkExistingVM(ctx, logger, state, vmName); result != nil {
+		return *result
 	}
 
 	var data Data
@@ -224,34 +204,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	data.ApplyDefaults(p.config)
 
-	requestID := pctx.GetRequestID()
-	// TrueNAS VM names only allow alphanumeric characters and underscores
-	vmName := "omni_" + strings.ReplaceAll(requestID, "-", "_")
-
-	// Check if VM already exists by name (idempotency)
-	existingVM, err := p.client.FindVMByName(ctx, vmName)
-	if err != nil {
-		return fmt.Errorf("failed to check for existing VM: %w", err)
-	}
-
-	if existingVM != nil {
-		state.VmId = int32(existingVM.ID)
-
-		if existingVM.Status.State == "RUNNING" {
-			logger.Info("VM already exists and is running", zap.String("name", vmName))
-
-			return nil
-		}
-
-		if err := p.client.StartVM(ctx, existingVM.ID); err != nil {
-			return fmt.Errorf("failed to start existing VM: %w", err)
-		}
-
-		return provision.NewRetryInterval(10 * time.Second)
-	}
-
 	// Create zvol for the VM disk
-	zvolPath := data.Pool + "/omni-vms/" + requestID
+	zvolPath := data.Pool + "/omni-vms/" + pctx.GetRequestID()
 
 	// Ensure parent dataset exists
 	if err := p.client.EnsureDataset(ctx, data.Pool+"/omni-vms"); err != nil {
@@ -361,6 +315,61 @@ func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, p
 	logger.Info("CDROM removed — VM will boot directly from disk on next restart")
 
 	return nil
+}
+
+// checkExistingVM checks if a VM already exists by ID or name.
+// Returns a pointer to the error to return (nil means "continue creating"), or nil if no VM found.
+func (p *Provisioner) checkExistingVM(ctx context.Context, logger *zap.Logger, state *specs.MachineSpec, vmName string) *error {
+	if state.VmId != 0 {
+		vm, err := p.client.GetVM(ctx, int(state.VmId))
+		if err != nil && !isNotFound(err) {
+			err = fmt.Errorf("failed to get VM: %w", err)
+			return &err
+		}
+
+		if err == nil {
+			return p.handleExistingVM(ctx, logger, vm, vmName)
+		}
+
+		// VM was deleted externally, reset
+		state.VmId = 0
+	}
+
+	// Check by name (idempotency)
+	existingVM, err := p.client.FindVMByName(ctx, vmName)
+	if err != nil {
+		err = fmt.Errorf("failed to check for existing VM: %w", err)
+		return &err
+	}
+
+	if existingVM != nil {
+		state.VmId = int32(existingVM.ID)
+		return p.handleExistingVM(ctx, logger, existingVM, vmName)
+	}
+
+	return nil // No existing VM — proceed with creation
+}
+
+func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, vm *client.VM, vmName string) *error {
+	if vm.Status.State == "RUNNING" {
+		logger.Info("VM is already running", zap.Int("vm_id", vm.ID))
+		p.TrackVMName(vmName)
+
+		if telemetry.VMsProvisioned != nil {
+			telemetry.VMsProvisioned.Add(ctx, 1)
+		}
+
+		var nilErr error
+		return &nilErr
+	}
+
+	if err := p.client.StartVM(ctx, vm.ID); err != nil {
+		err = fmt.Errorf("failed to start existing VM: %w", err)
+		return &err
+	}
+
+	retryErr := provision.NewRetryInterval(10 * time.Second)
+	return &retryErr
 }
 
 func isNotFound(err error) bool {
