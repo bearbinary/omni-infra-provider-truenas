@@ -76,9 +76,22 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 
 	state := pctx.State.TypedSpec().Value
 
-	// Auto-snapshot before Talos version upgrade
-	if state.ZvolPath != "" && state.TalosVersion != "" && state.TalosVersion != pctx.GetTalosVersion() {
-		p.snapshotBeforeUpgrade(ctx, logger, state.ZvolPath, state.TalosVersion, pctx.GetTalosVersion())
+	// Detect Talos version upgrade
+	isUpgrade := state.ZvolPath != "" && state.TalosVersion != "" && state.TalosVersion != pctx.GetTalosVersion()
+	if isUpgrade {
+		logger.Info("Talos version upgrade detected",
+			zap.String("from", state.TalosVersion),
+			zap.String("to", pctx.GetTalosVersion()),
+		)
+
+		// Auto-snapshot the zvol before upgrade
+		snapID := p.snapshotBeforeUpgrade(ctx, logger, state.ZvolPath, state.TalosVersion, pctx.GetTalosVersion())
+		state.LastUpgradeSnapshot = snapID
+
+		// Swap the CDROM to the new ISO (if still attached)
+		if state.VmId != 0 && state.CdromDeviceId != 0 {
+			p.swapCDROMForUpgrade(ctx, logger, state, pctx)
+		}
 	}
 
 	state.Schematic = schematic
@@ -374,8 +387,10 @@ func (p *Provisioner) maybeResizeZvol(ctx context.Context, logger *zap.Logger, z
 }
 
 // snapshotBeforeUpgrade creates a ZFS snapshot before a Talos version upgrade.
-func (p *Provisioner) snapshotBeforeUpgrade(ctx context.Context, logger *zap.Logger, zvolPath, oldVersion, newVersion string) {
+// Returns the full snapshot ID (dataset@snapname) or empty string on failure.
+func (p *Provisioner) snapshotBeforeUpgrade(ctx context.Context, logger *zap.Logger, zvolPath, oldVersion, newVersion string) string {
 	snapName := fmt.Sprintf("omni-pre-upgrade-%s-%d", newVersion, time.Now().Unix())
+	snapID := zvolPath + "@" + snapName
 
 	logger.Info("creating pre-upgrade snapshot",
 		zap.String("zvol", zvolPath),
@@ -390,7 +405,7 @@ func (p *Provisioner) snapshotBeforeUpgrade(ctx context.Context, logger *zap.Log
 			zap.Error(err),
 		)
 
-		return
+		return ""
 	}
 
 	if telemetry.SnapshotsCreated != nil {
@@ -399,6 +414,41 @@ func (p *Provisioner) snapshotBeforeUpgrade(ctx context.Context, logger *zap.Log
 
 	// Enforce retention: keep only the last 3 snapshots
 	p.enforceSnapshotRetention(ctx, logger, zvolPath, 3)
+
+	return snapID
+}
+
+// swapCDROMForUpgrade updates the CDROM device to point to the new ISO.
+// This ensures that if the VM reboots from CDROM (before CDROM removal), it gets the correct Talos version.
+func (p *Provisioner) swapCDROMForUpgrade(ctx context.Context, logger *zap.Logger, state *specs.MachineSpec, pctx provision.Context[*resources.Machine]) {
+	var data Data
+	if err := pctx.UnmarshalProviderData(&data); err != nil {
+		logger.Warn("could not unmarshal provider data for CDROM swap", zap.Error(err))
+
+		return
+	}
+
+	data.ApplyDefaults(p.config)
+
+	isoPath := "/mnt/" + data.Pool + "/talos-iso/" + state.ImageId + ".iso"
+
+	logger.Info("swapping CDROM to new ISO for upgrade",
+		zap.Int32("vm_id", state.VmId),
+		zap.String("iso_path", isoPath),
+	)
+
+	dev, err := p.client.SwapCDROM(ctx, int(state.VmId), isoPath)
+	if err != nil {
+		logger.Warn("failed to swap CDROM — non-fatal, Omni handles upgrades via config",
+			zap.Error(err),
+		)
+
+		return
+	}
+
+	state.CdromDeviceId = int32(dev.ID)
+
+	logger.Info("CDROM swapped to new ISO", zap.Int("device_id", dev.ID))
 }
 
 // enforceSnapshotRetention keeps only the last N snapshots for a dataset.
@@ -435,6 +485,39 @@ func (p *Provisioner) enforceSnapshotRetention(ctx context.Context, logger *zap.
 
 		if err := p.client.DeleteSnapshot(ctx, s.ID); err != nil {
 			logger.Warn("failed to delete old snapshot", zap.String("snapshot", s.ID), zap.Error(err))
+		}
+	}
+}
+
+// resetNVRAMIfNeeded checks if a VM's NVRAM needs resetting (e.g., after OVMF firmware update).
+// TrueNAS VMs may fail to boot after firmware updates if the NVRAM is stale.
+// This is a best-effort operation — failure is non-fatal.
+func (p *Provisioner) resetNVRAMIfNeeded(ctx context.Context, logger *zap.Logger, vmID int) {
+	vm, err := p.client.GetVM(ctx, vmID)
+	if err != nil {
+		return
+	}
+
+	// If the VM is in ERROR state, it may be a firmware mismatch — try NVRAM reset
+	if vm.Status.State == "ERROR" {
+		logger.Info("VM in ERROR state — attempting NVRAM reset",
+			zap.Int("vm_id", vmID),
+		)
+
+		if err := p.client.ResetVMNVRAM(ctx, vmID); err != nil {
+			logger.Warn("NVRAM reset failed — may need manual intervention",
+				zap.Int("vm_id", vmID),
+				zap.Error(err),
+			)
+
+			return
+		}
+
+		logger.Info("NVRAM reset successful — restarting VM", zap.Int("vm_id", vmID))
+
+		// Try to start the VM after NVRAM reset
+		if err := p.client.StartVM(ctx, vmID); err != nil {
+			logger.Warn("failed to start VM after NVRAM reset", zap.Int("vm_id", vmID), zap.Error(err))
 		}
 	}
 }
@@ -483,6 +566,14 @@ func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, 
 
 		var nilErr error
 		return &nilErr
+	}
+
+	if vm.Status.State == "ERROR" {
+		// VM in error state — attempt NVRAM reset (firmware mismatch recovery)
+		p.resetNVRAMIfNeeded(ctx, logger, vm.ID)
+
+		retryErr := provision.NewRetryInterval(30 * time.Second)
+		return &retryErr
 	}
 
 	if err := p.client.StartVM(ctx, vm.ID); err != nil {

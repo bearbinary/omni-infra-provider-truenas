@@ -76,6 +76,83 @@ func (c *Client) DeleteDevice(ctx context.Context, id int) error {
 	return nil
 }
 
+// UpdateDevice updates a device's attributes.
+// JSON-RPC method: vm.device.update
+func (c *Client) UpdateDevice(ctx context.Context, id int, attrs map[string]any) (*Device, error) {
+	var dev Device
+
+	params := []any{id, map[string]any{"attributes": attrs}}
+
+	if err := c.call(ctx, "vm.device.update", params, &dev); err != nil {
+		return nil, fmt.Errorf("vm.device.update (id=%d) failed: %w", id, err)
+	}
+
+	return &dev, nil
+}
+
+// ListDevices returns all devices attached to a VM.
+// JSON-RPC method: vm.device.query with filter [["vm", "=", vmID]]
+func (c *Client) ListDevices(ctx context.Context, vmID int) ([]Device, error) {
+	filter := []any{
+		[]any{[]any{"vm", "=", vmID}},
+	}
+
+	var devices []Device
+
+	if err := c.call(ctx, "vm.device.query", filter, &devices); err != nil {
+		return nil, fmt.Errorf("vm.device.query (vm=%d) failed: %w", vmID, err)
+	}
+
+	return devices, nil
+}
+
+// FindCDROM finds the CDROM device on a VM, if any.
+func (c *Client) FindCDROM(ctx context.Context, vmID int) (*Device, error) {
+	devices, err := c.ListDevices(ctx, vmID)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, d := range devices {
+		if dtype, _ := d.Attributes["dtype"].(string); dtype == "CDROM" {
+			return &devices[i], nil
+		}
+	}
+
+	return nil, nil
+}
+
+// SwapCDROM updates the CDROM device to point to a new ISO path.
+// If no CDROM exists, attaches a new one.
+func (c *Client) SwapCDROM(ctx context.Context, vmID int, isoPath string) (*Device, error) {
+	existing, err := c.FindCDROM(ctx, vmID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find CDROM: %w", err)
+	}
+
+	if existing != nil {
+		return c.UpdateDevice(ctx, existing.ID, map[string]any{
+			"dtype": "CDROM",
+			"path":  isoPath,
+		})
+	}
+
+	return c.AddCDROM(ctx, vmID, isoPath)
+}
+
+// ResetVMNVRAM deletes the VM's NVRAM file to force firmware re-initialization.
+// This is needed when TrueNAS updates OVMF firmware.
+// JSON-RPC method: vm.update with remove_nvram=true (TrueNAS 25.04+)
+func (c *Client) ResetVMNVRAM(ctx context.Context, vmID int) error {
+	params := []any{vmID, map[string]any{"remove_nvram": true}}
+
+	if err := c.call(ctx, "vm.update", params, nil); err != nil {
+		return fmt.Errorf("vm.update (reset NVRAM, id=%d) failed: %w", vmID, err)
+	}
+
+	return nil
+}
+
 // AddDisk attaches a DISK device to a VM pointing to a zvol path.
 func (c *Client) AddDisk(ctx context.Context, vmID int, zvolPath string) (*Device, error) {
 	return c.AddDevice(ctx, AddDeviceRequest{

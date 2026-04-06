@@ -23,16 +23,17 @@ const (
 
 // MachineSpec is stored in Omni in the infra provisioner state.
 type MachineSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Uuid          string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
-	Schematic     string                 `protobuf:"bytes,2,opt,name=schematic,proto3" json:"schematic,omitempty"`
-	TalosVersion  string                 `protobuf:"bytes,3,opt,name=talos_version,json=talosVersion,proto3" json:"talos_version,omitempty"`
-	ImageId       string                 `protobuf:"bytes,4,opt,name=image_id,json=imageId,proto3" json:"image_id,omitempty"`
-	VmId          int32                  `protobuf:"varint,5,opt,name=vm_id,json=vmId,proto3" json:"vm_id,omitempty"`
-	ZvolPath      string                 `protobuf:"bytes,6,opt,name=zvol_path,json=zvolPath,proto3" json:"zvol_path,omitempty"`
-	CdromDeviceId int32                  `protobuf:"varint,7,opt,name=cdrom_device_id,json=cdromDeviceId,proto3" json:"cdrom_device_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Uuid                string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
+	Schematic           string                 `protobuf:"bytes,2,opt,name=schematic,proto3" json:"schematic,omitempty"`
+	TalosVersion        string                 `protobuf:"bytes,3,opt,name=talos_version,json=talosVersion,proto3" json:"talos_version,omitempty"`
+	ImageId             string                 `protobuf:"bytes,4,opt,name=image_id,json=imageId,proto3" json:"image_id,omitempty"`
+	VmId                int32                  `protobuf:"varint,5,opt,name=vm_id,json=vmId,proto3" json:"vm_id,omitempty"`
+	ZvolPath            string                 `protobuf:"bytes,6,opt,name=zvol_path,json=zvolPath,proto3" json:"zvol_path,omitempty"`
+	CdromDeviceId       int32                  `protobuf:"varint,7,opt,name=cdrom_device_id,json=cdromDeviceId,proto3" json:"cdrom_device_id,omitempty"`
+	LastUpgradeSnapshot string                 `protobuf:"bytes,8,opt,name=last_upgrade_snapshot,json=lastUpgradeSnapshot,proto3" json:"last_upgrade_snapshot,omitempty"` // Snapshot ID from the most recent pre-upgrade snapshot
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *MachineSpec) Reset() {
@@ -114,11 +115,18 @@ func (x *MachineSpec) GetCdromDeviceId() int32 {
 	return 0
 }
 
+func (x *MachineSpec) GetLastUpgradeSnapshot() string {
+	if x != nil {
+		return x.LastUpgradeSnapshot
+	}
+	return ""
+}
+
 var File_api_specs_specs_proto protoreflect.FileDescriptor
 
 const file_api_specs_specs_proto_rawDesc = "" +
 	"\n" +
-	"\x15api/specs/specs.proto\x12\ftruenasspecs\"\xd9\x01\n" +
+	"\x15api/specs/specs.proto\x12\ftruenasspecs\"\x8d\x02\n" +
 	"\vMachineSpec\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1c\n" +
 	"\tschematic\x18\x02 \x01(\tR\tschematic\x12#\n" +
@@ -126,7 +134,8 @@ const file_api_specs_specs_proto_rawDesc = "" +
 	"\bimage_id\x18\x04 \x01(\tR\aimageId\x12\x13\n" +
 	"\x05vm_id\x18\x05 \x01(\x05R\x04vmId\x12\x1b\n" +
 	"\tzvol_path\x18\x06 \x01(\tR\bzvolPath\x12&\n" +
-	"\x0fcdrom_device_id\x18\a \x01(\x05R\rcdromDeviceIdB=Z;github.com/bearbinary/omni-infra-provider-truenas/api/specsb\x06proto3"
+	"\x0fcdrom_device_id\x18\a \x01(\x05R\rcdromDeviceId\x122\n" +
+	"\x15last_upgrade_snapshot\x18\b \x01(\tR\x13lastUpgradeSnapshotB=Z;github.com/bearbinary/omni-infra-provider-truenas/api/specsb\x06proto3"
 
 var (
 	file_api_specs_specs_proto_rawDescOnce sync.Once

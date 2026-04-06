@@ -9,6 +9,11 @@ Tracked improvements for future releases.
 - **Error Reporting** — User-friendly error messages for Omni UI (v0.4.0)
 - **Rate Limiting** — Semaphore-based API call limiter (v0.5.0)
 - **Resource Pre-checks** — Pool free space check before zvol creation (v0.5.0)
+- **Disk Resize** — Online zvol grow when MachineClass disk_size increases (v0.6.0)
+- **Backup/Snapshot Support** — Auto-snapshot before Talos upgrades with retention policy (v0.6.0)
+- **Comprehensive QA** — 147 tests: e2e, contract, chaos, stress, telemetry integration (v0.7.0)
+- **Talos Upgrade Orchestration** — Version detection, pre-upgrade snapshot, CDROM swap to new ISO (v0.8.0)
+- **NVRAM Firmware Recovery** — Auto-detect ERROR state VMs, reset NVRAM, restart (v0.8.0)
 
 ---
 
@@ -34,28 +39,6 @@ Implementation:
 - Delete the dataset (with confirmation) on full cluster teardown
 - Track cluster dataset in MachineSpec protobuf state
 
-### Disk Resize
-Currently, changing `disk_size` in a MachineClass only affects new VMs. Support resizing existing zvols for running machines (ZFS supports online zvol resize).
-
-Implementation:
-- Add `ResizeZvol(ctx, path, newSizeGiB)` to the TrueNAS client using `pool.dataset.update` with `volsize`
-- In `stepCreateVM`, compare the existing zvol size with the requested `disk_size`
-- If the requested size is larger, resize the zvol online (grow only — shrinking is destructive and should be rejected)
-- Talos will detect the larger disk and expand the filesystem automatically
-- Add OTEL metric: `truenas.zvol.resized_total`
-
-### Backup/Snapshot Support
-Leverage ZFS snapshots for VM state backup. Snapshot zvols before Talos upgrades as a rollback mechanism.
-
-Implementation:
-- Add `CreateSnapshot(ctx, dataset, name)` and `RollbackSnapshot(ctx, dataset, name)` to the TrueNAS client using `zfs.snapshot.create` and `zfs.snapshot.rollback`
-- Add `ListSnapshots(ctx, dataset)` and `DeleteSnapshot(ctx, dataset, name)` for management
-- Auto-snapshot zvols before Talos version upgrades (detect version change in `stepCreateSchematic`)
-- Snapshot naming convention: `omni-pre-upgrade-<talosVersion>-<timestamp>`
-- Add a configurable retention policy: keep last N snapshots per VM (default: 3)
-- Expose snapshot operations via provider status for Omni UI visibility
-- Add OTEL metrics: `truenas.snapshots.created_total`, `truenas.snapshots.rolled_back_total`
-
 ### VM Migration Between Pools
 Move a running VM's zvol between pools (e.g., HDD → NVMe) using `zfs send/recv` without downtime. Useful when rebalancing storage or upgrading hardware.
 
@@ -69,7 +52,7 @@ Implementation:
 
 ## Networking
 
-### Static IP Assignment
+### Static IP Assignment?
 Control plane nodes should have predictable IPs for stable API server endpoints. Add `ip_address`, `gateway`, `dns` fields to MachineClass config.
 
 Implementation:
@@ -111,14 +94,6 @@ Implementation:
 - Add a pre-check: verify IOMMU is enabled on the host
 - Update `schema.json` with passthrough config
 
-### USB Device Passthrough
-Pass through USB devices (Zigbee/Z-Wave sticks, Coral USB TPU, security keys) to specific VMs.
-
-Implementation:
-- Add `usb_devices` array to `Data` struct
-- Query available USB devices via `vm.device.usb_passthrough_choices`
-- Attach during `stepCreateVM` with `dtype: "USB"`
-
 ---
 
 ## Multi-Node
@@ -144,22 +119,6 @@ Implementation:
 - Track replication state and lag in provider status
 
 ---
-
-## Lifecycle & Upgrades
-
-### Talos Upgrade Orchestration
-When Omni triggers a Talos version upgrade, the provider should orchestrate the process safely.
-
-Implementation:
-- Detect Talos version change in `stepCreateSchematic` (compare with stored `talos_version`)
-- Auto-snapshot the zvol before upgrade
-- Download the new ISO (new schematic with new version)
-- Swap the CDROM device to point to the new ISO (or just let Omni handle the upgrade via its normal flow)
-- Monitor upgrade success; rollback to snapshot on failure
-- Add OTEL span: `provision.talosUpgrade`
-
-### Automatic BIOS/UEFI Firmware Updates
-When TrueNAS updates OVMF firmware, VMs may need NVRAM resets. Detect firmware changes and handle gracefully.
 
 ---
 
