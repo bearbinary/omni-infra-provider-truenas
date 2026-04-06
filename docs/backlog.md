@@ -15,6 +15,13 @@ Tracked improvements for future releases.
 ### Disk Resize
 Currently, changing `disk_size` in a MachineClass only affects new VMs. Support resizing existing zvols for running machines (ZFS supports online zvol resize).
 
+Implementation:
+- Add `ResizeZvol(ctx, path, newSizeGiB)` to the TrueNAS client using `pool.dataset.update` with `volsize`
+- In `stepCreateVM`, compare the existing zvol size with the requested `disk_size`
+- If the requested size is larger, resize the zvol online (grow only — shrinking is destructive and should be rejected)
+- Talos will detect the larger disk and expand the filesystem automatically
+- Add OTEL metric: `truenas.zvol.resized_total`
+
 ### Multiple Pool Support
 Allow different MachineClasses to use different ZFS pools (e.g., NVMe pool for workers, HDD pool for archival). Already supported via the `pool` field in MachineClass config — just needs documentation and testing.
 
@@ -29,3 +36,12 @@ Ship default alerting rules for the OTEL metrics:
 
 ### Backup/Snapshot Support
 Leverage ZFS snapshots for VM state backup. Snapshot zvols before Talos upgrades as a rollback mechanism.
+
+Implementation:
+- Add `CreateSnapshot(ctx, dataset, name)` and `RollbackSnapshot(ctx, dataset, name)` to the TrueNAS client using `zfs.snapshot.create` and `zfs.snapshot.rollback`
+- Add `ListSnapshots(ctx, dataset)` and `DeleteSnapshot(ctx, dataset, name)` for management
+- Auto-snapshot zvols before Talos version upgrades (detect version change in `stepCreateSchematic`)
+- Snapshot naming convention: `omni-pre-upgrade-<talosVersion>-<timestamp>`
+- Add a configurable retention policy: keep last N snapshots per VM (default: 3)
+- Expose snapshot operations via provider status for Omni UI visibility
+- Add OTEL metrics: `truenas.snapshots.created_total`, `truenas.snapshots.rolled_back_total`
