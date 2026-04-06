@@ -152,7 +152,7 @@ docker run -d --network=host \
   -e TRUENAS_API_KEY="<key>" \
   -e DEFAULT_POOL="tank" \
   -e DEFAULT_NIC_ATTACH="br0" \
-  ghcr.io/zclifton/omni-infra-provider-truenas:latest
+  ghcr.io/bearbinary/omni-infra-provider-truenas:latest
 ```
 
 Or via Docker Compose on TrueNAS: paste `deploy/docker-compose.yaml` into Apps > Install via YAML.

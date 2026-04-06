@@ -1,5 +1,5 @@
 BINARY := omni-infra-provider-truenas
-IMAGE := ghcr.io/zclifton/$(BINARY)
+IMAGE := ghcr.io/bearbinary/$(BINARY)
 TAG ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: build test test-v test-integration lint image clean

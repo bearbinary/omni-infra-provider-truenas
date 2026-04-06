@@ -1,4 +1,4 @@
-module github.com/zclifton/omni-infra-provider-truenas
+module github.com/bearbinary/omni-infra-provider-truenas
 
 go 1.26.1
 

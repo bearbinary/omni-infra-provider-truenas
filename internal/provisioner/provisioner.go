@@ -2,8 +2,8 @@
 package provisioner
 
 import (
-	"github.com/zclifton/omni-infra-provider-truenas/internal/client"
-	"github.com/zclifton/omni-infra-provider-truenas/internal/resources"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
 	"golang.org/x/sync/singleflight"
 )

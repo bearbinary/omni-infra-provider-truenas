@@ -7,7 +7,7 @@ import (
 	"github.com/siderolabs/omni/client/pkg/omni/resources/infra"
 	"go.uber.org/zap"
 
-	"github.com/zclifton/omni-infra-provider-truenas/internal/resources"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
 )
 
 // Deprovision tears down the VM and cleans up storage.

@@ -14,8 +14,8 @@ import (
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
 	"go.uber.org/zap"
 
-	"github.com/zclifton/omni-infra-provider-truenas/internal/client"
-	"github.com/zclifton/omni-infra-provider-truenas/internal/resources"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
 )
 
 // Default extensions included in every TrueNAS VM.

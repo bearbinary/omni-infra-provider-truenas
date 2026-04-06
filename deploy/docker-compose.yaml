@@ -8,7 +8,7 @@
 
 services:
   omni-infra-provider-truenas:
-    image: ghcr.io/zclifton/omni-infra-provider-truenas:latest
+    image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
     restart: unless-stopped
     env_file:
       - path: .env

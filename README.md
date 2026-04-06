@@ -40,7 +40,7 @@ Paste into TrueNAS Apps > Discover > Install via YAML:
 ```yaml
 services:
   omni-infra-provider-truenas:
-    image: ghcr.io/zclifton/omni-infra-provider-truenas:latest
+    image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
     restart: unless-stopped
     volumes:
       - /var/run/middleware:/var/run/middleware:ro

@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: provider
-          image: ghcr.io/zclifton/omni-infra-provider-truenas:latest
+          image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
           envFrom:
             - configMapRef:
                 name: omni-infra-provider-truenas

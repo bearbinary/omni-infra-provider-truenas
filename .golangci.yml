@@ -1,0 +1,23 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - gocritic
+    - gofmt
+    - misspell
+
+issues:
+  exclude-rules:
+    # Allow nolint directives already in the codebase
+    - linters: [gosec]
+      text: "G402|G107"
+    # Test files can be more relaxed
+    - path: _test\.go
+      linters: [errcheck, gocritic]

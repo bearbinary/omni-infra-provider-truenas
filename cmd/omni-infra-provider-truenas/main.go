@@ -20,9 +20,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	truenasclient "github.com/zclifton/omni-infra-provider-truenas/internal/client"
-	"github.com/zclifton/omni-infra-provider-truenas/internal/provisioner"
-	"github.com/zclifton/omni-infra-provider-truenas/internal/resources/meta"
+	truenasclient "github.com/bearbinary/omni-infra-provider-truenas/internal/client"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/provisioner"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
 )
 
 //go:embed data/schema.json

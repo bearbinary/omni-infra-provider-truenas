@@ -8,8 +8,8 @@ import (
 	"github.com/cosi-project/runtime/pkg/resource/typed"
 	"github.com/siderolabs/omni/client/pkg/infra"
 
-	"github.com/zclifton/omni-infra-provider-truenas/api/specs"
-	providermeta "github.com/zclifton/omni-infra-provider-truenas/internal/resources/meta"
+	"github.com/bearbinary/omni-infra-provider-truenas/api/specs"
+	providermeta "github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
 )
 
 // NewMachine creates new Machine.

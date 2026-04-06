@@ -13,5 +13,5 @@ commonLabels:
   app.kubernetes.io/managed-by: kustomize
 
 images:
-  - name: ghcr.io/zclifton/omni-infra-provider-truenas
+  - name: ghcr.io/bearbinary/omni-infra-provider-truenas
     newTag: latest

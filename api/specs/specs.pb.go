@@ -117,7 +117,7 @@ const file_api_specs_specs_proto_rawDesc = "" +
 	"\rtalos_version\x18\x03 \x01(\tR\ftalosVersion\x12\x19\n" +
 	"\bimage_id\x18\x04 \x01(\tR\aimageId\x12\x13\n" +
 	"\x05vm_id\x18\x05 \x01(\x05R\x04vmId\x12\x1b\n" +
-	"\tzvol_path\x18\x06 \x01(\tR\bzvolPathB;Z9github.com/zclifton/omni-infra-provider-truenas/api/specsb\x06proto3"
+	"\tzvol_path\x18\x06 \x01(\tR\bzvolPathB;Z9github.com/bearbinary/omni-infra-provider-truenas/api/specsb\x06proto3"
 
 var (
 	file_api_specs_specs_proto_rawDescOnce sync.Once
