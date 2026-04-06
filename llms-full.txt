@@ -321,6 +321,7 @@ No breaking changes have been introduced from v0.1.0 through v0.7.0. Rolling bac
 ## For More Information
 
 - Full README: `README.md`
+- Beginner tutorial: `docs/getting-started.md` (NAS to Kubernetes, no prior experience needed)
 - Architecture with diagrams: `docs/architecture.md`
 - Detailed troubleshooting: `docs/troubleshooting.md`
 - Upgrade guide: `docs/upgrading.md`

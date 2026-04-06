@@ -76,6 +76,7 @@ All via environment variables:
 - docs/architecture.md: Detailed architecture with Mermaid diagrams
 - docs/troubleshooting.md: Common issues and solutions
 - docs/testing.md: Unit, integration, and E2E test setup
+- docs/getting-started.md: Beginner tutorial from NAS to running Kubernetes cluster (no prior experience needed)
 - docs/upgrading.md: Version upgrade guide and breaking changes
 - docs/provider-research.md: Internal research on all existing Omni provider implementations
 - docs/backlog.md: Feature roadmap

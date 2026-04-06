@@ -24,11 +24,12 @@
 
 <br />
 
+[Getting Started](docs/getting-started.md) ·
 [Quick Start](#quick-start) ·
 [Configuration](#configuration) ·
 [Usage](#usage) ·
 [Architecture](#architecture) ·
-[Development](#development)
+[FAQ](#faq)
 
 </div>
 
@@ -36,6 +37,8 @@
 
 > [!IMPORTANT]
 > **Requires TrueNAS SCALE 25.04+ (Fangtooth).** This provider uses the JSON-RPC 2.0 API exclusively. The legacy REST v2.0 API is **not supported**.
+
+> **New to Kubernetes?** Start with the [Getting Started guide](docs/getting-started.md) — a step-by-step tutorial from NAS to running cluster, no prior experience required.
 
 ---
 
@@ -389,6 +392,54 @@ Multi-platform binaries are built automatically on every release:
 - `darwin/amd64`, `darwin/arm64`
 
 Docker images are published to `ghcr.io/bearbinary/omni-infra-provider-truenas` with multi-arch support.
+
+---
+
+## FAQ
+
+<details>
+<summary><strong>Does Omni cost money?</strong></summary>
+
+Omni has a free tier for personal/homelab use. Check [omni.siderolabs.com](https://omni.siderolabs.com/) for current pricing. You can also self-host Omni.
+</details>
+
+<details>
+<summary><strong>Will this affect my NAS performance?</strong></summary>
+
+Yes — VMs share your NAS hardware (CPU, RAM, disk). Start small and monitor. You can remove VMs anytime if things slow down.
+</details>
+
+<details>
+<summary><strong>How much disk space do the VMs use?</strong></summary>
+
+Talos ISO: ~100 MB (cached once). Control plane: ~10 GB each. Worker: 40-100 GB each. All ZFS-compressed — actual usage is often less.
+</details>
+
+<details>
+<summary><strong>Can I use this without internet?</strong></summary>
+
+No. VMs need outbound HTTPS for Talos ISO download (first time, then cached) and SideroLink (WireGuard on port 443) to Omni. No inbound ports required.
+</details>
+
+<details>
+<summary><strong>Can I SSH into the Kubernetes nodes?</strong></summary>
+
+No. Talos Linux has no SSH by design. Manage nodes through `kubectl`, `talosctl`, and the Omni UI.
+</details>
+
+<details>
+<summary><strong>What if my NAS reboots?</strong></summary>
+
+VMs restart with TrueNAS. The provider auto-recovers and reconnects to Omni. Kubernetes restarts your workloads automatically.
+</details>
+
+<details>
+<summary><strong>What's the minimum hardware?</strong></summary>
+
+A 1-node cluster needs ~4 cores, 16 GB RAM, and 50 GB free disk (including what TrueNAS uses). See the [Getting Started guide](docs/getting-started.md#hardware-requirements) for full sizing.
+</details>
+
+For more questions, see the [Getting Started FAQ](docs/getting-started.md#faq).
 
 ---
 
