@@ -2,7 +2,6 @@ name: Release
 
 on:
   push:
-    branches: [main]
     tags:
       - "v*"
 
@@ -33,8 +32,6 @@ jobs:
       contents: write
       packages: write
       id-token: write  # Required for cosign keyless signing via Sigstore OIDC
-    # Only release on tag pushes or main branch pushes
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,31 +41,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # For main branch pushes without a tag, create an auto-tag
-      - name: Determine version
+      - name: Set version from tag
         id: version
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-            echo "is_new_tag=false" >> "$GITHUB_OUTPUT"
-          else
-            # Auto-generate next patch version from latest tag
-            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-            # Increment patch version
-            MAJOR=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f1)
-            MINOR=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f2)
-            PATCH=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f3)
-            NEXT_PATCH=$((PATCH + 1))
-            NEW_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
-            echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
-            echo "is_new_tag=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create tag (if auto-versioning)
-        if: steps.version.outputs.is_new_tag == 'true'
-        run: |
-          git tag ${{ steps.version.outputs.tag }}
-          git push origin ${{ steps.version.outputs.tag }}
+        run: echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         id: changelog
