@@ -168,6 +168,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
 
       # --- Supply Chain Security ---
 
@@ -187,8 +189,30 @@ jobs:
           artifact-name: sbom-${{ steps.version.outputs.tag }}.spdx.json
           output-file: _out/sbom.spdx.json
 
-      - name: Attach SBOM to release
+      - name: Attest SBOM to image
+        run: |
+          cosign attest --yes \
+            --oidc-issuer=https://token.actions.githubusercontent.com \
+            --predicate _out/sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/${{ github.repository }}@${{ steps.docker-push.outputs.digest }}
+
+      - name: Sign release binaries
+        run: |
+          for f in _out/omni-infra-provider-truenas-*; do
+            cosign sign-blob --yes \
+              --oidc-issuer=https://token.actions.githubusercontent.com \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.cert" \
+              "$f"
+          done
+
+      - name: Attach SBOM and signatures to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ steps.version.outputs.tag }} _out/sbom.spdx.json --clobber
+          gh release upload ${{ steps.version.outputs.tag }} \
+            _out/sbom.spdx.json \
+            _out/*.sig \
+            _out/*.cert \
+            --clobber

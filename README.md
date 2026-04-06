@@ -367,6 +367,28 @@ flowchart LR
 
 ---
 
+## Supply Chain Security
+
+All Docker images are signed with [cosign](https://docs.sigstore.dev/cosign/overview/) (keyless, via Sigstore). Every release includes an SBOM (SPDX) and binary signatures.
+
+### Verify Docker Image
+
+```bash
+cosign verify --certificate-identity-regexp="https://github.com/bearbinary/omni-infra-provider-truenas" --certificate-oidc-issuer="https://token.actions.githubusercontent.com" ghcr.io/bearbinary/omni-infra-provider-truenas:v0.9.2
+```
+
+### Verify Binary
+
+```bash
+cosign verify-blob --certificate omni-infra-provider-truenas-linux-amd64.cert --signature omni-infra-provider-truenas-linux-amd64.sig --certificate-identity-regexp="https://github.com/bearbinary/omni-infra-provider-truenas" --certificate-oidc-issuer="https://token.actions.githubusercontent.com" omni-infra-provider-truenas-linux-amd64
+```
+
+### View SBOM
+
+Download `sbom.spdx.json` from the [release assets](https://github.com/bearbinary/omni-infra-provider-truenas/releases/latest).
+
+---
+
 ## Development
 
 ```bash

@@ -1,3 +1,5 @@
+# TODO: Pin base images to digest for reproducibility.
+# Run: docker pull golang:1.26-alpine && docker inspect --format='{{index .RepoDigests 0}}'
 FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
