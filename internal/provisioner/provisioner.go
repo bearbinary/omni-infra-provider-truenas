@@ -2,6 +2,8 @@
 package provisioner
 
 import (
+	"sync"
+
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
@@ -20,14 +22,71 @@ type Provisioner struct {
 	client   *client.Client
 	config   ProviderConfig
 	isoGroup singleflight.Group
+
+	// Track active resources for cleanup
+	mu             sync.RWMutex
+	activeImageIDs map[string]bool
+	activeVMNames  map[string]bool
 }
 
 // NewProvisioner creates a new TrueNAS provisioner.
 func NewProvisioner(c *client.Client, cfg ProviderConfig) *Provisioner {
 	return &Provisioner{
-		client: c,
-		config: cfg,
+		client:         c,
+		config:         cfg,
+		activeImageIDs: make(map[string]bool),
+		activeVMNames:  make(map[string]bool),
 	}
+}
+
+// TrackImageID records an image ID as actively in use.
+func (p *Provisioner) TrackImageID(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.activeImageIDs[id] = true
+}
+
+// TrackVMName records a VM name as actively tracked by Omni.
+func (p *Provisioner) TrackVMName(name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.activeVMNames[name] = true
+}
+
+// UntrackVMName removes a VM name from tracking (called on deprovision).
+func (p *Provisioner) UntrackVMName(name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	delete(p.activeVMNames, name)
+}
+
+// ActiveImageIDs returns a snapshot of currently active image IDs.
+func (p *Provisioner) ActiveImageIDs() map[string]bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	result := make(map[string]bool, len(p.activeImageIDs))
+	for k, v := range p.activeImageIDs {
+		result[k] = v
+	}
+
+	return result
+}
+
+// ActiveVMNames returns a snapshot of currently active VM names.
+func (p *Provisioner) ActiveVMNames() map[string]bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	result := make(map[string]bool, len(p.activeVMNames))
+	for k, v := range p.activeVMNames {
+		result[k] = v
+	}
+
+	return result
 }
 
 // ProvisionSteps returns the ordered provision steps.

@@ -119,6 +119,7 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 	isoFileName := imageID + ".iso"
 
 	pctx.State.TypedSpec().Value.ImageId = imageID
+	p.TrackImageID(imageID)
 
 	// ISOs are cached under <pool>/talos-iso/, downloaded automatically from Image Factory
 	isoDataset := data.Pool + "/talos-iso"
@@ -200,6 +201,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			state.VmId = 0
 		} else if vm.Status.State == "RUNNING" {
 			logger.Info("VM is already running", zap.Int("vm_id", vm.ID))
+			p.TrackVMName("omni_" + strings.ReplaceAll(pctx.GetRequestID(), "-", "_"))
 			if telemetry.VMsProvisioned != nil {
 				telemetry.VMsProvisioned.Add(ctx, 1)
 			}
@@ -281,6 +283,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	state.VmId = int32(vm.ID)
 
 	logger.Info("created VM", zap.String("name", vmName), zap.Int("id", vm.ID))
+	p.TrackVMName(vmName)
 
 	// Attach CDROM with Talos ISO (cached under <pool>/talos-iso/)
 	isoPath := "/mnt/" + data.Pool + "/talos-iso/" + state.ImageId + ".iso"

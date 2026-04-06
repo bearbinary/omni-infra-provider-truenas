@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/cleanup"
 	truenasclient "github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/provisioner"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
@@ -139,6 +140,13 @@ func run() error {
 	if err := runStartupChecks(ctx, logger, tnClient, defaultPool, defaultNICAttach); err != nil {
 		return err
 	}
+
+	// Start background cleanup for stale ISOs and orphan VMs/zvols
+	cleaner := cleanup.New(tnClient, cleanup.Config{
+		Pool: defaultPool,
+	}, logger, prov.ActiveImageIDs, prov.ActiveVMNames)
+
+	go cleaner.Run(ctx)
 
 	logger.Info("starting TrueNAS infra provider",
 		zap.String("provider_id", meta.ProviderID),
