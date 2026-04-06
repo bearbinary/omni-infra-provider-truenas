@@ -28,7 +28,7 @@ type CreateVMRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	VCPUs       int    `json:"vcpus"`
-	Memory      int    `json:"memory"`   // MiB
+	Memory      int    `json:"memory"` // MiB
 	Bootloader  string `json:"bootloader"`
 	Autostart   bool   `json:"autostart"`
 	CPUMode     string `json:"cpu_mode,omitempty"` // HOST-PASSTHROUGH, HOST-MODEL, or CUSTOM (default)

@@ -255,8 +255,8 @@ func TestIntegration_VMLifecycle(t *testing.T) {
 	vmID := vm.ID
 
 	t.Cleanup(func() {
-		c.StopVM(context.Background(), vmID, true)  //nolint:errcheck
-		c.DeleteVM(context.Background(), vmID)       //nolint:errcheck
+		c.StopVM(context.Background(), vmID, true) //nolint:errcheck
+		c.DeleteVM(context.Background(), vmID)     //nolint:errcheck
 	})
 
 	// Get VM

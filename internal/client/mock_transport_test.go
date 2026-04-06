@@ -16,9 +16,11 @@ type mockTransport struct {
 	handler mockHandler
 }
 
-func (t *mockTransport) Name() string                                                     { return "mock" }
-func (t *mockTransport) Close() error                                                      { return nil }
-func (t *mockTransport) UploadFile(_ context.Context, _ string, _ io.Reader, _ int64) error { return nil }
+func (t *mockTransport) Name() string { return "mock" }
+func (t *mockTransport) Close() error { return nil }
+func (t *mockTransport) UploadFile(_ context.Context, _ string, _ io.Reader, _ int64) error {
+	return nil
+}
 
 func (t *mockTransport) Call(_ context.Context, method string, params any, result any) error {
 	rawParams, err := json.Marshal(params)

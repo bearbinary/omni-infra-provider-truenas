@@ -111,10 +111,10 @@ func (e *APIError) Error() string {
 
 // Common TrueNAS middleware error codes.
 const (
-	ErrCodeNotFound = 2    // ENOENT — resource does not exist
-	ErrCodeExists   = 17   // EEXIST — resource already exists
-	ErrCodeInvalid  = 11   // EINVAL — invalid argument (also used for "already exists" in some contexts)
-	ErrCodeDenied   = 13   // EACCES — permission denied
+	ErrCodeNotFound = 2  // ENOENT — resource does not exist
+	ErrCodeExists   = 17 // EEXIST — resource already exists
+	ErrCodeInvalid  = 11 // EINVAL — invalid argument (also used for "already exists" in some contexts)
+	ErrCodeDenied   = 13 // EACCES — permission denied
 )
 
 // IsNotFound returns true if the error indicates the resource was not found.

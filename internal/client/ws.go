@@ -33,11 +33,11 @@ type wsTransport struct {
 
 // TrueNAS WebSocket message types.
 type wsRequest struct {
-	Msg     string `json:"msg"`
-	Method  string `json:"method,omitempty"`
-	ID      string `json:"id,omitempty"`
-	Params  any    `json:"params,omitempty"`
-	Version string `json:"version,omitempty"`
+	Msg     string   `json:"msg"`
+	Method  string   `json:"method,omitempty"`
+	ID      string   `json:"id,omitempty"`
+	Params  any      `json:"params,omitempty"`
+	Version string   `json:"version,omitempty"`
 	Support []string `json:"support,omitempty"`
 }
 

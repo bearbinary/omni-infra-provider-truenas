@@ -17,8 +17,8 @@ type ProviderConfig struct {
 
 // Provisioner implements the Omni provision.Provisioner interface for TrueNAS.
 type Provisioner struct {
-	client *client.Client
-	config ProviderConfig
+	client   *client.Client
+	config   ProviderConfig
 	isoGroup singleflight.Group
 }
 
