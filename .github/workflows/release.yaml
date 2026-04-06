@@ -2,6 +2,7 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags:
       - "v*"
 
@@ -10,8 +11,27 @@ permissions:
   packages: write
 
 jobs:
-  release:
+  # Run tests before releasing — gate the release on CI passing
+  test:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    # Only release on tag pushes or main branch pushes
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,12 +41,83 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # For main branch pushes without a tag, create an auto-tag
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "is_new_tag=false" >> "$GITHUB_OUTPUT"
+          else
+            # Auto-generate next patch version from latest tag
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            # Increment patch version
+            MAJOR=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f1)
+            MINOR=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f2)
+            PATCH=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f3)
+            NEXT_PATCH=$((PATCH + 1))
+            NEW_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
+            echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+            echo "is_new_tag=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag (if auto-versioning)
+        if: steps.version.outputs.is_new_tag == 'true'
+        run: |
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin ${{ steps.version.outputs.tag }}
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          # Find the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+
+          if [ -z "$PREV_TAG" ]; then
+            # First release — all commits
+            RANGE="$TAG"
+          else
+            RANGE="${PREV_TAG}..${TAG}"
+          fi
+
+          {
+            echo "## What's Changed"
+            echo ""
+            # Group commits by type
+            FEATURES=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^[Aa]dd\|^[Ff]eat" 2>/dev/null || true)
+            FIXES=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^[Ff]ix" 2>/dev/null || true)
+            OTHER=$(git log "$RANGE" --pretty=format:"- %s (%h)" --invert-grep --grep="^[Aa]dd\|^[Ff]eat\|^[Ff]ix" 2>/dev/null || true)
+
+            if [ -n "$FEATURES" ]; then
+              echo "### Features"
+              echo "$FEATURES"
+              echo ""
+            fi
+            if [ -n "$FIXES" ]; then
+              echo "### Fixes"
+              echo "$FIXES"
+              echo ""
+            fi
+            if [ -n "$OTHER" ]; then
+              echo "### Other"
+              echo "$OTHER"
+              echo ""
+            fi
+
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG:-$(git rev-list --max-parents=0 HEAD | head -1)}...${TAG}"
+          } > CHANGELOG.md
+
+          cat CHANGELOG.md
+
       - name: Build binaries
         run: |
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o _out/omni-infra-provider-truenas-linux-amd64 ./cmd/omni-infra-provider-truenas
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o _out/omni-infra-provider-truenas-linux-arm64 ./cmd/omni-infra-provider-truenas
-          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o _out/omni-infra-provider-truenas-darwin-amd64 ./cmd/omni-infra-provider-truenas
-          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o _out/omni-infra-provider-truenas-darwin-arm64 ./cmd/omni-infra-provider-truenas
+          VERSION="${{ steps.version.outputs.tag }}"
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o _out/omni-infra-provider-truenas-linux-amd64 ./cmd/omni-infra-provider-truenas
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o _out/omni-infra-provider-truenas-linux-arm64 ./cmd/omni-infra-provider-truenas
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o _out/omni-infra-provider-truenas-darwin-amd64 ./cmd/omni-infra-provider-truenas
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o _out/omni-infra-provider-truenas-darwin-arm64 ./cmd/omni-infra-provider-truenas
 
       - name: Generate checksums
         run: |
@@ -36,7 +127,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          tag_name: ${{ steps.version.outputs.tag }}
+          body_path: CHANGELOG.md
           files: |
             _out/omni-infra-provider-truenas-*
             _out/checksums.txt
@@ -57,8 +149,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
             type=raw,value=latest
 
       - name: Build and push Docker image
