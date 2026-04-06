@@ -20,6 +20,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/bearbinary/omni-infra-provider-truenas?style=flat&color=blue)](https://github.com/bearbinary/omni-infra-provider-truenas/releases/latest)
 [![Docker Image](https://img.shields.io/badge/ghcr.io-omni--infra--provider--truenas-blue?logo=docker&logoColor=white)](https://ghcr.io/bearbinary/omni-infra-provider-truenas)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=bearbinary_omni-infra-provider-truenas&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=bearbinary_omni-infra-provider-truenas)
+[![Tests](https://img.shields.io/badge/tests-147-brightgreen?logo=testcafe&logoColor=white)](docs/testing.md)
 
 <br />
 
@@ -110,6 +111,8 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 ### Option 1: TrueNAS App (Recommended)
 
 Deploy directly on your TrueNAS server. The middleware Unix socket is mounted automatically — **no API key needed**.
+
+> If this app is available in your TrueNAS app catalog, install it from **Apps > Discover** for a guided setup with a config form. The [`truenas-app/`](truenas-app/) directory contains the full app definition with `questions.yaml` for the TrueNAS UI. For manual installation, use the compose config below.
 
 ```yaml
 # Paste into TrueNAS Apps > Discover > Install via YAML
@@ -376,7 +379,7 @@ make generate           # Regenerate protobuf from specs.proto
 
 Integration and E2E tests require a real TrueNAS SCALE instance. See [`docs/testing.md`](docs/testing.md) for setup instructions.
 
-For detailed system design, see [`docs/architecture.md`](docs/architecture.md). For common issues, see [`docs/troubleshooting.md`](docs/troubleshooting.md).
+For detailed system design, see [`docs/architecture.md`](docs/architecture.md). For common issues, see [`docs/troubleshooting.md`](docs/troubleshooting.md). For version upgrades, see [`docs/upgrading.md`](docs/upgrading.md).
 
 ### Binary Releases
 

@@ -59,6 +59,8 @@ All via environment variables (`.env` file loaded automatically). Key ones: `OMN
 - **`docs/troubleshooting.md`** — Common issues and solutions (startup failures, provisioning, debugging)
 - **`docs/testing.md`** — Unit, integration, and E2E test setup
 - **`docs/backlog.md`** — Feature roadmap and backlog items
+- **`docs/upgrading.md`** — Version upgrade guide and breaking changes
+- **`docs/provider-research.md`** — Internal research: analysis of all existing Omni providers (architecture patterns, boot methods, SDK usage)
 
 ## Contribution Model
 
