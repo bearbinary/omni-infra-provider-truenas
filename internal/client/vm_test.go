@@ -9,15 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testVMName = "omni-test-vm"
+
 func TestCreateVM_Success(t *testing.T) {
 	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
 		assert.Equal(t, "vm.create", method)
 
-		return VM{ID: 42, Name: "omni-test-vm", VCPUs: 2, Memory: 4096}, nil
+		return VM{ID: 42, Name: testVMName, VCPUs: 2, Memory: 4096}, nil
 	})
 
 	vm, err := c.CreateVM(context.Background(), CreateVMRequest{
-		Name:       "omni-test-vm",
+		Name:       testVMName,
 		VCPUs:      2,
 		Memory:     4096,
 		Bootloader: "UEFI",
@@ -25,12 +27,12 @@ func TestCreateVM_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 42, vm.ID)
-	assert.Equal(t, "omni-test-vm", vm.Name)
+	assert.Equal(t, testVMName, vm.Name)
 }
 
 func TestGetVM_Success(t *testing.T) {
 	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "vm.query", method)
+		assert.Equal(t, methodVMQuery, method)
 
 		return VM{ID: 42, Name: "omni-test", Status: VMStatus{State: "RUNNING"}}, nil
 	})
@@ -87,7 +89,7 @@ func TestDeleteVM_NotFound(t *testing.T) {
 
 func TestFindVMByName_Found(t *testing.T) {
 	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "vm.query", method)
+		assert.Equal(t, methodVMQuery, method)
 
 		return []VM{{ID: 2, Name: "omni-target"}}, nil
 	})
@@ -110,7 +112,7 @@ func TestFindVMByName_NotFound(t *testing.T) {
 
 func TestListVMs(t *testing.T) {
 	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "vm.query", method)
+		assert.Equal(t, methodVMQuery, method)
 
 		return []VM{{ID: 1, Name: "vm-1"}, {ID: 2, Name: "vm-2"}}, nil
 	})

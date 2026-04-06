@@ -11,16 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testZvolPath = "tank/omni-vms/test-1"
+
 func TestCreateZvol(t *testing.T) {
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
 		assert.Equal(t, "pool.dataset.create", method)
-		assert.Contains(t, string(params), `"tank/omni-vms/test-1"`)
+		assert.Contains(t, string(params), testZvolPath)
 		assert.Contains(t, string(params), `"VOLUME"`)
 
-		return Dataset{ID: "tank/omni-vms/test-1", Name: "test-1", Type: "VOLUME"}, nil
+		return Dataset{ID: testZvolPath, Name: "test-1", Type: "VOLUME"}, nil
 	})
 
-	ds, err := c.CreateZvol(context.Background(), "tank/omni-vms/test-1", 40)
+	ds, err := c.CreateZvol(context.Background(), testZvolPath, 40)
 	require.NoError(t, err)
 	assert.Equal(t, "VOLUME", ds.Type)
 }
@@ -37,12 +39,12 @@ func TestEnsureDataset_AlreadyExists(t *testing.T) {
 func TestDeleteDataset_Success(t *testing.T) {
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
 		assert.Equal(t, "pool.dataset.delete", method)
-		assert.Contains(t, string(params), "tank/omni-vms/test-1")
+		assert.Contains(t, string(params), testZvolPath)
 
 		return true, nil
 	})
 
-	err := c.DeleteDataset(context.Background(), "tank/omni-vms/test-1")
+	err := c.DeleteDataset(context.Background(), testZvolPath)
 	require.NoError(t, err)
 }
 

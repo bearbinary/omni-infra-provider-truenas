@@ -9,9 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const methodDeviceCreate = "vm.device.create"
+
 func TestAddCDROM(t *testing.T) {
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "vm.device.create", method)
+		assert.Equal(t, methodDeviceCreate, method)
 		assert.Contains(t, string(params), `"dtype":"CDROM"`)
 		assert.Contains(t, string(params), `"/mnt/default/talos-iso/abc.iso"`)
 
@@ -25,7 +27,7 @@ func TestAddCDROM(t *testing.T) {
 
 func TestAddNIC_Bridge(t *testing.T) {
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "vm.device.create", method)
+		assert.Equal(t, methodDeviceCreate, method)
 		assert.Contains(t, string(params), `"dtype":"NIC"`)
 		assert.Contains(t, string(params), `"nic_attach":"br100"`)
 
@@ -39,7 +41,7 @@ func TestAddNIC_Bridge(t *testing.T) {
 
 func TestAddNIC_VLAN(t *testing.T) {
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "vm.device.create", method)
+		assert.Equal(t, methodDeviceCreate, method)
 		assert.Contains(t, string(params), `"nic_attach":"vlan666"`)
 
 		return Device{ID: 3, VM: 42, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "vlan666"}}, nil
@@ -52,7 +54,7 @@ func TestAddNIC_VLAN(t *testing.T) {
 
 func TestAddDisk(t *testing.T) {
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "vm.device.create", method)
+		assert.Equal(t, methodDeviceCreate, method)
 		assert.Contains(t, string(params), `"dtype":"DISK"`)
 		assert.Contains(t, string(params), `/dev/zvol/default/omni-vms/test1`)
 
