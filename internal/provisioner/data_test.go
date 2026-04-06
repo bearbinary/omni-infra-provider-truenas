@@ -54,4 +54,60 @@ func TestData_ApplyDefaults(t *testing.T) {
 
 		assert.Equal(t, "UEFI", d.BootMethod)
 	})
+
+	t.Run("extensions preserved through defaults", func(t *testing.T) {
+		d := Data{
+			Extensions: []string{"siderolabs/iscsi-tools", "siderolabs/drbd"},
+		}
+		d.ApplyDefaults(cfg)
+
+		assert.Equal(t, []string{"siderolabs/iscsi-tools", "siderolabs/drbd"}, d.Extensions)
+	})
+
+	t.Run("nil extensions stays nil", func(t *testing.T) {
+		d := Data{}
+		d.ApplyDefaults(cfg)
+
+		assert.Nil(t, d.Extensions)
+	})
+}
+
+func TestExtensionMerge(t *testing.T) {
+	t.Run("defaults only", func(t *testing.T) {
+		data := Data{}
+		extensions := append(defaultExtensions, data.Extensions...)
+
+		assert.Equal(t, []string{
+			"siderolabs/qemu-guest-agent",
+			"siderolabs/nfs-utils",
+			"siderolabs/util-linux-tools",
+		}, extensions)
+	})
+
+	t.Run("defaults plus custom", func(t *testing.T) {
+		data := Data{
+			Extensions: []string{"siderolabs/iscsi-tools", "siderolabs/drbd"},
+		}
+		extensions := append(defaultExtensions, data.Extensions...)
+
+		assert.Equal(t, []string{
+			"siderolabs/qemu-guest-agent",
+			"siderolabs/nfs-utils",
+			"siderolabs/util-linux-tools",
+			"siderolabs/iscsi-tools",
+			"siderolabs/drbd",
+		}, extensions)
+		assert.Len(t, extensions, 5)
+	})
+
+	t.Run("no duplicates from user matching defaults", func(t *testing.T) {
+		data := Data{
+			Extensions: []string{"siderolabs/qemu-guest-agent"}, // user adds one that's already default
+		}
+		extensions := append(defaultExtensions, data.Extensions...)
+
+		// Currently allows duplicates — the Image Factory deduplicates
+		assert.Len(t, extensions, 4)
+		assert.Contains(t, extensions, "siderolabs/qemu-guest-agent")
+	})
 }
