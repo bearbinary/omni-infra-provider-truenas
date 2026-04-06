@@ -136,34 +136,9 @@ func run() error {
 		return fmt.Errorf("failed to create infra provider: %w", err)
 	}
 
-	// Fail fast: validate TrueNAS connectivity, pool, and bridge before connecting to Omni
-	if err := tnClient.Ping(ctx); err != nil {
-		return fmt.Errorf("startup check failed — TrueNAS API unreachable: %w", err)
+	if err := runStartupChecks(ctx, logger, tnClient, defaultPool, defaultNICAttach); err != nil {
+		return err
 	}
-
-	if exists, err := tnClient.PoolExists(ctx, defaultPool); err != nil {
-		return fmt.Errorf("startup check failed — cannot verify pool %q: %w", defaultPool, err)
-	} else if !exists {
-		return fmt.Errorf("startup check failed — pool %q not found on TrueNAS", defaultPool)
-	}
-
-	if defaultNICAttach != "" {
-		if valid, err := tnClient.NICAttachValid(ctx, defaultNICAttach); err != nil {
-			return fmt.Errorf("startup check failed — cannot verify NIC attach target %q: %w", defaultNICAttach, err)
-		} else if !valid {
-			choices, _ := tnClient.NICAttachChoices(ctx)
-
-			return fmt.Errorf("startup check failed — NIC attach target %q not found on TrueNAS. Available: %v", defaultNICAttach, choices)
-		}
-	} else {
-		logger.Warn("DEFAULT_NIC_ATTACH not set — MachineClass configs must specify nic_attach")
-	}
-
-	logger.Info("startup checks passed",
-		zap.String("transport", tnClient.TransportName()),
-		zap.String("pool", defaultPool),
-		zap.String("nic_attach", defaultNICAttach),
-	)
 
 	logger.Info("starting TrueNAS infra provider",
 		zap.String("provider_id", meta.ProviderID),
@@ -185,34 +160,69 @@ func run() error {
 		infra.WithClientOptions(clientOptions...),
 		infra.WithEncodeRequestIDsIntoTokens(),
 		infra.WithConcurrency(uint(concurrency)),
-		infra.WithHealthCheckFunc(func(ctx context.Context) error {
-			if err := tnClient.Ping(ctx); err != nil {
-				return fmt.Errorf("TrueNAS API unreachable: %w", err)
-			}
-
-			exists, err := tnClient.PoolExists(ctx, defaultPool)
-			if err != nil {
-				return fmt.Errorf("failed to check pool %q: %w", defaultPool, err)
-			}
-
-			if !exists {
-				return fmt.Errorf("pool %q not found on TrueNAS", defaultPool)
-			}
-
-			if defaultNICAttach != "" {
-				valid, nicErr := tnClient.NICAttachValid(ctx, defaultNICAttach)
-				if nicErr != nil {
-					return fmt.Errorf("failed to validate NIC attach %q: %w", defaultNICAttach, nicErr)
-				}
-
-				if !valid {
-					return fmt.Errorf("NIC attach target %q not found on TrueNAS", defaultNICAttach)
-				}
-			}
-
-			return nil
-		}),
+		infra.WithHealthCheckFunc(newHealthCheck(tnClient, defaultPool, defaultNICAttach)),
 	)
+}
+
+func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenasclient.Client, pool, nicAttach string) error {
+	if err := tnClient.Ping(ctx); err != nil {
+		return fmt.Errorf("startup check failed — TrueNAS API unreachable: %w", err)
+	}
+
+	if exists, err := tnClient.PoolExists(ctx, pool); err != nil {
+		return fmt.Errorf("startup check failed — cannot verify pool %q: %w", pool, err)
+	} else if !exists {
+		return fmt.Errorf("startup check failed — pool %q not found on TrueNAS", pool)
+	}
+
+	if nicAttach != "" {
+		if valid, err := tnClient.NICAttachValid(ctx, nicAttach); err != nil {
+			return fmt.Errorf("startup check failed — cannot verify NIC attach target %q: %w", nicAttach, err)
+		} else if !valid {
+			choices, _ := tnClient.NICAttachChoices(ctx)
+			return fmt.Errorf("startup check failed — NIC attach target %q not found on TrueNAS. Available: %v", nicAttach, choices)
+		}
+	} else {
+		logger.Warn("DEFAULT_NIC_ATTACH not set — MachineClass configs must specify nic_attach")
+	}
+
+	logger.Info("startup checks passed",
+		zap.String("transport", tnClient.TransportName()),
+		zap.String("pool", pool),
+		zap.String("nic_attach", nicAttach),
+	)
+
+	return nil
+}
+
+func newHealthCheck(tnClient *truenasclient.Client, pool, nicAttach string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := tnClient.Ping(ctx); err != nil {
+			return fmt.Errorf("TrueNAS API unreachable: %w", err)
+		}
+
+		exists, err := tnClient.PoolExists(ctx, pool)
+		if err != nil {
+			return fmt.Errorf("failed to check pool %q: %w", pool, err)
+		}
+
+		if !exists {
+			return fmt.Errorf("pool %q not found on TrueNAS", pool)
+		}
+
+		if nicAttach != "" {
+			valid, nicErr := tnClient.NICAttachValid(ctx, nicAttach)
+			if nicErr != nil {
+				return fmt.Errorf("failed to validate NIC attach %q: %w", nicAttach, nicErr)
+			}
+
+			if !valid {
+				return fmt.Errorf("NIC attach target %q not found on TrueNAS", nicAttach)
+			}
+		}
+
+		return nil
+	}
 }
 
 func envString(key, defaultVal string) string {

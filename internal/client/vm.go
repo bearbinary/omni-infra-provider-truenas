@@ -5,6 +5,15 @@ import (
 	"fmt"
 )
 
+// JSON-RPC method constants.
+const (
+	methodVMCreate = "vm.create"
+	methodVMQuery  = "vm.query"
+	methodVMStart  = "vm.start"
+	methodVMStop   = "vm.stop"
+	methodVMDelete = "vm.delete"
+)
+
 // VM represents a TrueNAS virtual machine.
 type VM struct {
 	ID          int      `json:"id"`
@@ -39,7 +48,7 @@ type CreateVMRequest struct {
 func (c *Client) CreateVM(ctx context.Context, req CreateVMRequest) (*VM, error) {
 	var vm VM
 
-	if err := c.call(ctx, "vm.create", req, &vm); err != nil {
+	if err := c.call(ctx, methodVMCreate, req, &vm); err != nil {
 		return nil, fmt.Errorf("vm.create failed: %w", err)
 	}
 
@@ -56,7 +65,7 @@ func (c *Client) GetVM(ctx context.Context, id int) (*VM, error) {
 
 	var vm VM
 
-	if err := c.call(ctx, "vm.query", filter, &vm); err != nil {
+	if err := c.call(ctx, methodVMQuery, filter, &vm); err != nil {
 		return nil, fmt.Errorf("vm.query (id=%d) failed: %w", id, err)
 	}
 
@@ -68,7 +77,7 @@ func (c *Client) GetVM(ctx context.Context, id int) (*VM, error) {
 func (c *Client) ListVMs(ctx context.Context) ([]VM, error) {
 	var vms []VM
 
-	if err := c.call(ctx, "vm.query", nil, &vms); err != nil {
+	if err := c.call(ctx, methodVMQuery, nil, &vms); err != nil {
 		return nil, fmt.Errorf("vm.query failed: %w", err)
 	}
 
@@ -84,7 +93,7 @@ func (c *Client) FindVMByName(ctx context.Context, name string) (*VM, error) {
 
 	var vms []VM
 
-	if err := c.call(ctx, "vm.query", filter, &vms); err != nil {
+	if err := c.call(ctx, methodVMQuery, filter, &vms); err != nil {
 		return nil, fmt.Errorf("vm.query (name=%s) failed: %w", name, err)
 	}
 
@@ -98,7 +107,7 @@ func (c *Client) FindVMByName(ctx context.Context, name string) (*VM, error) {
 // StartVM starts a VM by ID.
 // JSON-RPC method: vm.start
 func (c *Client) StartVM(ctx context.Context, id int) error {
-	if err := c.call(ctx, "vm.start", []any{id}, nil); err != nil {
+	if err := c.call(ctx, methodVMStart, []any{id}, nil); err != nil {
 		return fmt.Errorf("vm.start (id=%d) failed: %w", id, err)
 	}
 
@@ -110,7 +119,7 @@ func (c *Client) StartVM(ctx context.Context, id int) error {
 func (c *Client) StopVM(ctx context.Context, id int, force bool) error {
 	params := []any{id, map[string]any{"force": force}}
 
-	if err := c.call(ctx, "vm.stop", params, nil); err != nil {
+	if err := c.call(ctx, methodVMStop, params, nil); err != nil {
 		return fmt.Errorf("vm.stop (id=%d) failed: %w", id, err)
 	}
 
@@ -120,7 +129,7 @@ func (c *Client) StopVM(ctx context.Context, id int, force bool) error {
 // DeleteVM deletes a VM by ID.
 // JSON-RPC method: vm.delete
 func (c *Client) DeleteVM(ctx context.Context, id int) error {
-	if err := c.call(ctx, "vm.delete", []any{id}, nil); err != nil {
+	if err := c.call(ctx, methodVMDelete, []any{id}, nil); err != nil {
 		if IsNotFound(err) {
 			return nil // already gone
 		}

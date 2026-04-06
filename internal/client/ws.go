@@ -237,25 +237,28 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 		}
 
 		if resp.ID != reqID {
-			// Skip subscription events or responses to other requests
 			continue
 		}
 
-		if resp.Error != nil {
-			return &APIError{
-				Code:    resp.Error.Error,
-				Message: resp.Error.Reason,
-			}
-		}
-
-		if result != nil && resp.Result != nil {
-			if err := json.Unmarshal(resp.Result, result); err != nil {
-				return fmt.Errorf("failed to unmarshal result: %w", err)
-			}
-		}
-
-		return nil
+		return t.handleResponse(&resp, result)
 	}
+}
+
+func (t *wsTransport) handleResponse(resp *wsResponse, result any) error {
+	if resp.Error != nil {
+		return &APIError{
+			Code:    resp.Error.Error,
+			Message: resp.Error.Reason,
+		}
+	}
+
+	if result != nil && resp.Result != nil {
+		if err := json.Unmarshal(resp.Result, result); err != nil {
+			return fmt.Errorf("failed to unmarshal result: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // UploadFile uploads a file via the REST upload endpoint.

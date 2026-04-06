@@ -34,43 +34,12 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 	start := time.Now()
 	state := machine.TypedSpec().Value
 
-	vmID := int(state.VmId)
-	zvolPath := state.ZvolPath
-
-	// Stop and delete VM
-	if vmID != 0 {
-		logger.Info("stopping VM", zap.Int("vm_id", vmID))
-
-		if err := p.client.StopVM(ctx, vmID, true); err != nil {
-			if !isNotFound(err) {
-				return fmt.Errorf("failed to stop VM %d: %w", vmID, err)
-			}
-
-			logger.Warn("VM already gone during stop", zap.Int("vm_id", vmID))
-		}
-
-		logger.Info("deleting VM", zap.Int("vm_id", vmID))
-
-		if err := p.client.DeleteVM(ctx, vmID); err != nil {
-			if !isNotFound(err) {
-				return fmt.Errorf("failed to delete VM %d: %w", vmID, err)
-			}
-
-			logger.Warn("VM already gone during delete", zap.Int("vm_id", vmID))
-		}
+	if err := p.cleanupVM(ctx, logger, int(state.VmId)); err != nil {
+		return err
 	}
 
-	// Delete zvol
-	if zvolPath != "" {
-		logger.Info("deleting zvol", zap.String("path", zvolPath))
-
-		if err := p.client.DeleteDataset(ctx, zvolPath); err != nil {
-			if !isNotFound(err) {
-				return fmt.Errorf("failed to delete zvol %q: %w", zvolPath, err)
-			}
-
-			logger.Warn("zvol already gone", zap.String("path", zvolPath))
-		}
+	if err := p.cleanupZvol(ctx, logger, state.ZvolPath); err != nil {
+		return err
 	}
 
 	if telemetry.VMsDeprovisioned != nil {
@@ -81,9 +50,43 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 	}
 
 	logger.Info("deprovision complete",
-		zap.Int("vm_id", vmID),
-		zap.String("zvol_path", zvolPath),
+		zap.Int("vm_id", int(state.VmId)),
+		zap.String("zvol_path", state.ZvolPath),
 	)
+
+	return nil
+}
+
+func (p *Provisioner) cleanupVM(ctx context.Context, logger *zap.Logger, vmID int) error {
+	if vmID == 0 {
+		return nil
+	}
+
+	logger.Info("stopping VM", zap.Int("vm_id", vmID))
+
+	if err := p.client.StopVM(ctx, vmID, true); err != nil && !isNotFound(err) {
+		return fmt.Errorf("failed to stop VM %d: %w", vmID, err)
+	}
+
+	logger.Info("deleting VM", zap.Int("vm_id", vmID))
+
+	if err := p.client.DeleteVM(ctx, vmID); err != nil && !isNotFound(err) {
+		return fmt.Errorf("failed to delete VM %d: %w", vmID, err)
+	}
+
+	return nil
+}
+
+func (p *Provisioner) cleanupZvol(ctx context.Context, logger *zap.Logger, zvolPath string) error {
+	if zvolPath == "" {
+		return nil
+	}
+
+	logger.Info("deleting zvol", zap.String("path", zvolPath))
+
+	if err := p.client.DeleteDataset(ctx, zvolPath); err != nil && !isNotFound(err) {
+		return fmt.Errorf("failed to delete zvol %q: %w", zvolPath, err)
+	}
 
 	return nil
 }

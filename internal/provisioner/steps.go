@@ -25,6 +25,8 @@ import (
 
 var provTracer = otel.Tracer("truenas-provisioner")
 
+const errUnmarshalProviderData = "failed to unmarshal provider data: %w"
+
 // Default extensions included in every TrueNAS VM.
 var defaultExtensions = []string{
 	"siderolabs/qemu-guest-agent",
@@ -52,7 +54,7 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 	// Merge default extensions with any extras from MachineClass config
 	var data Data
 	if err := pctx.UnmarshalProviderData(&data); err != nil {
-		return fmt.Errorf("failed to unmarshal provider data: %w", err)
+		return fmt.Errorf(errUnmarshalProviderData, err)
 	}
 
 	extensions := append(defaultExtensions, data.Extensions...)
@@ -89,13 +91,11 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 
 	var data Data
 	if err := pctx.UnmarshalProviderData(&data); err != nil {
-		return fmt.Errorf("failed to unmarshal provider data: %w", err)
+		return fmt.Errorf(errUnmarshalProviderData, err)
 	}
 
+	data.ApplyDefaults(p.config)
 	arch := data.Architecture
-	if arch == "" {
-		arch = "amd64"
-	}
 
 	imageURL, err := url.Parse(constants.ImageFactoryBaseURL)
 	if err != nil {
@@ -115,13 +115,8 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 
 	pctx.State.TypedSpec().Value.ImageId = imageID
 
-	pool := data.Pool
-	if pool == "" {
-		pool = p.config.DefaultPool
-	}
-
 	// ISOs are cached under <pool>/talos-iso/, downloaded automatically from Image Factory
-	isoDataset := pool + "/talos-iso"
+	isoDataset := data.Pool + "/talos-iso"
 	isoPath := "/mnt/" + isoDataset + "/" + isoFileName
 
 	// Use singleflight to prevent concurrent downloads of the same ISO
@@ -217,43 +212,10 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	var data Data
 	if err := pctx.UnmarshalProviderData(&data); err != nil {
-		return fmt.Errorf("failed to unmarshal provider data: %w", err)
+		return fmt.Errorf(errUnmarshalProviderData, err)
 	}
 
-	// Apply defaults
-	cpus := data.CPUs
-	if cpus == 0 {
-		cpus = 2
-	}
-
-	memory := data.Memory
-	if memory == 0 {
-		memory = 4096
-	}
-
-	diskSize := data.DiskSize
-	if diskSize == 0 {
-		diskSize = 40
-	}
-
-	pool := data.Pool
-	if pool == "" {
-		pool = p.config.DefaultPool
-	}
-
-	nicAttach := data.NICAttach
-	if nicAttach == "" {
-		nicAttach = p.config.DefaultNICAttach
-	}
-
-	bootMethod := data.BootMethod
-	if bootMethod == "" {
-		bootMethod = p.config.DefaultBootMethod
-	}
-
-	if bootMethod == "" {
-		bootMethod = "UEFI"
-	}
+	data.ApplyDefaults(p.config)
 
 	requestID := pctx.GetRequestID()
 	// TrueNAS VM names only allow alphanumeric characters and underscores
@@ -282,14 +244,14 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	// Create zvol for the VM disk
-	zvolPath := pool + "/omni-vms/" + requestID
+	zvolPath := data.Pool + "/omni-vms/" + requestID
 
 	// Ensure parent dataset exists
-	if err := p.client.EnsureDataset(ctx, pool+"/omni-vms"); err != nil {
+	if err := p.client.EnsureDataset(ctx, data.Pool+"/omni-vms"); err != nil {
 		return fmt.Errorf("failed to ensure omni-vms dataset: %w", err)
 	}
 
-	if _, err := p.client.CreateZvol(ctx, zvolPath, diskSize); err != nil {
+	if _, err := p.client.CreateZvol(ctx, zvolPath, data.DiskSize); err != nil {
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("failed to create zvol: %w", err)
 		}
@@ -301,10 +263,10 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	vm, err := p.client.CreateVM(ctx, client.CreateVMRequest{
 		Name:        vmName,
 		Description: "Managed by Omni infra provider",
-		VCPUs:       cpus,
-		Memory:      memory,
+		VCPUs:       data.CPUs,
+		Memory:      data.Memory,
 		CPUMode:     "HOST-PASSTHROUGH",
-		Bootloader:  bootMethod,
+		Bootloader:  data.BootMethod,
 		Autostart:   true,
 	})
 	if err != nil {
@@ -316,7 +278,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	logger.Info("created VM", zap.String("name", vmName), zap.Int("id", vm.ID))
 
 	// Attach CDROM with Talos ISO (cached under <pool>/talos-iso/)
-	isoPath := "/mnt/" + pool + "/talos-iso/" + state.ImageId + ".iso"
+	isoPath := "/mnt/" + data.Pool + "/talos-iso/" + state.ImageId + ".iso"
 
 	if _, err := p.client.AddCDROM(ctx, vm.ID, isoPath); err != nil {
 		return fmt.Errorf("failed to attach CDROM: %w", err)
@@ -328,7 +290,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	// Attach NIC
-	if _, err := p.client.AddNIC(ctx, vm.ID, nicAttach); err != nil {
+	if _, err := p.client.AddNIC(ctx, vm.ID, data.NICAttach); err != nil {
 		return fmt.Errorf("failed to attach NIC: %w", err)
 	}
 
