@@ -94,6 +94,43 @@ func (c *Client) UploadFile(ctx context.Context, destPath string, data io.Reader
 	return c.transport.UploadFile(ctx, destPath, data, size)
 }
 
+// ListFiles lists files in a directory on TrueNAS.
+// JSON-RPC method: filesystem.listdir
+func (c *Client) ListFiles(ctx context.Context, path string) ([]FileEntry, error) {
+	var entries []FileEntry
+
+	if err := c.call(ctx, "filesystem.listdir", []any{path}, &entries); err != nil {
+		if IsNotFound(err) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("filesystem.listdir %q failed: %w", path, err)
+	}
+
+	return entries, nil
+}
+
+// FileEntry represents a file or directory from filesystem.listdir.
+type FileEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type"` // FILE, DIRECTORY, etc.
+}
+
+// DeleteFile removes a file from the TrueNAS filesystem.
+// JSON-RPC method: filesystem.remove
+func (c *Client) DeleteFile(ctx context.Context, path string) error {
+	if err := c.call(ctx, "filesystem.remove", []any{path}, nil); err != nil {
+		if IsNotFound(err) {
+			return nil
+		}
+
+		return fmt.Errorf("filesystem.remove %q failed: %w", path, err)
+	}
+
+	return nil
+}
+
 // PoolExists checks if a ZFS pool exists.
 // JSON-RPC method: pool.query with filter [["name", "=", pool]]
 func (c *Client) PoolExists(ctx context.Context, pool string) (bool, error) {

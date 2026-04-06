@@ -146,7 +146,50 @@ const (
 	ErrCodeExists   = 17 // EEXIST — resource already exists
 	ErrCodeInvalid  = 11 // EINVAL — invalid argument (also used for "already exists" in some contexts)
 	ErrCodeDenied   = 13 // EACCES — permission denied
+	ErrCodeNoSpace  = 28 // ENOSPC — no space left on device
 )
+
+// UserFriendlyError returns a human-readable error message for common TrueNAS errors.
+// Used to set meaningful status messages on MachineRequestStatus in Omni.
+func UserFriendlyError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		// Check for connection errors
+		msg := err.Error()
+		if strings.Contains(msg, "reconnect failed") || strings.Contains(msg, "failed to connect") {
+			return "TrueNAS is unreachable — check network connectivity and that TrueNAS is running"
+		}
+
+		if strings.Contains(msg, "authentication") || strings.Contains(msg, "auth") {
+			return "TrueNAS authentication failed — check TRUENAS_API_KEY"
+		}
+
+		return msg
+	}
+
+	switch apiErr.Code {
+	case ErrCodeNoSpace:
+		return "TrueNAS pool is full — free up space or use a different pool"
+	case ErrCodeDenied:
+		return "TrueNAS permission denied — check API key permissions"
+	case ErrCodeInvalid:
+		if strings.Contains(apiErr.Message, "nic_attach") || strings.Contains(apiErr.Message, "NIC") {
+			return fmt.Sprintf("NIC attach target not found on TrueNAS: %s", apiErr.Message)
+		}
+
+		if strings.Contains(apiErr.Message, "name") {
+			return fmt.Sprintf("Invalid VM name: %s", apiErr.Message)
+		}
+
+		return fmt.Sprintf("Invalid configuration: %s", apiErr.Message)
+	default:
+		return apiErr.Error()
+	}
+}
 
 // IsNotFound returns true if the error indicates the resource was not found.
 func IsNotFound(err error) bool {

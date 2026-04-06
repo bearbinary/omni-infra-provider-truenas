@@ -23,6 +23,11 @@ import (
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
 
+// userError returns a user-friendly error message for Omni UI display.
+func userError(err error) string {
+	return client.UserFriendlyError(err)
+}
+
 var provTracer = otel.Tracer("truenas-provisioner")
 
 const errUnmarshalProviderData = "failed to unmarshal provider data: %w"

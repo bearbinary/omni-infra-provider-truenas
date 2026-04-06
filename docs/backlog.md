@@ -41,8 +41,5 @@ Ship default alerting rules for the OTEL metrics:
 - `truenas_api_duration_seconds` p99 > 30s
 - Provider health check failing
 
-### VM Console Access
-Expose VNC/SPICE console URLs through Omni metadata so operators can access VM consoles from the Omni UI.
-
 ### Backup/Snapshot Support
 Leverage ZFS snapshots for VM state backup. Snapshot zvols before Talos upgrades as a rollback mechanism.
