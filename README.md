@@ -194,26 +194,26 @@ Fields left blank use the provider's defaults (`DEFAULT_POOL`, `DEFAULT_NIC_ATTA
 
 | Class | CPUs | Memory | Disk | Use Case |
 |---|---|---|---|---|
-| `truenas-control-plane` | 2 | 2048 MiB | 20 GiB | Control plane nodes (etcd + API server) |
-| `truenas-worker` | 4 | 8192 MiB | 80 GiB | Worker nodes (application workloads) |
+| `truenas-control-plane` | 2 | 2048 MiB | 10 GiB | Control plane nodes (etcd + API server) |
+| `truenas-worker` | 4 | 8192 MiB | 100 GiB | Worker nodes (application workloads + container images) |
 
-Example — control plane (smaller, runs etcd + API server):
+Example — control plane (runs etcd + API server, no container images):
 
 ```yaml
 cpus: 2
 memory: 2048
-disk_size: 20
+disk_size: 10
 ```
 
-Example — worker (larger, runs application workloads):
+Example — worker (runs workloads, stores container images):
 
 ```yaml
 cpus: 4
 memory: 8192
-disk_size: 80
+disk_size: 100
 ```
 
-> **Note:** Talos requires a minimum of 2 GiB RAM for control plane nodes. 1 GiB is not supported.
+> **Note:** Talos requires a minimum of 2 GiB RAM for control plane nodes. Control plane disks only store the OS (~1 GB) and etcd data — 10 GiB is sufficient. Workers need more disk for container images.
 
 ### MachineClass Config Reference
 
