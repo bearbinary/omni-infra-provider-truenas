@@ -174,15 +174,6 @@ Implementation:
 - Report as structured status on the provider's health endpoint
 - Add OTEL gauges: `truenas.host.cpu_percent`, `truenas.host.memory_used_bytes`, `truenas.host.pool_free_bytes`, `truenas.host.disks_healthy`
 
-### VM Console Proxy
-Expose VNC/SPICE console URLs through provider metadata so operators can access VM consoles from the Omni UI.
-
-Implementation:
-- Query VM display device info via `vm.get_display_devices`
-- Generate a WebSocket proxy URL or direct VNC URL
-- Set it as a label/annotation on the MachineRequestStatus
-- Optionally run a small VNC-to-WebSocket proxy sidecar
-
 ### Automatic Pool Selection
 When multiple pools exist, auto-select the best pool for new VMs instead of using a fixed default.
 
@@ -235,15 +226,6 @@ Implementation:
 
 ### Multiple Pool Support
 Already supported via the `pool` field in MachineClass config — just needs documentation and testing with multiple pools.
-
-### Terraform Provider
-Wrap the Go client as a Terraform provider for users who manage TrueNAS infrastructure via IaC instead of Omni.
-
-### CLI Tool
-Standalone CLI (`truenas-vm`) for provisioning VMs outside of Omni. Useful for testing, development, and users who don't use Omni but want quick Talos VMs on TrueNAS.
-
-### Local Development Mode
-Run the provider against a local TrueNAS VM (Vagrant/libvirt) for development without a real TrueNAS box. Include a `make dev-env` target that spins up a disposable TrueNAS instance.
 
 ---
 

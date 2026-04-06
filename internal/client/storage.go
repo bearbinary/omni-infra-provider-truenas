@@ -152,6 +152,114 @@ func (c *Client) ListChildDatasets(ctx context.Context, parentPath string) ([]Da
 	return datasets, nil
 }
 
+// --- Zvol Resize ---
+
+// GetZvolSize returns the current size of a zvol in bytes.
+// JSON-RPC method: pool.dataset.query with filter [["id", "=", path]]
+func (c *Client) GetZvolSize(ctx context.Context, path string) (int64, error) {
+	filter := []any{
+		[]any{[]any{"id", "=", path}},
+		map[string]any{"get": true},
+	}
+
+	var ds struct {
+		Volsize struct {
+			Parsed int64 `json:"parsed"`
+		} `json:"volsize"`
+	}
+
+	if err := c.call(ctx, "pool.dataset.query", filter, &ds); err != nil {
+		return 0, fmt.Errorf("pool.dataset.query %q failed: %w", path, err)
+	}
+
+	return ds.Volsize.Parsed, nil
+}
+
+// ResizeZvol changes the size of an existing zvol. Only grow operations are supported.
+// JSON-RPC method: pool.dataset.update
+func (c *Client) ResizeZvol(ctx context.Context, path string, newSizeGiB int) error {
+	newSizeBytes := int64(newSizeGiB) * 1024 * 1024 * 1024
+
+	params := []any{
+		path,
+		map[string]any{"volsize": newSizeBytes},
+	}
+
+	if err := c.call(ctx, "pool.dataset.update", params, nil); err != nil {
+		return fmt.Errorf("pool.dataset.update %q (resize to %d GiB) failed: %w", path, newSizeGiB, err)
+	}
+
+	return nil
+}
+
+// --- ZFS Snapshots ---
+
+// Snapshot represents a ZFS snapshot.
+type Snapshot struct {
+	ID   string `json:"id"`   // Full path: pool/dataset@snapname
+	Name string `json:"name"` // Just the snap name
+}
+
+// CreateSnapshot creates a ZFS snapshot of a dataset or zvol.
+// JSON-RPC method: zfs.snapshot.create
+func (c *Client) CreateSnapshot(ctx context.Context, dataset, name string) error {
+	params := map[string]any{
+		"dataset": dataset,
+		"name":    name,
+	}
+
+	if err := c.call(ctx, "zfs.snapshot.create", params, nil); err != nil {
+		return fmt.Errorf("zfs.snapshot.create %q@%s failed: %w", dataset, name, err)
+	}
+
+	return nil
+}
+
+// ListSnapshots returns all snapshots for a dataset.
+// JSON-RPC method: zfs.snapshot.query with filter [["dataset", "=", dataset]]
+func (c *Client) ListSnapshots(ctx context.Context, dataset string) ([]Snapshot, error) {
+	filter := []any{
+		[]any{[]any{"dataset", "=", dataset}},
+	}
+
+	var snaps []Snapshot
+
+	if err := c.call(ctx, "zfs.snapshot.query", filter, &snaps); err != nil {
+		return nil, fmt.Errorf("zfs.snapshot.query (dataset=%s) failed: %w", dataset, err)
+	}
+
+	return snaps, nil
+}
+
+// DeleteSnapshot deletes a ZFS snapshot.
+// JSON-RPC method: zfs.snapshot.delete
+func (c *Client) DeleteSnapshot(ctx context.Context, snapshotID string) error {
+	if err := c.call(ctx, "zfs.snapshot.delete", []any{snapshotID}, nil); err != nil {
+		if IsNotFound(err) {
+			return nil
+		}
+
+		return fmt.Errorf("zfs.snapshot.delete %q failed: %w", snapshotID, err)
+	}
+
+	return nil
+}
+
+// RollbackSnapshot rolls back a dataset to a snapshot.
+// JSON-RPC method: zfs.snapshot.rollback
+func (c *Client) RollbackSnapshot(ctx context.Context, snapshotID string) error {
+	params := map[string]any{
+		"id":      snapshotID,
+		"options": map[string]any{"force": true},
+	}
+
+	if err := c.call(ctx, "zfs.snapshot.rollback", params, nil); err != nil {
+		return fmt.Errorf("zfs.snapshot.rollback %q failed: %w", snapshotID, err)
+	}
+
+	return nil
+}
+
 // PoolFreeSpace returns the available space in bytes for a ZFS pool.
 // JSON-RPC method: pool.query with filter [["name", "=", pool]]
 func (c *Client) PoolFreeSpace(ctx context.Context, pool string) (int64, error) {

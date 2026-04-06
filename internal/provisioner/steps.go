@@ -74,7 +74,14 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 		return fmt.Errorf("failed to generate schematic: %w", err)
 	}
 
-	pctx.State.TypedSpec().Value.Schematic = schematic
+	state := pctx.State.TypedSpec().Value
+
+	// Auto-snapshot before Talos version upgrade
+	if state.ZvolPath != "" && state.TalosVersion != "" && state.TalosVersion != pctx.GetTalosVersion() {
+		p.snapshotBeforeUpgrade(ctx, logger, state.ZvolPath, state.TalosVersion, pctx.GetTalosVersion())
+	}
+
+	state.Schematic = schematic
 
 	logger.Info("created schematic", zap.String("schematic_id", schematic))
 
@@ -225,6 +232,11 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		if !isAlreadyExists(err) {
 			return fmt.Errorf("failed to create zvol: %w", err)
 		}
+
+		// Zvol already exists — check if it needs resizing (grow only)
+		if resizeErr := p.maybeResizeZvol(ctx, logger, zvolPath, data.DiskSize); resizeErr != nil {
+			return resizeErr
+		}
 	}
 
 	state.ZvolPath = zvolPath
@@ -324,6 +336,101 @@ func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, p
 	logger.Info("CDROM removed — VM will boot directly from disk on next restart")
 
 	return nil
+}
+
+// maybeResizeZvol grows a zvol if the requested size is larger than the current size.
+// Shrinking is not supported (destructive).
+func (p *Provisioner) maybeResizeZvol(ctx context.Context, logger *zap.Logger, zvolPath string, requestedGiB int) error {
+	currentBytes, err := p.client.GetZvolSize(ctx, zvolPath)
+	if err != nil {
+		logger.Warn("could not check zvol size for resize", zap.String("path", zvolPath), zap.Error(err))
+
+		return nil // Non-fatal — skip resize check
+	}
+
+	requestedBytes := int64(requestedGiB) * 1024 * 1024 * 1024
+
+	if requestedBytes <= currentBytes {
+		return nil // Same size or smaller — no action (shrinking not supported)
+	}
+
+	logger.Info("resizing zvol",
+		zap.String("path", zvolPath),
+		zap.Int64("from_bytes", currentBytes),
+		zap.Int64("to_bytes", requestedBytes),
+	)
+
+	if err := p.client.ResizeZvol(ctx, zvolPath, requestedGiB); err != nil {
+		return fmt.Errorf("failed to resize zvol %q to %d GiB: %w", zvolPath, requestedGiB, err)
+	}
+
+	if telemetry.ZvolsResized != nil {
+		telemetry.ZvolsResized.Add(ctx, 1)
+	}
+
+	logger.Info("zvol resized successfully", zap.String("path", zvolPath), zap.Int("new_size_gib", requestedGiB))
+
+	return nil
+}
+
+// snapshotBeforeUpgrade creates a ZFS snapshot before a Talos version upgrade.
+func (p *Provisioner) snapshotBeforeUpgrade(ctx context.Context, logger *zap.Logger, zvolPath, oldVersion, newVersion string) {
+	snapName := fmt.Sprintf("omni-pre-upgrade-%s-%d", newVersion, time.Now().Unix())
+
+	logger.Info("creating pre-upgrade snapshot",
+		zap.String("zvol", zvolPath),
+		zap.String("from_version", oldVersion),
+		zap.String("to_version", newVersion),
+		zap.String("snapshot", snapName),
+	)
+
+	if err := p.client.CreateSnapshot(ctx, zvolPath, snapName); err != nil {
+		logger.Warn("failed to create pre-upgrade snapshot — continuing without snapshot",
+			zap.String("zvol", zvolPath),
+			zap.Error(err),
+		)
+
+		return
+	}
+
+	if telemetry.SnapshotsCreated != nil {
+		telemetry.SnapshotsCreated.Add(ctx, 1)
+	}
+
+	// Enforce retention: keep only the last 3 snapshots
+	p.enforceSnapshotRetention(ctx, logger, zvolPath, 3)
+}
+
+// enforceSnapshotRetention keeps only the last N snapshots for a dataset.
+func (p *Provisioner) enforceSnapshotRetention(ctx context.Context, logger *zap.Logger, dataset string, keep int) {
+	snaps, err := p.client.ListSnapshots(ctx, dataset)
+	if err != nil {
+		logger.Warn("failed to list snapshots for retention", zap.String("dataset", dataset), zap.Error(err))
+
+		return
+	}
+
+	// Only manage omni- prefixed snapshots
+	var omniSnaps []client.Snapshot
+	for _, s := range snaps {
+		if strings.HasPrefix(s.Name, "omni-") {
+			omniSnaps = append(omniSnaps, s)
+		}
+	}
+
+	if len(omniSnaps) <= keep {
+		return
+	}
+
+	// Delete oldest snapshots (list is typically in creation order)
+	toDelete := omniSnaps[:len(omniSnaps)-keep]
+	for _, s := range toDelete {
+		logger.Info("deleting old snapshot", zap.String("snapshot", s.ID))
+
+		if err := p.client.DeleteSnapshot(ctx, s.ID); err != nil {
+			logger.Warn("failed to delete old snapshot", zap.String("snapshot", s.ID), zap.Error(err))
+		}
+	}
 }
 
 // checkExistingVM checks if a VM already exists by ID or name.

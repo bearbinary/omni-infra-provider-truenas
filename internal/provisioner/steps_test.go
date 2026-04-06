@@ -162,6 +162,137 @@ func TestHandleExistingVM_Stopped_StartSuccess(t *testing.T) {
 	assert.Error(t, *result, "should return retry interval error")
 }
 
+// --- Zvol Resize Tests ---
+
+func TestMaybeResizeZvol_GrowsWhenSmaller(t *testing.T) {
+	resized := false
+	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
+		if method == "pool.dataset.query" {
+			return map[string]any{
+				"volsize": map[string]any{"parsed": int64(40 * 1024 * 1024 * 1024)},
+			}, nil
+		}
+
+		if method == "pool.dataset.update" {
+			resized = true
+
+			return nil, nil
+		}
+
+		return nil, nil
+	})
+
+	err := p.maybeResizeZvol(context.Background(), testLogger(), "tank/test", 80)
+	require.NoError(t, err)
+	assert.True(t, resized, "should have resized the zvol")
+}
+
+func TestMaybeResizeZvol_SkipsWhenSameSize(t *testing.T) {
+	resized := false
+	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
+		if method == "pool.dataset.query" {
+			return map[string]any{
+				"volsize": map[string]any{"parsed": int64(40 * 1024 * 1024 * 1024)},
+			}, nil
+		}
+
+		if method == "pool.dataset.update" {
+			resized = true
+
+			return nil, nil
+		}
+
+		return nil, nil
+	})
+
+	err := p.maybeResizeZvol(context.Background(), testLogger(), "tank/test", 40)
+	require.NoError(t, err)
+	assert.False(t, resized, "should not resize when same size")
+}
+
+func TestMaybeResizeZvol_SkipsWhenShrinking(t *testing.T) {
+	resized := false
+	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
+		if method == "pool.dataset.query" {
+			return map[string]any{
+				"volsize": map[string]any{"parsed": int64(80 * 1024 * 1024 * 1024)},
+			}, nil
+		}
+
+		if method == "pool.dataset.update" {
+			resized = true
+
+			return nil, nil
+		}
+
+		return nil, nil
+	})
+
+	err := p.maybeResizeZvol(context.Background(), testLogger(), "tank/test", 40)
+	require.NoError(t, err)
+	assert.False(t, resized, "should not shrink zvol")
+}
+
+// --- Snapshot Retention Tests ---
+
+func TestEnforceSnapshotRetention_DeletesOldest(t *testing.T) {
+	var deleted []string
+	p := testProvisioner(func(method string, params json.RawMessage) (any, error) {
+		if method == "zfs.snapshot.query" {
+			return []client.Snapshot{
+				{ID: "tank/test@omni-snap-1", Name: "omni-snap-1"},
+				{ID: "tank/test@omni-snap-2", Name: "omni-snap-2"},
+				{ID: "tank/test@omni-snap-3", Name: "omni-snap-3"},
+				{ID: "tank/test@omni-snap-4", Name: "omni-snap-4"},
+				{ID: "tank/test@omni-snap-5", Name: "omni-snap-5"},
+			}, nil
+		}
+
+		if method == "zfs.snapshot.delete" {
+			var args []string
+			json.Unmarshal(params, &args) //nolint:errcheck
+			deleted = append(deleted, args[0])
+
+			return true, nil
+		}
+
+		return nil, nil
+	})
+
+	p.enforceSnapshotRetention(context.Background(), testLogger(), "tank/test", 3)
+
+	assert.Len(t, deleted, 2, "should delete 2 oldest snapshots")
+	assert.Contains(t, deleted, "tank/test@omni-snap-1")
+	assert.Contains(t, deleted, "tank/test@omni-snap-2")
+}
+
+func TestEnforceSnapshotRetention_SkipsNonOmniSnapshots(t *testing.T) {
+	var deleted []string
+	p := testProvisioner(func(method string, params json.RawMessage) (any, error) {
+		if method == "zfs.snapshot.query" {
+			return []client.Snapshot{
+				{ID: "tank/test@manual-backup", Name: "manual-backup"},
+				{ID: "tank/test@omni-snap-1", Name: "omni-snap-1"},
+				{ID: "tank/test@omni-snap-2", Name: "omni-snap-2"},
+			}, nil
+		}
+
+		if method == "zfs.snapshot.delete" {
+			var args []string
+			json.Unmarshal(params, &args) //nolint:errcheck
+			deleted = append(deleted, args[0])
+
+			return true, nil
+		}
+
+		return nil, nil
+	})
+
+	p.enforceSnapshotRetention(context.Background(), testLogger(), "tank/test", 3)
+
+	assert.Empty(t, deleted, "should not delete anything — only 2 omni snapshots, under limit of 3")
+}
+
 func TestHandleExistingVM_Stopped_StartFails(t *testing.T) {
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.start" {
