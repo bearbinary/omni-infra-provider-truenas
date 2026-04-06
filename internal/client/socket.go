@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 )
 
 // socketTransport implements Transport over the TrueNAS middleware Unix socket.
@@ -15,6 +16,7 @@ import (
 type socketTransport struct {
 	socketPath string
 	mu         sync.Mutex
+	wg         sync.WaitGroup
 }
 
 // socketAvailable checks if the middleware Unix socket exists and is connectable.
@@ -45,12 +47,27 @@ func (t *socketTransport) Name() string {
 }
 
 func (t *socketTransport) Close() error {
+	done := make(chan struct{})
+
+	go func() {
+		t.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+	}
+
 	return nil
 }
 
 // Call sends a JSON-RPC request over a new Unix socket connection and reads the response.
 // Each call opens a fresh connection — the middleware expects this pattern.
 func (t *socketTransport) Call(ctx context.Context, method string, params any, result any) error {
+	t.wg.Add(1)
+	defer t.wg.Done()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

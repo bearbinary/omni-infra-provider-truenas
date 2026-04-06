@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -12,6 +13,13 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+)
+
+const (
+	maxReconnectAttempts = 3
+	initialBackoff       = time.Second
+	maxBackoff           = 30 * time.Second
+	closeTimeout         = 10 * time.Second
 )
 
 // wsTransport implements Transport over a WebSocket connection to TrueNAS.
@@ -28,6 +36,7 @@ type wsTransport struct {
 	host               string
 	insecureSkipVerify bool
 	mu                 sync.Mutex
+	wg                 sync.WaitGroup
 	authed             bool
 }
 
@@ -54,10 +63,8 @@ type wsError struct {
 	Reason string `json:"reason"`
 }
 
-// newWSTransport creates a WebSocket transport and authenticates.
-func newWSTransport(host, apiKey string, insecureSkipVerify bool) (*wsTransport, error) {
-	url := fmt.Sprintf("wss://%s/websocket", host)
-
+// dialWebSocket establishes a WebSocket connection to TrueNAS, trying TLS first.
+func dialWebSocket(host string, insecureSkipVerify bool) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: insecureSkipVerify, //nolint:gosec
@@ -65,9 +72,10 @@ func newWSTransport(host, apiKey string, insecureSkipVerify bool) (*wsTransport,
 		HandshakeTimeout: 10 * time.Second,
 	}
 
+	url := fmt.Sprintf("wss://%s/websocket", host)
+
 	conn, resp, err := dialer.Dial(url, nil)
 	if err != nil {
-		// Try without TLS as fallback
 		url = fmt.Sprintf("ws://%s/websocket", host)
 
 		conn, resp, err = dialer.Dial(url, nil)
@@ -87,6 +95,16 @@ func newWSTransport(host, apiKey string, insecureSkipVerify bool) (*wsTransport,
 		return nil, fmt.Errorf("unexpected HTTP status %d from %s", resp.StatusCode, url)
 	}
 
+	return conn, nil
+}
+
+// newWSTransport creates a WebSocket transport and authenticates.
+func newWSTransport(host, apiKey string, insecureSkipVerify bool) (*wsTransport, error) {
+	conn, err := dialWebSocket(host, insecureSkipVerify)
+	if err != nil {
+		return nil, err
+	}
+
 	t := &wsTransport{
 		conn:               conn,
 		apiKey:             apiKey,
@@ -94,14 +112,12 @@ func newWSTransport(host, apiKey string, insecureSkipVerify bool) (*wsTransport,
 		insecureSkipVerify: insecureSkipVerify,
 	}
 
-	// TrueNAS requires a "connect" handshake before any method calls
 	if err := t.connect(); err != nil {
 		conn.Close()
 
 		return nil, fmt.Errorf("connect handshake failed: %w", err)
 	}
 
-	// Authenticate with API key
 	if err := t.authenticate(); err != nil {
 		conn.Close()
 
@@ -115,8 +131,70 @@ func (t *wsTransport) Name() string {
 	return "websocket"
 }
 
+// Close waits for in-flight calls to complete (up to 10s), then closes the connection.
 func (t *wsTransport) Close() error {
+	done := make(chan struct{})
+
+	go func() {
+		t.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(closeTimeout):
+	}
+
 	return t.conn.Close()
+}
+
+// reconnect closes the current connection and establishes a new one with exponential backoff.
+// Must be called with t.mu held.
+func (t *wsTransport) reconnect() error {
+	t.conn.Close()
+	t.authed = false
+
+	var lastErr error
+	backoff := initialBackoff
+
+	for attempt := range maxReconnectAttempts {
+		if attempt > 0 {
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+
+		conn, err := dialWebSocket(t.host, t.insecureSkipVerify)
+		if err != nil {
+			lastErr = err
+
+			continue
+		}
+
+		t.conn = conn
+
+		if err := t.connect(); err != nil {
+			t.conn.Close()
+			lastErr = err
+
+			continue
+		}
+
+		if err := t.authenticate(); err != nil {
+			t.conn.Close()
+			lastErr = err
+
+			continue
+		}
+
+		t.authed = true
+
+		return nil
+	}
+
+	return fmt.Errorf("reconnect failed after %d attempts: %w", maxReconnectAttempts, lastErr)
 }
 
 // connect sends the initial DDP connect handshake.
@@ -173,7 +251,6 @@ func (t *wsTransport) authenticate() error {
 		return fmt.Errorf("auth error: %s", resp.Error.Reason)
 	}
 
-	// Check the result is true
 	var result bool
 	if err := json.Unmarshal(resp.Result, &result); err != nil || !result {
 		return fmt.Errorf("authentication rejected — check TRUENAS_API_KEY")
@@ -184,7 +261,6 @@ func (t *wsTransport) authenticate() error {
 	return nil
 }
 
-// requestID generates string IDs for the DDP protocol.
 var wsRequestCounter int64
 var wsRequestMu sync.Mutex
 
@@ -198,14 +274,41 @@ func nextWSRequestID() string {
 }
 
 // Call sends a method call over the WebSocket and reads the response.
+// On connection failure, attempts to reconnect and retry once.
 func (t *wsTransport) Call(ctx context.Context, method string, params any, result any) error {
+	t.wg.Add(1)
+	defer t.wg.Done()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if !t.authed {
-		return fmt.Errorf("not authenticated")
+		if err := t.reconnect(); err != nil {
+			return fmt.Errorf("not authenticated and reconnect failed: %w", err)
+		}
 	}
 
+	err := t.doCall(ctx, method, params, result)
+	if err == nil {
+		return nil
+	}
+
+	// If the call failed due to a connection issue, try to reconnect and retry once.
+	// API errors (from TrueNAS) are not retryable.
+	var apiErr *APIError
+	if isAPIError(err, &apiErr) {
+		return err
+	}
+
+	if reconnErr := t.reconnect(); reconnErr != nil {
+		return fmt.Errorf("%w (reconnect also failed: %v)", err, reconnErr)
+	}
+
+	return t.doCall(ctx, method, params, result)
+}
+
+// doCall performs a single WebSocket call without reconnect logic.
+func (t *wsTransport) doCall(ctx context.Context, method string, params any, result any) error {
 	reqID := nextWSRequestID()
 
 	req := wsRequest{
@@ -215,7 +318,6 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 		Params: normalizeParams(params),
 	}
 
-	// Set deadlines from context or default 30s timeout
 	deadline := time.Now().Add(30 * time.Second)
 	if d, ok := ctx.Deadline(); ok {
 		deadline = d
@@ -228,8 +330,6 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 
-	// Read responses until we get one matching our request ID.
-	// TrueNAS may send subscription events on the same connection.
 	for {
 		var resp wsResponse
 		if err := t.conn.ReadJSON(&resp); err != nil {
@@ -261,10 +361,32 @@ func (t *wsTransport) handleResponse(resp *wsResponse, result any) error {
 	return nil
 }
 
+// isAPIError checks if the error is a TrueNAS API error (not a connection error).
+func isAPIError(err error, target **APIError) bool {
+	if err == nil {
+		return false
+	}
+
+	var apiErr *APIError
+
+	if errors.As(err, &apiErr) { //nolint:govet
+		if target != nil {
+			*target = apiErr
+		}
+
+		return true
+	}
+
+	return false
+}
+
 // UploadFile uploads a file via the REST upload endpoint.
 // filesystem.put requires pipe-based upload which isn't available over WebSocket calls,
 // so we fall back to the HTTP multipart upload endpoint.
 func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.Reader, size int64) error {
+	t.wg.Add(1)
+	defer t.wg.Done()
+
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 
