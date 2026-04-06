@@ -5,8 +5,9 @@
 #   OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 PYROSCOPE_URL=http://localhost:4040 ./_out/omni-infra-provider-truenas
 #
 # Dashboards:
-#   Grafana:    http://localhost:3000 (admin/admin)
+#   Grafana:    http://localhost:3000 (admin/admin) — auto-loads TrueNAS Provider dashboard
 #   Pyroscope:  http://localhost:4040
+#   Prometheus: http://localhost:9090 — includes alerting rules
 
 services:
   otel-collector:
@@ -27,6 +28,7 @@ services:
     image: prom/prometheus:v3.4.0
     volumes:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts:/etc/prometheus/alerts:ro
     ports:
       - "9090:9090"
 
@@ -44,3 +46,5 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
     volumes:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro

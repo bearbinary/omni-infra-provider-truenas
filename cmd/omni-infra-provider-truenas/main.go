@@ -22,6 +22,7 @@ import (
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/cleanup"
 	truenasclient "github.com/bearbinary/omni-infra-provider-truenas/internal/client"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/monitor"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/provisioner"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
@@ -148,6 +149,11 @@ func run() error {
 	}, logger, prov.ActiveImageIDs, prov.ActiveVMNames)
 
 	go cleaner.Run(ctx)
+
+	// Start host health monitor (publishes OTEL gauges)
+	hostMonitor := monitor.New(tnClient, monitor.Config{}, logger)
+
+	go hostMonitor.Run(ctx)
 
 	logger.Info("starting TrueNAS infra provider",
 		zap.String("provider_id", meta.ProviderID),

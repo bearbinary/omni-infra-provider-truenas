@@ -16,6 +16,11 @@ func WithStep(step string) metric.MeasurementOption {
 	return metric.WithAttributes(attribute.String("step", step))
 }
 
+// WithPool returns a metric option with the pool attribute.
+func WithPool(pool string) metric.MeasurementOption {
+	return metric.WithAttributes(attribute.String("pool", pool))
+}
+
 // Pre-defined metric instruments for the provider.
 var (
 	VMsProvisioned      metric.Int64Counter
@@ -24,6 +29,15 @@ var (
 	ZvolsResized        metric.Int64Counter
 	SnapshotsCreated    metric.Int64Counter
 	SnapshotsRolledBack metric.Int64Counter
+
+	// Host health gauges
+	HostCPUCores        metric.Int64Gauge
+	HostMemoryTotal     metric.Int64Gauge
+	HostPoolFreeBytes   metric.Int64Gauge
+	HostPoolUsedBytes   metric.Int64Gauge
+	HostPoolHealthy     metric.Int64Gauge
+	HostDisksTotal      metric.Int64Gauge
+	HostVMsRunning      metric.Int64Gauge
 	ProvisionDuration   metric.Float64Histogram
 	DeprovisionDuration metric.Float64Histogram
 	APICallDuration     metric.Float64Histogram
@@ -66,5 +80,31 @@ func initMetrics() {
 	ISODownloadDuration, _ = meter.Float64Histogram("truenas.iso.download.duration",
 		metric.WithDescription("Duration of ISO download in seconds"),
 		metric.WithUnit("s"),
+	)
+
+	// Host health gauges
+	HostCPUCores, _ = meter.Int64Gauge("truenas.host.cpu_cores",
+		metric.WithDescription("Number of CPU cores on TrueNAS host"),
+	)
+	HostMemoryTotal, _ = meter.Int64Gauge("truenas.host.memory_total_bytes",
+		metric.WithDescription("Total physical memory on TrueNAS host"),
+		metric.WithUnit("By"),
+	)
+	HostPoolFreeBytes, _ = meter.Int64Gauge("truenas.host.pool_free_bytes",
+		metric.WithDescription("Free space per ZFS pool"),
+		metric.WithUnit("By"),
+	)
+	HostPoolUsedBytes, _ = meter.Int64Gauge("truenas.host.pool_used_bytes",
+		metric.WithDescription("Used space per ZFS pool"),
+		metric.WithUnit("By"),
+	)
+	HostPoolHealthy, _ = meter.Int64Gauge("truenas.host.pool_healthy",
+		metric.WithDescription("Pool health (1=healthy, 0=degraded/faulted)"),
+	)
+	HostDisksTotal, _ = meter.Int64Gauge("truenas.host.disks_total",
+		metric.WithDescription("Total number of disks"),
+	)
+	HostVMsRunning, _ = meter.Int64Gauge("truenas.host.vms_running",
+		metric.WithDescription("Number of running VMs"),
 	)
 }

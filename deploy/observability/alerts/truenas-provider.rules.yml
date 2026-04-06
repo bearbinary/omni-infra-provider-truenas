@@ -1,0 +1,72 @@
+groups:
+  - name: truenas-provider
+    rules:
+      # VM provisioning errors are increasing
+      - alert: TrueNASProviderVMErrors
+        expr: rate(truenas_vms_errored_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TrueNAS provider VM errors increasing"
+          description: "VM provision/deprovision errors have been occurring for 5+ minutes. Check provider logs."
+
+      # TrueNAS API is slow
+      - alert: TrueNASAPILatencyHigh
+        expr: histogram_quantile(0.99, rate(truenas_api_duration_seconds_bucket[5m])) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TrueNAS API p99 latency > 30s"
+          description: "TrueNAS API calls are taking over 30 seconds at p99. Check TrueNAS load and network."
+
+      # Pool running low on space
+      - alert: TrueNASPoolSpaceLow
+        expr: truenas_host_pool_free_bytes / (truenas_host_pool_free_bytes + truenas_host_pool_used_bytes) < 0.1
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TrueNAS pool {{ $labels.pool }} has < 10% free space"
+          description: "Pool {{ $labels.pool }} is running low on space. New VM provisioning may fail."
+
+      # Pool is unhealthy (degraded or faulted)
+      - alert: TrueNASPoolUnhealthy
+        expr: truenas_host_pool_healthy == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TrueNAS pool {{ $labels.pool }} is unhealthy"
+          description: "Pool {{ $labels.pool }} is degraded or faulted. Check disk health immediately."
+
+      # No VMs running (may indicate provider issue)
+      - alert: TrueNASNoVMsRunning
+        expr: truenas_host_vms_running == 0
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "No TrueNAS VMs running"
+          description: "No VMs have been running for 15+ minutes. This may be expected or indicate a problem."
+
+      # ISO download taking too long
+      - alert: TrueNASISODownloadSlow
+        expr: histogram_quantile(0.99, rate(truenas_iso_download_duration_seconds_bucket[5m])) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ISO downloads taking > 5 minutes"
+          description: "Talos ISO downloads are slow. Check network connectivity to factory.talos.dev."
+
+      # Provision duration is high
+      - alert: TrueNASProvisionSlow
+        expr: histogram_quantile(0.99, rate(truenas_provision_duration_seconds_bucket[5m])) > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VM provisioning taking > 10 minutes"
+          description: "New VM provisioning is taking longer than expected."

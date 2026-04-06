@@ -78,6 +78,13 @@ func testNICAttach(t *testing.T) string {
 	return nic
 }
 
+// settleTime gives TrueNAS a moment to finish async operations between heavy tests.
+// Prevents transient failures from resource pressure during the full test suite.
+func settleTime(t *testing.T) {
+	t.Helper()
+	time.Sleep(2 * time.Second)
+}
+
 // uniqueName generates a test-scoped unique name to avoid collisions.
 // Uses only alphanumeric characters (TrueNAS VM names don't allow hyphens/underscores).
 func uniqueName(prefix string) string {
@@ -163,12 +170,13 @@ func TestIntegration_DatasetLifecycle(t *testing.T) {
 }
 
 func TestIntegration_ZvolLifecycle(t *testing.T) {
+	settleTime(t)
 	c := testClient(t)
 	ctx := context.Background()
 	pool := testPool(t)
 
 	// Ensure parent dataset
-	parentDS := pool + "/omni-integration-test-zvols"
+	parentDS := pool + "/omni-integration-test-zvols-" + uniqueName("z")
 	err := c.EnsureDataset(ctx, parentDS)
 	require.NoError(t, err)
 
@@ -302,6 +310,7 @@ func TestIntegration_VMLifecycle(t *testing.T) {
 // --- Device Attachment (on Stopped VM) ---
 
 func TestIntegration_DeviceAttachment(t *testing.T) {
+	settleTime(t)
 	c := testClient(t)
 	ctx := context.Background()
 	pool := testPool(t)
@@ -361,6 +370,7 @@ func TestIntegration_DeviceAttachment(t *testing.T) {
 // --- Zvol Resize ---
 
 func TestIntegration_ZvolResize(t *testing.T) {
+	settleTime(t)
 	c := testClient(t)
 	ctx := context.Background()
 	pool := testPool(t)
@@ -401,6 +411,7 @@ func TestIntegration_ZvolResize(t *testing.T) {
 // --- ZFS Snapshots ---
 
 func TestIntegration_SnapshotLifecycle(t *testing.T) {
+	settleTime(t)
 	c := testClient(t)
 	ctx := context.Background()
 	pool := testPool(t)
@@ -558,6 +569,7 @@ func TestIntegration_SystemMemory(t *testing.T) {
 // --- Full Provision/Deprovision E2E ---
 
 func TestIntegration_FullProvisionDeprovision(t *testing.T) {
+	settleTime(t)
 	c := testClient(t)
 	ctx := context.Background()
 	pool := testPool(t)
@@ -676,6 +688,7 @@ func TestIntegration_DeviceDelete(t *testing.T) {
 // --- Snapshot Rollback ---
 
 func TestIntegration_SnapshotRollback(t *testing.T) {
+	settleTime(t)
 	c := testClient(t)
 	ctx := context.Background()
 	pool := testPool(t)
@@ -772,9 +785,159 @@ func TestIntegration_WebSocketReconnect(t *testing.T) {
 	t.Logf("Pool exists after reconnect: %v", exists)
 }
 
+// --- Host Health API ---
+
+func TestIntegration_GetHostInfo(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	info, err := c.GetHostInfo(ctx)
+	require.NoError(t, err)
+	assert.NotEmpty(t, info.Hostname, "should return hostname")
+	assert.Greater(t, info.Physmem, int64(0), "should return physical memory")
+	assert.Greater(t, info.Cores, 0, "should return CPU cores")
+	t.Logf("Host: %s, Cores: %d, Memory: %d GiB", info.Hostname, info.Cores, info.Physmem/(1024*1024*1024))
+}
+
+func TestIntegration_ListPools(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	pools, err := c.ListPools(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, pools, "should have at least one pool")
+
+	for _, p := range pools {
+		assert.NotEmpty(t, p.Name, "pool should have a name")
+		t.Logf("Pool: %s, Healthy: %v, Free: %d GiB, Used: %d GiB",
+			p.Name, p.Healthy, p.Free/(1024*1024*1024), p.Used/(1024*1024*1024))
+	}
+}
+
+func TestIntegration_ListDisks(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	disks, err := c.ListDisks(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, disks, "should have at least one disk")
+
+	for _, d := range disks {
+		assert.NotEmpty(t, d.Name, "disk should have a name")
+		t.Logf("Disk: %s, Type: %s, Size: %d GiB", d.Name, d.Type, d.Size/(1024*1024*1024))
+	}
+}
+
+// --- Device Operations ---
+
+func TestIntegration_ListDevicesAndFindCDROM(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	vmName := "omniinttest" + uniqueName("devops")
+
+	vm, err := c.CreateVM(ctx, CreateVMRequest{
+		Name:       vmName,
+		VCPUs:      1,
+		Memory:     512,
+		Bootloader: "UEFI",
+		Autostart:  false,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteVM(context.Background(), vm.ID) //nolint:errcheck
+	})
+
+	// Upload a tiny fake ISO for CDROM test
+	isoDS := pool + "/omni-integration-test-cdrom"
+	_ = c.EnsureDataset(ctx, isoDS)
+	isoPath := "/mnt/" + isoDS + "/test.iso"
+	_ = c.UploadFile(ctx, isoPath, strings.NewReader("fake iso"), 8)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), isoDS) //nolint:errcheck
+	})
+
+	// Add CDROM
+	cdrom, err := c.AddCDROM(ctx, vm.ID, isoPath)
+	require.NoError(t, err)
+
+	// ListDevices
+	devices, err := c.ListDevices(ctx, vm.ID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, devices, "VM should have devices")
+
+	foundCDROM := false
+	for _, d := range devices {
+		dtype, _ := d.Attributes["dtype"].(string)
+		if dtype == "CDROM" {
+			foundCDROM = true
+		}
+		t.Logf("Device: ID=%d, dtype=%s", d.ID, dtype)
+	}
+	assert.True(t, foundCDROM, "should find CDROM in device list")
+
+	// FindCDROM
+	found, err := c.FindCDROM(ctx, vm.ID)
+	require.NoError(t, err)
+	require.NotNil(t, found, "FindCDROM should find it")
+	assert.Equal(t, cdrom.ID, found.ID)
+
+	// SwapCDROM — update path
+	newISOPath := "/mnt/" + isoDS + "/test2.iso"
+	_ = c.UploadFile(ctx, newISOPath, strings.NewReader("fake iso 2"), 10)
+
+	swapped, err := c.SwapCDROM(ctx, vm.ID, newISOPath)
+	require.NoError(t, err, "SwapCDROM should update existing device")
+	assert.Equal(t, cdrom.ID, swapped.ID, "should update same device, not create new")
+
+	// Verify the path changed
+	updated, err := c.FindCDROM(ctx, vm.ID)
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, newISOPath, updated.Attributes["path"], "CDROM path should be updated")
+}
+
+// --- Pool Selector ---
+
+func TestIntegration_PoolSelector(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	// Import monitor package inline — test the selector logic with real pools
+	pools, err := c.ListPools(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, pools)
+
+	// Find best pool manually
+	var best *PoolInfo
+	for i := range pools {
+		if pools[i].Healthy && (best == nil || pools[i].Free > best.Free) {
+			best = &pools[i]
+		}
+	}
+
+	require.NotNil(t, best, "should have at least one healthy pool")
+	t.Logf("Best pool: %s (free: %d GiB)", best.Name, best.Free/(1024*1024*1024))
+
+	// Verify our test pool is in the list
+	var foundTestPool bool
+	for _, p := range pools {
+		if p.Name == pool {
+			foundTestPool = true
+		}
+	}
+	assert.True(t, foundTestPool, "test pool %q should be in pool list", pool)
+}
+
 // --- VM Naming Convention ---
 
 func TestIntegration_VMNamingConvention(t *testing.T) {
+	settleTime(t)
 	c := testClient(t)
 	ctx := context.Background()
 

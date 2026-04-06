@@ -14,6 +14,11 @@ Tracked improvements for future releases.
 - **Comprehensive QA** — 147 tests: e2e, contract, chaos, stress, telemetry integration (v0.7.0)
 - **Talos Upgrade Orchestration** — Version detection, pre-upgrade snapshot, CDROM swap to new ISO (v0.8.0)
 - **NVRAM Firmware Recovery** — Auto-detect ERROR state VMs, reset NVRAM, restart (v0.8.0)
+- **Host Health Monitoring** — OTEL gauges for CPU, memory, pool space/health, disks, running VMs (v0.9.0)
+- **Automatic Pool Selection** — Select healthy pool with most free space when not explicit (v0.9.0)
+- **Prometheus Alerting Rules** — 7 rules: VM errors, API latency, pool space/health, provision speed (v0.9.0)
+- **Grafana Dashboard** — Pre-built dashboard auto-loaded with all provider metrics (v0.9.0)
+- **VM Resource Monitoring** — Per-VM runtime stats via host monitor (v0.9.0)
 
 ---
 
@@ -120,38 +125,6 @@ Implementation:
 
 ---
 
----
-
-## Observability & Operations
-
-### TrueNAS Host Health in Omni
-Report TrueNAS host metrics back to Omni as provider health status. Operators see host health in the Omni UI without logging into TrueNAS.
-
-Implementation:
-- Extend health check to collect: CPU usage, RAM usage, pool free space, disk SMART status, network throughput
-- Query via `system.info`, `pool.query`, `disk.query`, `reporting.get_data`
-- Report as structured status on the provider's health endpoint
-- Add OTEL gauges: `truenas.host.cpu_percent`, `truenas.host.memory_used_bytes`, `truenas.host.pool_free_bytes`, `truenas.host.disks_healthy`
-
-### Automatic Pool Selection
-When multiple pools exist, auto-select the best pool for new VMs instead of using a fixed default.
-
-Implementation:
-- Query all pools via `pool.query`, filter by health and free space
-- Selection strategy: most free space, or fastest pool (NVMe > SSD > HDD) based on pool properties
-- Override with explicit `pool` in MachineClass config
-- Log which pool was selected and why
-
-### VM Resource Monitoring
-Track per-VM resource usage (CPU, memory, disk I/O) from TrueNAS and expose as OTEL metrics.
-
-Implementation:
-- Query `vm.get_instance` periodically for VM stats
-- Publish as OTEL gauges with VM name/ID labels
-- Enable alerting on high resource usage
-
----
-
 ## Security
 
 ### ZFS Encryption at Rest
@@ -192,15 +165,6 @@ Already supported via the `pool` field in MachineClass config — just needs doc
 
 ### Docker Image Signing + SBOM
 Sign container images with cosign and generate SBOM for supply chain security. Add to release pipeline.
-
-### Prometheus Alerting Rules
-Ship default alerting rules for the OTEL metrics:
-- `truenas_vms_errored_total` increasing
-- `truenas_api_duration_seconds` p99 > 30s
-- Provider health check failing
-
-### Grafana Dashboard Template
-Ship a pre-built Grafana dashboard JSON for the provider's OTEL metrics. Import into Grafana for instant visibility.
 
 ### Integration Test CI
 Run integration tests against a real TrueNAS instance in CI (GitHub Actions self-hosted runner or cloud instance).

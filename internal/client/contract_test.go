@@ -4,6 +4,7 @@ package client
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -108,6 +109,94 @@ func TestContract_DatasetQuery(t *testing.T) {
 	assert.Contains(t, ds, "id", "dataset should have 'id' field")
 	assert.Contains(t, ds, "name", "dataset should have 'name' field")
 	assert.Contains(t, ds, "type", "dataset should have 'type' field")
+}
+
+func TestContract_DiskQuery(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	var disks []map[string]any
+	err := c.call(ctx, "disk.query", nil, &disks)
+	require.NoError(t, err, "disk.query should exist and be callable")
+	require.NotEmpty(t, disks, "should have at least one disk")
+
+	disk := disks[0]
+	assert.Contains(t, disk, "name", "disk should have 'name' field")
+	assert.Contains(t, disk, "size", "disk should have 'size' field")
+}
+
+func TestContract_VMDeviceQuery(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	var devices []map[string]any
+	err := c.call(ctx, "vm.device.query", nil, &devices)
+	require.NoError(t, err, "vm.device.query should exist and be callable")
+	// May be empty — just need the method to exist
+}
+
+func TestContract_VMUpdate(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+
+	// Create a throwaway VM to test vm.update exists
+	vm, err := c.CreateVM(ctx, CreateVMRequest{
+		Name:       "omnicontract" + uniqueName("upd"),
+		VCPUs:      1,
+		Memory:     512,
+		Bootloader: "UEFI",
+		Autostart:  false,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteVM(context.Background(), vm.ID) //nolint:errcheck
+	})
+
+	// Verify vm.update exists by updating description
+	var result map[string]any
+	err = c.call(ctx, "vm.update", []any{vm.ID, map[string]any{"description": "contract test"}}, &result)
+	require.NoError(t, err, "vm.update should exist and be callable")
+}
+
+func TestContract_VMDeviceUpdate(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	// Create VM + CDROM to test vm.device.update
+	vm, err := c.CreateVM(ctx, CreateVMRequest{
+		Name:       "omnicontract" + uniqueName("devupd"),
+		VCPUs:      1,
+		Memory:     512,
+		Bootloader: "UEFI",
+		Autostart:  false,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteVM(context.Background(), vm.ID) //nolint:errcheck
+	})
+
+	// Need a file for CDROM
+	isoDS := pool + "/omni-contract-test-iso"
+	_ = c.EnsureDataset(ctx, isoDS)
+	isoPath := "/mnt/" + isoDS + "/contract.iso"
+	_ = c.UploadFile(ctx, isoPath, strings.NewReader("fake"), 4)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), isoDS) //nolint:errcheck
+	})
+
+	cdrom, err := c.AddCDROM(ctx, vm.ID, isoPath)
+	require.NoError(t, err)
+
+	// Test vm.device.update
+	var result map[string]any
+	err = c.call(ctx, "vm.device.update", []any{cdrom.ID, map[string]any{"attributes": map[string]any{"dtype": "CDROM", "path": isoPath}}}, &result)
+	require.NoError(t, err, "vm.device.update should exist and be callable")
 }
 
 func TestContract_ZFSSnapshotQuery(t *testing.T) {
