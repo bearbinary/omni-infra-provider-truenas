@@ -25,6 +25,7 @@ import (
 // Client wraps the TrueNAS JSON-RPC 2.0 API.
 type Client struct {
 	transport Transport
+	semaphore chan struct{} // Limits concurrent API calls to prevent overwhelming TrueNAS
 }
 
 // Config holds TrueNAS connection parameters.
@@ -43,7 +44,14 @@ type Config struct {
 	// SocketPath overrides the default Unix socket path.
 	// Defaults to /var/run/middleware/middlewared.sock.
 	SocketPath string
+
+	// MaxConcurrentCalls limits concurrent API calls to TrueNAS.
+	// Prevents overwhelming the middleware during large scale-ups.
+	// Defaults to 8 if not set.
+	MaxConcurrentCalls int
 }
+
+const defaultMaxConcurrentCalls = 8
 
 // DefaultSocketPath is the standard location of the TrueNAS middleware Unix socket.
 const DefaultSocketPath = "/var/run/middleware/middlewared.sock"
@@ -65,7 +73,7 @@ func New(cfg Config) (*Client, error) {
 			return nil, fmt.Errorf("failed to connect via unix socket: %w", err)
 		}
 
-		return &Client{transport: t}, nil
+		return newClient(t, cfg.MaxConcurrentCalls), nil
 	}
 
 	// Fall back to WebSocket
@@ -82,7 +90,18 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to connect via websocket: %w", err)
 	}
 
-	return &Client{transport: t}, nil
+	return newClient(t, cfg.MaxConcurrentCalls), nil
+}
+
+func newClient(t Transport, maxConcurrent int) *Client {
+	if maxConcurrent <= 0 {
+		maxConcurrent = defaultMaxConcurrentCalls
+	}
+
+	return &Client{
+		transport: t,
+		semaphore: make(chan struct{}, maxConcurrent),
+	}
 }
 
 // TransportName returns which transport is active ("unix" or "websocket").
@@ -99,6 +118,14 @@ var tracer = otel.Tracer("truenas-client")
 
 // call executes a JSON-RPC method and decodes the result.
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
+	// Rate limit: acquire semaphore slot
+	select {
+	case c.semaphore <- struct{}{}:
+		defer func() { <-c.semaphore }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	ctx, span := tracer.Start(ctx, "truenas."+method,
 		trace.WithAttributes(attribute.String("rpc.method", method)),
 	)

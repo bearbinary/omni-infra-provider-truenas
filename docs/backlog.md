@@ -4,12 +4,6 @@ Tracked improvements for future releases. Items are roughly prioritized.
 
 ## High Priority
 
-### ISO Cleanup
-Stale ISOs from old Talos versions accumulate at `/mnt/<pool>/talos-iso/`. When schematics change (Talos upgrade, extension changes), old ISOs are never deleted. Add a periodic cleanup that removes ISOs not referenced by any active VM's schematic.
-
-### Orphan Cleanup
-If the provider crashes mid-provision, VMs and zvols may exist on TrueNAS without matching state in Omni. Add a reconciliation loop that finds `omni_*` VMs and `omni-vms/*` zvols not tracked by any MachineRequest and cleans them up after a grace period.
-
 ### Error Reporting
 Provision failures show raw Go error strings in Omni UI. Map common TrueNAS errors to user-friendly messages on MachineRequestStatus:
 - "Pool 'tank' is full" instead of `pool.dataset.create failed: [ENOSPC]...`

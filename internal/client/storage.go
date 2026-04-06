@@ -152,6 +152,44 @@ func (c *Client) ListChildDatasets(ctx context.Context, parentPath string) ([]Da
 	return datasets, nil
 }
 
+// PoolFreeSpace returns the available space in bytes for a ZFS pool.
+// JSON-RPC method: pool.query with filter [["name", "=", pool]]
+func (c *Client) PoolFreeSpace(ctx context.Context, pool string) (int64, error) {
+	filter := []any{
+		[]any{[]any{"name", "=", pool}},
+	}
+
+	var pools []struct {
+		Name    string `json:"name"`
+		Healthy bool   `json:"healthy"`
+		Free    int64  `json:"free"`
+	}
+
+	if err := c.call(ctx, "pool.query", filter, &pools); err != nil {
+		return 0, fmt.Errorf("pool.query failed: %w", err)
+	}
+
+	if len(pools) == 0 {
+		return 0, fmt.Errorf("pool %q not found", pool)
+	}
+
+	return pools[0].Free, nil
+}
+
+// SystemMemoryAvailable returns the available system memory in bytes.
+// JSON-RPC method: system.info
+func (c *Client) SystemMemoryAvailable(ctx context.Context) (int64, error) {
+	var info struct {
+		Physmem int64 `json:"physmem"`
+	}
+
+	if err := c.call(ctx, "system.info", nil, &info); err != nil {
+		return 0, fmt.Errorf("system.info failed: %w", err)
+	}
+
+	return info.Physmem, nil
+}
+
 // PoolExists checks if a ZFS pool exists.
 // JSON-RPC method: pool.query with filter [["name", "=", pool]]
 func (c *Client) PoolExists(ctx context.Context, pool string) (bool, error) {

@@ -109,6 +109,7 @@ func run() error {
 		APIKey:             os.Getenv("TRUENAS_API_KEY"),
 		InsecureSkipVerify: envBool("TRUENAS_INSECURE_SKIP_VERIFY", true),
 		SocketPath:         os.Getenv("TRUENAS_SOCKET_PATH"),
+		MaxConcurrentCalls: envInt("TRUENAS_MAX_CONCURRENT_CALLS", 8),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create TrueNAS client: %w", err)

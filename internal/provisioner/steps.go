@@ -204,6 +204,15 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	data.ApplyDefaults(p.config)
 
+	// Pre-check: verify pool has enough free space for the zvol
+	requiredBytes := int64(data.DiskSize) * 1024 * 1024 * 1024
+	freeBytes, err := p.client.PoolFreeSpace(ctx, data.Pool)
+
+	if err == nil && freeBytes < requiredBytes {
+		return fmt.Errorf("pool %q has %d GiB free but VM needs %d GiB — free up space or use a different pool",
+			data.Pool, freeBytes/(1024*1024*1024), data.DiskSize)
+	}
+
 	// Create zvol for the VM disk
 	zvolPath := data.Pool + "/omni-vms/" + pctx.GetRequestID()
 

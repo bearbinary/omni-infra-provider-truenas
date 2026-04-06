@@ -51,7 +51,7 @@ func (t *mockTransport) Call(_ context.Context, method string, params any, resul
 func newMockClient(t *testing.T, handler mockHandler) *Client {
 	t.Helper()
 
-	return &Client{transport: &mockTransport{handler: handler}}
+	return newClient(&mockTransport{handler: handler}, defaultMaxConcurrentCalls)
 }
 
 // notFoundErr returns a JSON-RPC error for resource not found.

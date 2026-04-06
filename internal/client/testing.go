@@ -55,5 +55,5 @@ func (t *MockTransport) Call(_ context.Context, method string, params any, resul
 
 // NewMockClient creates a Client backed by a MockTransport for testing.
 func NewMockClient(handler MockHandler) *Client {
-	return &Client{transport: &MockTransport{Handler: handler}}
+	return newClient(&MockTransport{Handler: handler}, defaultMaxConcurrentCalls)
 }
