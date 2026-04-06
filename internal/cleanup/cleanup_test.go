@@ -1,10 +1,41 @@
 package cleanup
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 )
+
+func TestCleanerRun_CancelsOnContext(t *testing.T) {
+	// Verify Run() exits when context is cancelled
+	cl := &Cleaner{
+		config:         Config{CleanupInterval: time.Hour},
+		logger:         zap.NewNop(),
+		activeImageIDs: func() map[string]bool { return nil },
+		activeVMNames:  func() map[string]bool { return nil },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		cl.Run(ctx)
+		close(done)
+	}()
+
+	// Cancel immediately
+	cancel()
+
+	select {
+	case <-done:
+		// Success — Run exited
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not exit after context cancellation")
+	}
+}
 
 func TestVMNameFromZvolName(t *testing.T) {
 	// The cleanup logic maps zvol names (request IDs with hyphens)

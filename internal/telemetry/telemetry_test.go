@@ -2,10 +2,14 @@ package telemetry
 
 import (
 	"context"
+	"net"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 )
 
 func TestInit_NoConfig(t *testing.T) {
@@ -72,6 +76,76 @@ func TestInit_BothConfigured(t *testing.T) {
 
 	// Shutdown should not panic
 	_ = shutdown(context.Background())
+}
+
+func TestInit_RealOTELCollector(t *testing.T) {
+	// This test verifies telemetry works against a real OTEL collector.
+	// Requires the observability stack running: docker compose -f deploy/observability/docker-compose.yaml up -d
+	endpoint := os.Getenv("OTEL_TEST_ENDPOINT")
+	if endpoint == "" {
+		// Try localhost:4317 (default from our observability stack)
+		conn, err := net.DialTimeout("tcp", "localhost:4317", 2*time.Second)
+		if err != nil {
+			t.Skip("No OTEL collector available — set OTEL_TEST_ENDPOINT or start deploy/observability stack")
+		}
+
+		conn.Close()
+		endpoint = "localhost:4317"
+	}
+
+	shutdown, err := Init(context.Background(), Config{
+		OTELEndpoint:   endpoint,
+		OTELInsecure:   true,
+		ServiceName:    "test-provider-e2e",
+		ServiceVersion: "v0.0.0-test",
+	})
+	require.NoError(t, err, "Init with real OTEL collector should succeed")
+
+	// Create a span to verify traces flow
+	tracer := otel.Tracer("test")
+	_, span := tracer.Start(context.Background(), "test-span")
+	span.End()
+
+	// Record a metric
+	meter := otel.Meter("test")
+	counter, err := meter.Int64Counter("test.counter")
+	require.NoError(t, err)
+	counter.Add(context.Background(), 1)
+
+	// Flush
+	err = shutdown(context.Background())
+	assert.NoError(t, err, "shutdown should flush successfully to real collector")
+}
+
+func TestInit_RealPyroscope(t *testing.T) {
+	pyroscopeURL := os.Getenv("PYROSCOPE_TEST_URL")
+	if pyroscopeURL == "" {
+		conn, err := net.DialTimeout("tcp", "localhost:4040", 2*time.Second)
+		if err != nil {
+			t.Skip("No Pyroscope available — set PYROSCOPE_TEST_URL or start deploy/observability stack")
+		}
+
+		conn.Close()
+		pyroscopeURL = "http://localhost:4040"
+	}
+
+	shutdown, err := Init(context.Background(), Config{
+		PyroscopeURL:   pyroscopeURL,
+		ServiceName:    "test-provider-e2e",
+		ServiceVersion: "v0.0.0-test",
+	})
+	require.NoError(t, err, "Init with real Pyroscope should succeed")
+
+	// Do some CPU work to generate profile data
+	sum := 0
+	for i := range 1000000 {
+		sum += i
+	}
+
+	_ = sum
+
+	err = shutdown(context.Background())
+	assert.NoError(t, err, "shutdown should flush successfully to real Pyroscope")
 }
 
 func TestInit_ShutdownFlushesAll(t *testing.T) {

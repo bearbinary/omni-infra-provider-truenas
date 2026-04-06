@@ -413,7 +413,13 @@ func (p *Provisioner) enforceSnapshotRetention(ctx context.Context, logger *zap.
 	// Only manage omni- prefixed snapshots
 	var omniSnaps []client.Snapshot
 	for _, s := range snaps {
-		if strings.HasPrefix(s.Name, "omni-") {
+		// Extract snap name from ID (format: dataset@snapname)
+		snapName := s.ID
+		if idx := strings.LastIndex(s.ID, "@"); idx >= 0 {
+			snapName = s.ID[idx+1:]
+		}
+
+		if strings.HasPrefix(snapName, "omni-") {
 			omniSnaps = append(omniSnaps, s)
 		}
 	}

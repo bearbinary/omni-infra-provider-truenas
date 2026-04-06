@@ -17,7 +17,7 @@ test-integration:  ## Run client integration tests against a real TrueNAS
 	go test -tags=integration ./internal/client/... -v -count=1 -timeout=120s
 
 test-e2e:  ## Run all integration + cleanup tests against a real TrueNAS
-	go test -tags=integration ./internal/... -v -count=1 -timeout=300s
+	go test -tags=integration ./internal/... -v -count=1 -timeout=300s -p 1
 
 lint:
 	golangci-lint run ./...

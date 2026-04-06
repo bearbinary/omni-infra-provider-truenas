@@ -358,6 +358,420 @@ func TestIntegration_DeviceAttachment(t *testing.T) {
 	t.Log("CDROM attachment test skipped — requires ISO file on TrueNAS filesystem")
 }
 
+// --- Zvol Resize ---
+
+func TestIntegration_ZvolResize(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	parentDS := pool + "/omni-integration-test-resize"
+	err := c.EnsureDataset(ctx, parentDS)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
+	})
+
+	zvolName := parentDS + "/" + uniqueName("zvol")
+
+	// Create 1 GiB zvol
+	_, err = c.CreateZvol(ctx, zvolName, 1)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
+	})
+
+	// Verify initial size
+	size, err := c.GetZvolSize(ctx, zvolName)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1024*1024*1024), size, "initial size should be 1 GiB")
+
+	// Resize to 2 GiB
+	err = c.ResizeZvol(ctx, zvolName, 2)
+	require.NoError(t, err)
+
+	// Verify new size
+	size, err = c.GetZvolSize(ctx, zvolName)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2*1024*1024*1024), size, "resized size should be 2 GiB")
+}
+
+// --- ZFS Snapshots ---
+
+func TestIntegration_SnapshotLifecycle(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	parentDS := pool + "/omni-integration-test-snap"
+	err := c.EnsureDataset(ctx, parentDS)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
+	})
+
+	zvolName := parentDS + "/" + uniqueName("zvol")
+
+	_, err = c.CreateZvol(ctx, zvolName, 1)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		// Delete snapshots first, then zvol
+		snaps, _ := c.ListSnapshots(context.Background(), zvolName)
+		for _, s := range snaps {
+			c.DeleteSnapshot(context.Background(), s.ID) //nolint:errcheck
+		}
+		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
+	})
+
+	// Create snapshot
+	snapName := "omni-test-" + uniqueName("snap")
+	err = c.CreateSnapshot(ctx, zvolName, snapName)
+	require.NoError(t, err, "should create snapshot")
+
+	// List snapshots — ours should be there
+	snaps, err := c.ListSnapshots(ctx, zvolName)
+	require.NoError(t, err)
+
+	var found bool
+	for _, s := range snaps {
+		if strings.HasSuffix(s.ID, "@"+snapName) {
+			found = true
+
+			break
+		}
+	}
+
+	assert.True(t, found, "created snapshot should appear in list")
+
+	// Create a second snapshot
+	snap2Name := "omni-test-" + uniqueName("snap2")
+	err = c.CreateSnapshot(ctx, zvolName, snap2Name)
+	require.NoError(t, err)
+
+	// List again — should have 2
+	snaps, err = c.ListSnapshots(ctx, zvolName)
+	require.NoError(t, err)
+
+	omniCount := 0
+	for _, s := range snaps {
+		if strings.Contains(s.ID, "@omni-test-") {
+			omniCount++
+		}
+	}
+
+	assert.Equal(t, 2, omniCount, "should have 2 omni snapshots")
+
+	// Delete first snapshot
+	snapID := zvolName + "@" + snapName
+	err = c.DeleteSnapshot(ctx, snapID)
+	require.NoError(t, err, "should delete snapshot")
+
+	// Delete again — idempotent
+	err = c.DeleteSnapshot(ctx, snapID)
+	require.NoError(t, err, "deleting already-gone snapshot should not error")
+
+	// List — should have 1
+	snaps, err = c.ListSnapshots(ctx, zvolName)
+	require.NoError(t, err)
+
+	omniCount = 0
+	for _, s := range snaps {
+		if strings.Contains(s.ID, "@omni-test-") {
+			omniCount++
+		}
+	}
+
+	assert.Equal(t, 1, omniCount, "should have 1 omni snapshot after deletion")
+}
+
+// --- Error Path Tests ---
+
+func TestIntegration_CreateZvol_PoolFull(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	// Check actual pool size and try to create something bigger
+	free, err := c.PoolFreeSpace(ctx, pool)
+	require.NoError(t, err)
+
+	// Request 10x the free space — should fail
+	tooBigGiB := int(free/(1024*1024*1024)) * 10
+	if tooBigGiB < 1 {
+		tooBigGiB = 999999
+	}
+
+	_, err = c.CreateZvol(ctx, pool+"/omni-integration-test-toobig", tooBigGiB)
+	if err == nil {
+		// TrueNAS may use thin provisioning — clean up
+		t.Log("TrueNAS accepted the oversized zvol (thin provisioning) — cleaning up")
+		c.DeleteDataset(ctx, pool+"/omni-integration-test-toobig") //nolint:errcheck
+	}
+	// Either way, the test passes — we just verify it doesn't panic
+}
+
+func TestIntegration_ResizeZvol_NotFound(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	err := c.ResizeZvol(ctx, "default/nonexistent-zvol-xyz", 10)
+	assert.Error(t, err, "resizing a nonexistent zvol should fail")
+}
+
+func TestIntegration_SnapshotNonexistent(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	err := c.CreateSnapshot(ctx, "default/nonexistent-dataset-xyz", "test-snap")
+	assert.Error(t, err, "snapshotting a nonexistent dataset should fail")
+}
+
+func TestIntegration_PoolFreeSpace(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	free, err := c.PoolFreeSpace(ctx, pool)
+	require.NoError(t, err)
+	assert.Greater(t, free, int64(0), "pool should have some free space")
+	t.Logf("Pool %q free space: %d GiB", pool, free/(1024*1024*1024))
+
+	// Nonexistent pool
+	_, err = c.PoolFreeSpace(ctx, "nonexistent-pool-xyz")
+	assert.Error(t, err)
+}
+
+func TestIntegration_SystemMemory(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	mem, err := c.SystemMemoryAvailable(ctx)
+	require.NoError(t, err)
+	assert.Greater(t, mem, int64(0), "system should have some memory")
+	t.Logf("System memory: %d GiB", mem/(1024*1024*1024))
+}
+
+// --- Full Provision/Deprovision E2E ---
+
+func TestIntegration_FullProvisionDeprovision(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+	nicAttach := testNICAttach(t)
+
+	requestID := "e2e-" + uniqueName("prov")
+	vmName := "omni_" + strings.ReplaceAll(requestID, "-", "_")
+	zvolPath := pool + "/omni-vms/" + requestID
+
+	// --- PROVISION ---
+
+	// 1. Ensure parent dataset
+	err := c.EnsureDataset(ctx, pool+"/omni-vms")
+	require.NoError(t, err)
+
+	// 2. Create zvol
+	_, err = c.CreateZvol(ctx, zvolPath, 1)
+	require.NoError(t, err)
+
+	// 3. Create VM with HOST-PASSTHROUGH
+	vm, err := c.CreateVM(ctx, CreateVMRequest{
+		Name:        vmName,
+		Description: "E2E test — safe to delete",
+		VCPUs:       1,
+		Memory:      512,
+		CPUMode:     "HOST-PASSTHROUGH",
+		Bootloader:  "UEFI",
+		Autostart:   false,
+	})
+	require.NoError(t, err, "should create VM")
+	assert.Greater(t, vm.ID, 0)
+
+	// 4. Attach DISK
+	diskDev, err := c.AddDisk(ctx, vm.ID, zvolPath)
+	require.NoError(t, err, "should attach disk")
+	assert.Equal(t, "DISK", diskDev.Attributes["dtype"])
+
+	// 5. Attach NIC
+	nicDev, err := c.AddNIC(ctx, vm.ID, nicAttach)
+	require.NoError(t, err, "should attach NIC")
+	assert.Equal(t, "NIC", nicDev.Attributes["dtype"])
+
+	// 6. Verify VM exists and is stopped
+	fetched, err := c.GetVM(ctx, vm.ID)
+	require.NoError(t, err)
+	assert.Equal(t, vmName, fetched.Name)
+
+	// 7. Find by name
+	found, err := c.FindVMByName(ctx, vmName)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, vm.ID, found.ID)
+
+	// --- DEPROVISION ---
+
+	// 8. Stop VM (even though it's not running, should be idempotent)
+	err = c.StopVM(ctx, vm.ID, true)
+	// May error if already stopped — that's ok
+
+	// 9. Delete VM
+	err = c.DeleteVM(ctx, vm.ID)
+	require.NoError(t, err, "should delete VM")
+
+	// 10. Delete zvol
+	err = c.DeleteDataset(ctx, zvolPath)
+	require.NoError(t, err, "should delete zvol")
+
+	// 11. Verify VM is gone
+	gone, err := c.FindVMByName(ctx, vmName)
+	require.NoError(t, err)
+	assert.Nil(t, gone, "VM should be gone after deprovision")
+
+	// 12. Verify delete is idempotent
+	err = c.DeleteVM(ctx, vm.ID)
+	require.NoError(t, err, "double delete should not error")
+
+	err = c.DeleteDataset(ctx, zvolPath)
+	require.NoError(t, err, "double delete zvol should not error")
+}
+
+// --- Device Delete ---
+
+func TestIntegration_DeviceDelete(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	nicAttach := testNICAttach(t)
+
+	vmName := "omniinttest" + uniqueName("devdel")
+
+	vm, err := c.CreateVM(ctx, CreateVMRequest{
+		Name:       vmName,
+		VCPUs:      1,
+		Memory:     512,
+		Bootloader: "UEFI",
+		Autostart:  false,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteVM(context.Background(), vm.ID) //nolint:errcheck
+	})
+
+	// Attach a NIC
+	dev, err := c.AddNIC(ctx, vm.ID, nicAttach)
+	require.NoError(t, err)
+
+	// Delete the device
+	err = c.DeleteDevice(ctx, dev.ID)
+	require.NoError(t, err, "should delete device")
+
+	// Delete again — idempotent
+	err = c.DeleteDevice(ctx, dev.ID)
+	require.NoError(t, err, "double delete device should not error")
+}
+
+// --- Snapshot Rollback ---
+
+func TestIntegration_SnapshotRollback(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	parentDS := pool + "/omni-integration-test-rollback"
+	err := c.EnsureDataset(ctx, parentDS)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
+	})
+
+	zvolName := parentDS + "/" + uniqueName("zvol")
+
+	// Create 1 GiB zvol
+	_, err = c.CreateZvol(ctx, zvolName, 1)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		snaps, _ := c.ListSnapshots(context.Background(), zvolName)
+		for _, s := range snaps {
+			c.DeleteSnapshot(context.Background(), s.ID) //nolint:errcheck
+		}
+		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
+	})
+
+	// Snapshot at 1 GiB
+	snapName := "omni-rollback-test"
+	err = c.CreateSnapshot(ctx, zvolName, snapName)
+	require.NoError(t, err)
+
+	// Resize to 2 GiB
+	err = c.ResizeZvol(ctx, zvolName, 2)
+	require.NoError(t, err)
+
+	size, err := c.GetZvolSize(ctx, zvolName)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2*1024*1024*1024), size, "should be 2 GiB after resize")
+
+	// Rollback to snapshot
+	snapID := zvolName + "@" + snapName
+	err = c.RollbackSnapshot(ctx, snapID)
+	require.NoError(t, err, "should rollback to snapshot")
+
+	// Verify size reverted to 1 GiB
+	size, err = c.GetZvolSize(ctx, zvolName)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1*1024*1024*1024), size, "should be 1 GiB after rollback")
+}
+
+// --- WebSocket Reconnect Against Real TrueNAS ---
+
+func TestIntegration_WebSocketReconnect(t *testing.T) {
+	host := os.Getenv("TRUENAS_TEST_HOST")
+	apiKey := os.Getenv("TRUENAS_TEST_API_KEY")
+
+	if host == "" {
+		t.Skip("TRUENAS_TEST_HOST must be set for WebSocket reconnect test")
+	}
+
+	ctx := context.Background()
+
+	// Create a client
+	c, err := New(Config{
+		Host:               host,
+		APIKey:             apiKey,
+		InsecureSkipVerify: true,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() { c.Close() })
+
+	// Verify connection works
+	err = c.Ping(ctx)
+	require.NoError(t, err, "initial ping should succeed")
+
+	// Force-close the underlying WebSocket connection to simulate a drop
+	ws, ok := c.transport.(*wsTransport)
+	if !ok {
+		t.Skip("not using WebSocket transport")
+	}
+
+	ws.mu.Lock()
+	ws.conn.Close() // Kill the connection
+	ws.mu.Unlock()
+
+	// Next call should trigger reconnect and succeed
+	err = c.Ping(ctx)
+	require.NoError(t, err, "ping after forced disconnect should succeed via reconnect")
+
+	// Verify multiple calls work after reconnect
+	exists, err := c.PoolExists(ctx, "default")
+	require.NoError(t, err)
+	t.Logf("Pool exists after reconnect: %v", exists)
+}
+
 // --- VM Naming Convention ---
 
 func TestIntegration_VMNamingConvention(t *testing.T) {

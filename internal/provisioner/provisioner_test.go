@@ -1,10 +1,59 @@
 package provisioner
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestProvisioner_ConcurrentTrackAndRead(t *testing.T) {
+	p := NewProvisioner(nil, ProviderConfig{DefaultPool: "tank"})
+
+	// Race detector will catch unsafe concurrent access
+	var wg sync.WaitGroup
+
+	// Writer goroutines
+	for i := range 100 {
+		wg.Add(1)
+
+		go func(idx int) {
+			defer wg.Done()
+
+			name := fmt.Sprintf("omni_vm_%d", idx)
+			p.TrackVMName(name)
+			p.TrackImageID(fmt.Sprintf("image_%d", idx))
+
+			if idx%3 == 0 {
+				p.UntrackVMName(name)
+			}
+		}(i)
+	}
+
+	// Reader goroutines (concurrent with writers)
+	for range 50 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			_ = p.ActiveVMNames()
+			_ = p.ActiveImageIDs()
+		}()
+	}
+
+	wg.Wait()
+
+	// Verify final state is consistent
+	vms := p.ActiveVMNames()
+	images := p.ActiveImageIDs()
+	assert.NotNil(t, vms)
+	assert.NotNil(t, images)
+	assert.Equal(t, 100, len(images))
+	// ~67 VMs should remain (100 - 34 that were untracked where idx%3==0)
+	assert.InDelta(t, 66, len(vms), 2)
+}
 
 func TestProvisioner_TrackingConcurrency(t *testing.T) {
 	p := NewProvisioner(nil, ProviderConfig{DefaultPool: "tank"})

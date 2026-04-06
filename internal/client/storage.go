@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // CreateDatasetRequest is the payload for creating a dataset or zvol.
@@ -196,8 +197,9 @@ func (c *Client) ResizeZvol(ctx context.Context, path string, newSizeGiB int) er
 
 // Snapshot represents a ZFS snapshot.
 type Snapshot struct {
-	ID   string `json:"id"`   // Full path: pool/dataset@snapname
-	Name string `json:"name"` // Just the snap name
+	ID      string `json:"id"`      // Full path: pool/dataset@snapname
+	Name    string `json:"name"`    // Full name including dataset
+	Dataset string `json:"dataset"` // Parent dataset path
 }
 
 // CreateSnapshot creates a ZFS snapshot of a dataset or zvol.
@@ -216,16 +218,22 @@ func (c *Client) CreateSnapshot(ctx context.Context, dataset, name string) error
 }
 
 // ListSnapshots returns all snapshots for a dataset.
-// JSON-RPC method: zfs.snapshot.query with filter [["dataset", "=", dataset]]
+// JSON-RPC method: zfs.snapshot.query
 func (c *Client) ListSnapshots(ctx context.Context, dataset string) ([]Snapshot, error) {
-	filter := []any{
-		[]any{[]any{"dataset", "=", dataset}},
+	var allSnaps []Snapshot
+
+	if err := c.call(ctx, "zfs.snapshot.query", nil, &allSnaps); err != nil {
+		return nil, fmt.Errorf("zfs.snapshot.query failed: %w", err)
 	}
 
+	// Filter client-side — TrueNAS snapshot query filtering varies between versions
+	prefix := dataset + "@"
 	var snaps []Snapshot
 
-	if err := c.call(ctx, "zfs.snapshot.query", filter, &snaps); err != nil {
-		return nil, fmt.Errorf("zfs.snapshot.query (dataset=%s) failed: %w", dataset, err)
+	for _, s := range allSnaps {
+		if strings.HasPrefix(s.ID, prefix) {
+			snaps = append(snaps, s)
+		}
 	}
 
 	return snaps, nil
@@ -248,10 +256,7 @@ func (c *Client) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 // RollbackSnapshot rolls back a dataset to a snapshot.
 // JSON-RPC method: zfs.snapshot.rollback
 func (c *Client) RollbackSnapshot(ctx context.Context, snapshotID string) error {
-	params := map[string]any{
-		"id":      snapshotID,
-		"options": map[string]any{"force": true},
-	}
+	params := []any{snapshotID, map[string]any{"force": true}}
 
 	if err := c.call(ctx, "zfs.snapshot.rollback", params, nil); err != nil {
 		return fmt.Errorf("zfs.snapshot.rollback %q failed: %w", snapshotID, err)
