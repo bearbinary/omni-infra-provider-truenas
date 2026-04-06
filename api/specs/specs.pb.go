@@ -30,6 +30,7 @@ type MachineSpec struct {
 	ImageId       string                 `protobuf:"bytes,4,opt,name=image_id,json=imageId,proto3" json:"image_id,omitempty"`
 	VmId          int32                  `protobuf:"varint,5,opt,name=vm_id,json=vmId,proto3" json:"vm_id,omitempty"`
 	ZvolPath      string                 `protobuf:"bytes,6,opt,name=zvol_path,json=zvolPath,proto3" json:"zvol_path,omitempty"`
+	CdromDeviceId int32                  `protobuf:"varint,7,opt,name=cdrom_device_id,json=cdromDeviceId,proto3" json:"cdrom_device_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -106,18 +107,26 @@ func (x *MachineSpec) GetZvolPath() string {
 	return ""
 }
 
+func (x *MachineSpec) GetCdromDeviceId() int32 {
+	if x != nil {
+		return x.CdromDeviceId
+	}
+	return 0
+}
+
 var File_api_specs_specs_proto protoreflect.FileDescriptor
 
 const file_api_specs_specs_proto_rawDesc = "" +
 	"\n" +
-	"\x15api/specs/specs.proto\x12\ftruenasspecs\"\xb1\x01\n" +
+	"\x15api/specs/specs.proto\x12\ftruenasspecs\"\xd9\x01\n" +
 	"\vMachineSpec\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1c\n" +
 	"\tschematic\x18\x02 \x01(\tR\tschematic\x12#\n" +
 	"\rtalos_version\x18\x03 \x01(\tR\ftalosVersion\x12\x19\n" +
 	"\bimage_id\x18\x04 \x01(\tR\aimageId\x12\x13\n" +
 	"\x05vm_id\x18\x05 \x01(\x05R\x04vmId\x12\x1b\n" +
-	"\tzvol_path\x18\x06 \x01(\tR\bzvolPathB=Z;github.com/bearbinary/omni-infra-provider-truenas/api/specsb\x06proto3"
+	"\tzvol_path\x18\x06 \x01(\tR\bzvolPath\x12&\n" +
+	"\x0fcdrom_device_id\x18\a \x01(\x05R\rcdromDeviceIdB=Z;github.com/bearbinary/omni-infra-provider-truenas/api/specsb\x06proto3"
 
 var (
 	file_api_specs_specs_proto_rawDescOnce sync.Once

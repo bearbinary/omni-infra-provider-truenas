@@ -11,4 +11,5 @@ message MachineSpec {
   string image_id = 4;
   int32 vm_id = 5;
   string zvol_path = 6;
+  int32 cdrom_device_id = 7;
 }

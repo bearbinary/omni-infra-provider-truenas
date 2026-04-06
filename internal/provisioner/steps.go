@@ -280,9 +280,12 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	// Attach CDROM with Talos ISO (cached under <pool>/talos-iso/)
 	isoPath := "/mnt/" + data.Pool + "/talos-iso/" + state.ImageId + ".iso"
 
-	if _, err := p.client.AddCDROM(ctx, vm.ID, isoPath); err != nil {
+	cdrom, err := p.client.AddCDROM(ctx, vm.ID, isoPath)
+	if err != nil {
 		return fmt.Errorf("failed to attach CDROM: %w", err)
 	}
+
+	state.CdromDeviceId = int32(cdrom.ID)
 
 	// Attach disk
 	if _, err := p.client.AddDisk(ctx, vm.ID, zvolPath); err != nil {
@@ -305,6 +308,51 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	)
 
 	return provision.NewRetryInterval(15 * time.Second)
+}
+
+// stepRemoveCDROM detaches the ISO CDROM once Talos has installed to disk.
+// Waits for the machine to be allocated in Omni (meaning Talos installed, rebooted, and rejoined).
+func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+	ctx, span := provTracer.Start(ctx, "provision.removeCDROM",
+		trace.WithAttributes(attribute.String("request_id", pctx.GetRequestID())),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	state := pctx.State.TypedSpec().Value
+
+	// Already removed
+	if state.CdromDeviceId == 0 {
+		return nil
+	}
+
+	// Wait until Omni has allocated this machine (ID is set when the machine
+	// connects via SideroLink, gets config, installs to disk, reboots, and rejoins).
+	if pctx.MachineRequestStatus.TypedSpec().Value.Id == "" {
+		logger.Info("waiting for machine to be allocated before removing CDROM")
+
+		return provision.NewRetryInterval(30 * time.Second)
+	}
+
+	logger.Info("removing CDROM device",
+		zap.Int32("device_id", state.CdromDeviceId),
+		zap.Int32("vm_id", state.VmId),
+	)
+
+	if err := p.client.DeleteDevice(ctx, int(state.CdromDeviceId)); err != nil {
+		return fmt.Errorf("failed to remove CDROM: %w", err)
+	}
+
+	state.CdromDeviceId = 0
+
+	logger.Info("CDROM removed — VM will boot directly from disk on next restart")
+
+	return nil
 }
 
 func isNotFound(err error) bool {

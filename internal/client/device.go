@@ -62,6 +62,20 @@ func (c *Client) AddNIC(ctx context.Context, vmID int, nicAttach string) (*Devic
 	})
 }
 
+// DeleteDevice removes a device from a VM by device ID.
+// JSON-RPC method: vm.device.delete
+func (c *Client) DeleteDevice(ctx context.Context, id int) error {
+	if err := c.call(ctx, "vm.device.delete", []any{id}, nil); err != nil {
+		if IsNotFound(err) {
+			return nil
+		}
+
+		return fmt.Errorf("vm.device.delete (id=%d) failed: %w", id, err)
+	}
+
+	return nil
+}
+
 // AddDisk attaches a DISK device to a VM pointing to a zvol path.
 func (c *Client) AddDisk(ctx context.Context, vmID int, zvolPath string) (*Device, error) {
 	return c.AddDevice(ctx, AddDeviceRequest{

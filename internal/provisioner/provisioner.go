@@ -36,5 +36,6 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 		provision.NewStep("createSchematic", p.stepCreateSchematic),
 		provision.NewStep("uploadISO", p.stepUploadISO),
 		provision.NewStep("createVM", p.stepCreateVM),
+		provision.NewStep("removeCDROM", p.stepRemoveCDROM),
 	}
 }
