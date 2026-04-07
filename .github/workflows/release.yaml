@@ -56,47 +56,29 @@ jobs:
         id: version
         run: echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
-      - name: Generate changelog
-        id: changelog
+      - name: Extract release notes from CHANGELOG.md
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          # Find the previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
 
-          if [ -z "$PREV_TAG" ]; then
-            # First release — all commits
-            RANGE="$TAG"
-          else
-            RANGE="${PREV_TAG}..${TAG}"
+          # Extract the section for this version from CHANGELOG.md.
+          # Matches from "## [vX.Y.Z]" to the next "## [" or end of file.
+          VERSION="${TAG#v}"  # strip leading v for flexible matching
+          NOTES=$(awk "/^## \\[v?${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+
+          if [ -z "$NOTES" ]; then
+            echo "::warning::No CHANGELOG.md entry found for ${TAG}. Falling back to git log."
+            RANGE="${PREV_TAG:+${PREV_TAG}..}${TAG}"
+            NOTES=$(git log "$RANGE" --pretty=format:"- %s (%h)" 2>/dev/null || true)
           fi
 
           {
-            echo "## What's Changed"
+            echo "$NOTES"
             echo ""
-            # Group commits by type
-            FEATURES=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^[Aa]dd\|^[Ff]eat" 2>/dev/null || true)
-            FIXES=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^[Ff]ix" 2>/dev/null || true)
-            OTHER=$(git log "$RANGE" --pretty=format:"- %s (%h)" --invert-grep --grep="^[Aa]dd\|^[Ff]eat\|^[Ff]ix" 2>/dev/null || true)
-
-            if [ -n "$FEATURES" ]; then
-              echo "### Features"
-              echo "$FEATURES"
-              echo ""
-            fi
-            if [ -n "$FIXES" ]; then
-              echo "### Fixes"
-              echo "$FIXES"
-              echo ""
-            fi
-            if [ -n "$OTHER" ]; then
-              echo "### Other"
-              echo "$OTHER"
-              echo ""
-            fi
-
             echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG:-$(git rev-list --max-parents=0 HEAD | head -1)}...${TAG}"
           } > RELEASE_NOTES.md
 
+          echo "--- Release notes ---"
           cat RELEASE_NOTES.md
 
       - name: Build binaries
