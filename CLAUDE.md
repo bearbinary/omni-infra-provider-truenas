@@ -8,6 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Requires TrueNAS SCALE 25.04+ (Fangtooth).** The legacy REST v2.0 API is NOT supported.
 
+## Prerequisites
+
+- **Go 1.26+**
+- **golangci-lint v2+** — must be built with the same major Go version. If you see `unsupported version` errors from the linter, upgrade: `brew upgrade golangci-lint`
+
 ## Build & Test Commands
 
 ```bash
@@ -15,7 +20,7 @@ make build            # Build binary to _out/
 make test             # Run all unit tests
 make test-v           # Verbose tests
 make test-integration # Integration tests (requires TRUENAS_TEST_HOST + TRUENAS_TEST_API_KEY)
-make lint             # Run golangci-lint
+make lint             # Run golangci-lint (requires v2+)
 make image            # Build Docker image
 make generate         # Regenerate protobuf from api/specs/specs.proto
 ```

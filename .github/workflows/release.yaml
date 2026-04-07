@@ -37,6 +37,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Fail fast: if a release already exists for this tag, assets are immutable
+      # and cannot be overwritten. Delete the release first if you need to re-run.
+      - name: Check for existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ github.ref_name }}" &>/dev/null; then
+            echo "::error::Release ${{ github.ref_name }} already exists. Immutable releases cannot be updated. To re-release: gh release delete ${{ github.ref_name }} --yes && git push origin :refs/tags/${{ github.ref_name }}"
+            exit 1
+          fi
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -84,9 +95,9 @@ jobs:
             fi
 
             echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG:-$(git rev-list --max-parents=0 HEAD | head -1)}...${TAG}"
-          } > CHANGELOG.md
+          } > RELEASE_NOTES.md
 
-          cat CHANGELOG.md
+          cat RELEASE_NOTES.md
 
       - name: Build binaries
         run: |
@@ -102,14 +113,7 @@ jobs:
           cd _out
           sha256sum * > checksums.txt
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          body_path: CHANGELOG.md
-          files: |
-            _out/omni-infra-provider-truenas-*
-            _out/checksums.txt
+      # --- Supply Chain Security (before release creation) ---
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -146,8 +150,6 @@ jobs:
           provenance: true
           sbom: true
 
-      # --- Supply Chain Security ---
-
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
@@ -182,12 +184,21 @@ jobs:
               "$f"
           done
 
-      - name: Attach SBOM and signatures to release
+      # Single atomic release creation — all assets uploaded together.
+      # With immutable releases, assets cannot be modified after creation.
+      # If this step fails, delete the release and re-tag to retry.
+      - name: Create GitHub Release with all assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ steps.version.outputs.tag }} \
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes-file RELEASE_NOTES.md \
+            _out/omni-infra-provider-truenas-linux-amd64 \
+            _out/omni-infra-provider-truenas-linux-arm64 \
+            _out/omni-infra-provider-truenas-darwin-amd64 \
+            _out/omni-infra-provider-truenas-darwin-arm64 \
+            _out/checksums.txt \
             _out/sbom.spdx.json \
             _out/*.sig \
-            _out/*.cert \
-            --clobber
+            _out/*.cert
