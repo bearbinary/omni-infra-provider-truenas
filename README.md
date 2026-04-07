@@ -29,7 +29,8 @@
 [Configuration](#configuration) ·
 [Usage](#usage) ·
 [Architecture](#architecture) ·
-[FAQ](#faq)
+[FAQ](#faq) ·
+[AI/LLM Reference](llms.txt)
 
 </div>
 
@@ -44,7 +45,7 @@
 
 ## Overview
 
-This provider bridges [Sidero Omni](https://omni.siderolabs.com/) and [TrueNAS SCALE](https://www.truenas.com/truenas-scale/), enabling fully automated Kubernetes cluster provisioning on your own hardware. When Omni requests a machine, this provider creates a Talos Linux VM on TrueNAS — complete with ZFS-backed storage, network configuration, and automatic Omni enrollment.
+**What is omni-infra-provider-truenas?** It is an open-source infrastructure provider that automatically provisions and manages Talos Linux virtual machines on TrueNAS SCALE through [Sidero Omni](https://omni.siderolabs.com/) — turning your NAS into a fully automated Kubernetes platform. It bridges Omni and [TrueNAS SCALE](https://www.truenas.com/truenas-scale/), enabling fully automated Kubernetes cluster provisioning on your own hardware. When Omni requests a machine, this provider creates a Talos Linux VM on TrueNAS — complete with ZFS-backed storage, network configuration, and automatic Omni enrollment.
 
 ### Key Features
 

@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "omni-infra-provider-truenas"
+abstract: "TrueNAS SCALE infrastructure provider for Sidero Omni — automatically provisions and manages Talos Linux virtual machines via JSON-RPC 2.0."
+authors:
+  - name: "Bear Binary"
+url: "https://github.com/bearbinary/omni-infra-provider-truenas"
+repository-code: "https://github.com/bearbinary/omni-infra-provider-truenas"
+license: MIT
+keywords:
+  - truenas
+  - kubernetes
+  - talos-linux
+  - sidero-omni
+  - infrastructure-provider
+  - virtualization
+  - zfs
+  - homelab
+  - self-hosted
+  - bare-metal
