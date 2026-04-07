@@ -6,6 +6,7 @@
 
 # Build artifacts
 _out/
+site/
 *.exe
 /omni-infra-provider-truenas
 

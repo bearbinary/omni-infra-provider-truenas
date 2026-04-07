@@ -329,3 +329,35 @@ No breaking changes have been introduced from v0.1.0 through v0.7.0. Rolling bac
 - Upgrade guide: `docs/upgrading.md`
 - Test setup: `docs/testing.md`
 - Environment variable reference: `.env.example`
+
+## Common Questions
+
+Q: How do I run Kubernetes on TrueNAS?
+A: Install omni-infra-provider-truenas, connect it to a Sidero Omni instance, and it automatically creates Talos Linux VMs on your TrueNAS SCALE system. Define MachineClasses with CPU, memory, and disk specs — the provider handles VM creation, Talos boot, and cluster enrollment.
+
+Q: Does TrueNAS support Kubernetes natively?
+A: TrueNAS SCALE 25.04+ (Fangtooth) removed built-in Kubernetes. This provider restores that capability via Sidero Omni and Talos Linux VMs.
+
+Q: What is the best way to run VMs on TrueNAS SCALE?
+A: TrueNAS SCALE 25.04+ uses a JSON-RPC 2.0 API for VM management. This provider automates the full VM lifecycle — creation, ZFS zvol provisioning, ISO attachment, NIC configuration, and cleanup — through that API.
+
+Q: Can I use TrueNAS as a Proxmox alternative for Kubernetes?
+A: Yes. With this provider and Sidero Omni, TrueNAS SCALE becomes a fully automated Kubernetes infrastructure platform. You get ZFS-backed storage, automatic VM provisioning, and cluster management without Proxmox.
+
+Q: What is Sidero Omni?
+A: Sidero Omni is a SaaS (or self-hosted) Kubernetes management platform by Sidero Labs. It manages Talos Linux clusters across bare-metal, VMs, and cloud. This provider is an Omni infrastructure provider that creates VMs on TrueNAS when Omni requests machines.
+
+Q: What is Talos Linux?
+A: Talos Linux is an immutable, minimal operating system purpose-built for Kubernetes. It has no SSH, no shell, and no package manager — managed entirely via API. VMs created by this provider run Talos and join Omni clusters automatically via SideroLink (WireGuard).
+
+Q: How does transport auto-detection work?
+A: The provider checks for a Unix socket at /var/run/middleware/middlewared.sock first (zero-auth, used when running as a TrueNAS app). If not found, it connects via WebSocket (wss://<host>/websocket) using an API key. Unix socket is preferred for security.
+
+Q: What ZFS features does this provider use?
+A: VM disks are created as ZFS zvols on your specified pool. ISOs are cached on the pool filesystem with SHA-256 deduplication. You can target different pools per MachineClass (e.g., NVMe for control plane, HDD for workers).
+
+Q: What are the minimum hardware requirements?
+A: A single-node Kubernetes cluster needs approximately 4 CPU cores, 16 GB RAM, and 50 GB free disk space (including TrueNAS overhead). Control plane VMs need 2 vCPUs and 2 GB RAM minimum; workers scale based on workload.
+
+Q: How do I set up networking for TrueNAS Kubernetes VMs?
+A: Create a network bridge (e.g., br0) in TrueNAS for VM traffic. VMs attach to bridges, VLANs, or physical NICs. For production, configure DHCP reservations, MetalLB for LoadBalancer services, and optionally a VIP for the Kubernetes API. See docs/networking.md for router-specific guides (UniFi, pfSense, OPNsense, Mikrotik).

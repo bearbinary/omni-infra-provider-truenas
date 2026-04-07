@@ -1,0 +1,95 @@
+site_name: omni-infra-provider-truenas
+site_url: https://bearbinary.github.io/omni-infra-provider-truenas/
+site_description: >-
+  TrueNAS SCALE infrastructure provider for Sidero Omni — automatically
+  provisions and manages Talos Linux VMs via JSON-RPC 2.0. Run Kubernetes
+  on your NAS with ZFS-backed storage and zero-touch VM lifecycle.
+site_author: Bear Binary
+repo_url: https://github.com/bearbinary/omni-infra-provider-truenas
+repo_name: bearbinary/omni-infra-provider-truenas
+edit_uri: edit/main/docs/
+
+copyright: Copyright &copy; 2024-2026 Bear Binary — MIT License
+
+theme:
+  name: material
+  logo: assets/logo.png
+  favicon: assets/logo.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+plugins:
+  - search
+  - social:
+      enabled: !ENV [CI, false]
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/bearbinary/omni-infra-provider-truenas
+
+extra_css: []
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Configuration:
+      - Quick Start: quickstart.md
+      - Networking: networking.md
+      - Storage: storage.md
+      - CNI: cni.md
+  - Architecture: architecture.md
+  - Operations:
+      - Upgrading: upgrading.md
+      - Troubleshooting: troubleshooting.md
+      - Testing: testing.md
+  - Reference:
+      - Changelog: changelog.md
+      - FAQ: faq.md
+      - Roadmap: backlog.md
+      - Integration Test CI: integration-test-ci.md
+      - Provider Research: provider-research.md

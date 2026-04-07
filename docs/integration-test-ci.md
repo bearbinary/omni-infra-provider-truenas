@@ -6,7 +6,7 @@ Research into running integration tests against a real TrueNAS instance in CI (G
 
 ## Current State
 
-- **CI** ([`ci.yaml`](../.github/workflows/ci.yaml)): Runs `make build`, `make test` (unit only), vet, and format check on `ubuntu-latest`. No integration tests.
+- **CI** ([`ci.yaml`](https://github.com/bearbinary/omni-infra-provider-truenas/blob/main/.github/workflows/ci.yaml)): Runs `make build`, `make test` (unit only), vet, and format check on `ubuntu-latest`. No integration tests.
 - **Integration tests exist** in `internal/client/integration_test.go` and `internal/cleanup/integration_test.go` (build tag `integration`). They test against a real TrueNAS via WebSocket or Unix socket.
 - **Phase 1 tests don't need nested virt** — VMs are created with `autostart: false`, never boot. They need: a ZFS pool, a network interface, and API access. Minimum TrueNAS: 2 cores, 8 GB RAM, 32 GB boot + 2x20 GB data disks.
 - **Phase 2 (E2E) needs nested virt** — VMs actually boot Talos. Much heavier: 8+ cores, 32 GB RAM.
