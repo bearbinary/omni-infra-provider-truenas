@@ -25,6 +25,21 @@ jobs:
       - name: Test
         run: make test
 
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install betterleaks
+        run: |
+          curl -sSfL https://github.com/betterleaks/betterleaks/releases/latest/download/betterleaks-linux-amd64 -o /usr/local/bin/betterleaks
+          chmod +x /usr/local/bin/betterleaks
+
+      - name: Scan for secrets
+        run: betterleaks git --baseline-path .betterleaks-baseline.json --verbose --exit-code 1
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -46,3 +61,18 @@ jobs:
             echo "$UNFORMATTED"
             exit 1
           fi
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...

@@ -1,0 +1,23 @@
+[
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 10,
+  "EndLine": 10,
+  "StartColumn": 2,
+  "EndColumn": 88,
+  "Match": "TRUENAS_TEST_API_KEY=1-WIku99SLhxc2q9c8nZuEqJYoP775whTuzsRb9hdlUbmpfoSNwpy4e8JRoPQc6YRD",
+  "Secret": "1-WIku99SLhxc2q9c8nZuEqJYoP775whTuzsRb9hdlUbmpfoSNwpy4e8JRoPQc6YRD",
+  "File": ".env.test.example",
+  "SymlinkFile": "",
+  "Commit": "db87e9255f0a09e1701c3d7f2537d3d1811c0b37",
+  "Link": "https://github.com/bearbinary/omni-infra-provider-truenas/blob/db87e9255f0a09e1701c3d7f2537d3d1811c0b37/.env.test.example#L10",
+  "Entropy": 5.259933,
+  "Author": "Zac Clifton",
+  "Email": "43915749+Cliftonz@users.noreply.github.com",
+  "Date": "2026-04-06T13:00:53Z",
+  "Message": "Add TrueNAS SCALE Omni infra provider with CI/CD pipelines\n\nComplete implementation of the TrueNAS SCALE infrastructure provider for\nSidero Omni. Provisions Talos Linux VMs via the JSON-RPC 2.0 API with\nautomatic ISO caching, SideroLink connection, and full lifecycle management.\n\nKey features:\n- JSON-RPC 2.0 client with WebSocket and Unix socket transports\n- 3-step provision flow: createSchematic → uploadISO → createVM\n- Deprovision with VM stop/delete and zvol cleanup\n- HOST-PASSTHROUGH CPU mode for Talos compatibility\n- SideroLink connection params with encoded request IDs\n- Integration tests against real TrueNAS instances\n- GitHub Actions CI (test + lint) and release pipeline (binaries + Docker)\n- TrueNAS app template for catalog publishing\n\nCo-Authored-By: Claude Opus 4.6 (1M context) \u003cnoreply@anthropic.com\u003e",
+  "Tags": [],
+  "Fingerprint": "db87e9255f0a09e1701c3d7f2537d3d1811c0b37:.env.test.example:generic-api-key:10"
+ }
+]

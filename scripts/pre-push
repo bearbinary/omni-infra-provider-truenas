@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Pre-push hook: scan commits for secrets before pushing.
+# Uses betterleaks to detect API keys, tokens, and credentials.
+#
+# Install betterleaks: brew install betterleaks
+# Skip this hook (emergency): git push --no-verify
+
+set -euo pipefail
+
+if ! command -v betterleaks &>/dev/null; then
+  echo "⚠️  betterleaks not installed — skipping secret scan"
+  echo "   Install: brew install betterleaks"
+  exit 0
+fi
+
+# Read stdin for push details (remote, url, local ref, remote ref)
+while read -r local_ref local_oid remote_ref remote_oid; do
+  if [ "$local_oid" = "0000000000000000000000000000000000000000" ]; then
+    continue  # Branch deletion, nothing to scan
+  fi
+
+  if [ "$remote_oid" = "0000000000000000000000000000000000000000" ]; then
+    # New branch — scan all commits
+    range="$local_oid"
+  else
+    # Existing branch — scan only new commits
+    range="${remote_oid}..${local_oid}"
+  fi
+
+  echo "🔍 Scanning commits for secrets (${range:0:12})..."
+
+  BASELINE_OPTS=""
+  if [ -f ".betterleaks-baseline.json" ]; then
+    BASELINE_OPTS="--baseline-path .betterleaks-baseline.json"
+  fi
+
+  if ! betterleaks git --log-opts="$range" $BASELINE_OPTS --verbose --exit-code 1; then
+    echo ""
+    echo "❌ Secrets detected! Push blocked."
+    echo ""
+    echo "   Fix: remove the secret, then amend or create a new commit."
+    echo "   If this is a false positive, add an allowlist entry to .betterleaks.toml"
+    echo "   Emergency skip: git push --no-verify"
+    exit 1
+  fi
+done
+
+echo "✅ No secrets found"

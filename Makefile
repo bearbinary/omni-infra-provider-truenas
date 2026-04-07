@@ -2,7 +2,7 @@ BINARY := omni-infra-provider-truenas
 IMAGE := ghcr.io/bearbinary/$(BINARY)
 TAG ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build test test-v test-integration test-e2e lint image clean
+.PHONY: build test test-v test-integration test-e2e lint scan setup-hooks image clean
 
 build:
 	CGO_ENABLED=0 go build -o _out/$(BINARY) ./cmd/$(BINARY)
@@ -21,6 +21,14 @@ test-e2e:  ## Run all integration + cleanup tests against a real TrueNAS
 
 lint:
 	golangci-lint run ./...
+
+scan:  ## Scan for secrets with betterleaks
+	betterleaks git --baseline-path .betterleaks-baseline.json --verbose --exit-code 1
+
+setup-hooks:  ## Install git hooks (pre-push secret scanning)
+	@cp scripts/pre-push .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push
+	@echo "Git hooks installed"
 
 image:
 	docker build -t $(IMAGE):$(TAG) .

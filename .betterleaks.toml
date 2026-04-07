@@ -1,0 +1,17 @@
+title = "omni-infra-provider-truenas betterleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project-wide allowlist"
+paths = [
+  '''\.env\.example''',
+  '''\.agents/.*''',
+  '''\.claude/.*''',
+  '''docs/.*\.md''',
+  '''llms.*\.txt''',
+  '''AGENT\.md''',
+  '''CLAUDE\.md''',
+  '''testdata/.*''',
+]

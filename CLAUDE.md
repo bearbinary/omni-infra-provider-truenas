@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Go 1.26+**
 - **golangci-lint v2+** — must be built with the same major Go version. If you see `unsupported version` errors from the linter, upgrade: `brew upgrade golangci-lint`
+- **betterleaks** — secret scanner, runs as a pre-push git hook and in CI. Install: `brew install betterleaks`. Config: `.betterleaks.toml`, baseline: `.betterleaks-baseline.json`
 
 ## Build & Test Commands
 
