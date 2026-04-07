@@ -451,9 +451,17 @@ brew install helm  # or your OS equivalent
 | [Jellyfin](https://jellyfin.org/) | Media server | Helm chart available |
 
 ### Set Up Persistent Storage
-Your apps might need persistent storage (databases, file storage). Look into:
-- [democratic-csi](https://github.com/democratic-csi/democratic-csi) — uses your TrueNAS NFS/iSCSI shares as Kubernetes storage
-- [Longhorn](https://longhorn.io/) — distributed storage that runs inside Kubernetes
+Your apps will likely need persistent storage for databases, file uploads, and configuration. The simplest option is **NFS** — your TrueNAS already has NFS support, and Talos includes the NFS client out of the box. Create an NFS share on TrueNAS, then install the [nfs-subdir-external-provisioner](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner):
+
+```bash
+helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner
+helm install nfs-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \
+  --set nfs.server=<truenas-ip> \
+  --set nfs.path=/mnt/pool/k8s-nfs \
+  --set storageClass.defaultClass=true
+```
+
+For more options (iSCSI block storage, democratic-csi, Longhorn, Ceph, and more), see the **[CSI Storage Guide](storage.md)**.
 
 ### Clean Up
 To delete the test deployment:

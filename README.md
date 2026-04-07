@@ -263,6 +263,50 @@ EOF
 
 Assign the MachineClass when creating a cluster or MachineSet in Omni.
 
+**Multi-pool setup (e.g., NVMe for control plane, HDD for workers):**
+
+Create separate MachineClasses targeting different ZFS pools. Each VM's zvol and ISO cache are created on the specified pool.
+
+```bash
+# Control plane on fast NVMe pool
+cat <<'EOF' | omnictl apply -f -
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: truenas-cp-nvme
+spec:
+  autoprovision:
+    providerid: truenas
+    grpcendpoint: ""
+    icon: ""
+    configpatch: |
+      cpus: 2
+      memory: 2048
+      disk_size: 10
+      pool: "fast-nvme"
+EOF
+
+# Workers on bulk HDD pool
+cat <<'EOF' | omnictl apply -f -
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: truenas-worker-hdd
+spec:
+  autoprovision:
+    providerid: truenas
+    grpcendpoint: ""
+    icon: ""
+    configpatch: |
+      cpus: 4
+      memory: 8192
+      disk_size: 100
+      pool: "bulk-hdd"
+EOF
+```
+
+To move a VM to a different pool, update the `pool` field in its MachineClass and let Omni deprovision/reprovision — Talos nodes are stateless, so this is safe and automatic.
+
 ### Via Omni Web UI
 
 1. Navigate to **Clusters > Create Cluster** (or edit an existing cluster)

@@ -234,21 +234,51 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	// Create zvol for the VM disk
-	zvolPath := data.Pool + "/omni-vms/" + pctx.GetRequestID()
+	requestID := pctx.GetRequestID()
+	zvolPath := data.Pool + "/omni-vms/" + requestID
+
+	// Tag all provider-managed zvols with Omni metadata
+	omniProps := client.OmniManagedProperties(requestID)
 
 	// Ensure parent dataset exists
 	if err := p.client.EnsureDataset(ctx, data.Pool+"/omni-vms"); err != nil {
 		return fmt.Errorf("failed to ensure omni-vms dataset: %w", err)
 	}
 
-	if _, err := p.client.CreateZvol(ctx, zvolPath, data.DiskSize); err != nil {
-		if !isAlreadyExists(err) {
-			return fmt.Errorf("failed to create zvol: %w", err)
+	if data.Encrypted {
+		if p.config.EncryptionPassphrase == "" {
+			return fmt.Errorf("encrypted zvol requested but ENCRYPTION_PASSPHRASE is not set")
 		}
 
-		// Zvol already exists — check if it needs resizing (grow only)
-		if resizeErr := p.maybeResizeZvol(ctx, logger, zvolPath, data.DiskSize); resizeErr != nil {
-			return resizeErr
+		if _, err := p.client.CreateEncryptedZvol(ctx, zvolPath, data.DiskSize, p.config.EncryptionPassphrase, omniProps); err != nil {
+			if !isAlreadyExists(err) {
+				return fmt.Errorf("failed to create encrypted zvol: %w", err)
+			}
+
+			// Encrypted zvol exists — unlock if locked
+			if locked, lockErr := p.client.IsDatasetLocked(ctx, zvolPath); lockErr == nil && locked {
+				logger.Info("unlocking encrypted zvol", zap.String("path", zvolPath))
+
+				if unlockErr := p.client.UnlockDataset(ctx, zvolPath, p.config.EncryptionPassphrase); unlockErr != nil {
+					return fmt.Errorf("failed to unlock encrypted zvol %q: %w", zvolPath, unlockErr)
+				}
+			}
+
+			if resizeErr := p.maybeResizeZvol(ctx, logger, zvolPath, data.DiskSize); resizeErr != nil {
+				return resizeErr
+			}
+		}
+
+		logger.Info("created encrypted zvol", zap.String("path", zvolPath))
+	} else {
+		if _, err := p.client.CreateZvol(ctx, zvolPath, data.DiskSize, omniProps); err != nil {
+			if !isAlreadyExists(err) {
+				return fmt.Errorf("failed to create zvol: %w", err)
+			}
+
+			if resizeErr := p.maybeResizeZvol(ctx, logger, zvolPath, data.DiskSize); resizeErr != nil {
+				return resizeErr
+			}
 		}
 	}
 

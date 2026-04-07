@@ -47,6 +47,22 @@ func TestData_ApplyDefaults(t *testing.T) {
 		assert.Equal(t, "arm64", d.Architecture)
 	})
 
+	t.Run("different pools per machine class", func(t *testing.T) {
+		// Simulates two MachineClasses targeting different pools:
+		// control plane on NVMe, workers on HDD
+		controlPlane := Data{Pool: "fast-nvme", CPUs: 2, Memory: 2048, DiskSize: 10}
+		worker := Data{Pool: "bulk-hdd", CPUs: 4, Memory: 8192, DiskSize: 100}
+		controlPlane.ApplyDefaults(cfg)
+		worker.ApplyDefaults(cfg)
+
+		assert.Equal(t, "fast-nvme", controlPlane.Pool, "control plane should use fast-nvme pool")
+		assert.Equal(t, "bulk-hdd", worker.Pool, "worker should use bulk-hdd pool")
+
+		// Verify zvol paths would be constructed on the correct pools
+		assert.Equal(t, "fast-nvme/omni-vms/cp-1", controlPlane.Pool+"/omni-vms/cp-1")
+		assert.Equal(t, "bulk-hdd/omni-vms/worker-1", worker.Pool+"/omni-vms/worker-1")
+	})
+
 	t.Run("boot method falls back to UEFI", func(t *testing.T) {
 		emptyCfg := ProviderConfig{DefaultPool: "tank"}
 		d := Data{}

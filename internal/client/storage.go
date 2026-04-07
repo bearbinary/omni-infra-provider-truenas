@@ -9,9 +9,27 @@ import (
 
 // CreateDatasetRequest is the payload for creating a dataset or zvol.
 type CreateDatasetRequest struct {
-	Name    string `json:"name"`              // Full path, e.g. "tank/talos-iso" or "tank/omni-vms/vm-1"
-	Type    string `json:"type"`              // "FILESYSTEM" or "VOLUME"
-	Volsize int64  `json:"volsize,omitempty"` // Required for VOLUME type, in bytes
+	Name              string             `json:"name"`                         // Full path, e.g. "tank/talos-iso" or "tank/omni-vms/vm-1"
+	Type              string             `json:"type"`                         // "FILESYSTEM" or "VOLUME"
+	Volsize           int64              `json:"volsize,omitempty"`            // Required for VOLUME type, in bytes
+	Encryption        bool               `json:"encryption,omitempty"`         // Enable ZFS native encryption
+	EncryptionOptions *EncryptionOptions `json:"encryption_options,omitempty"` // Encryption configuration
+	UserProperties    map[string]string  `json:"user_properties,omitempty"`    // Custom ZFS user properties
+}
+
+// OmniManagedProperties returns user properties that tag a dataset as Omni-managed.
+func OmniManagedProperties(requestID string) map[string]string {
+	return map[string]string{
+		"org.omni:managed":    "true",
+		"org.omni:provider":   "truenas",
+		"org.omni:request-id": requestID,
+	}
+}
+
+// EncryptionOptions configures ZFS native encryption for a dataset or zvol.
+type EncryptionOptions struct {
+	Algorithm  string `json:"algorithm,omitempty"`  // e.g., "aes-256-gcm" (default)
+	Passphrase string `json:"passphrase,omitempty"` // Encryption passphrase
 }
 
 // Dataset represents a ZFS dataset or zvol.
@@ -35,12 +53,88 @@ func (c *Client) CreateDataset(ctx context.Context, req CreateDatasetRequest) (*
 }
 
 // CreateZvol creates a zvol with the given name and size in GiB.
-func (c *Client) CreateZvol(ctx context.Context, name string, sizeGiB int) (*Dataset, error) {
-	return c.CreateDataset(ctx, CreateDatasetRequest{
+// Optional user properties are set on the dataset (e.g., Omni managed tags).
+func (c *Client) CreateZvol(ctx context.Context, name string, sizeGiB int, props ...map[string]string) (*Dataset, error) {
+	req := CreateDatasetRequest{
 		Name:    name,
 		Type:    "VOLUME",
 		Volsize: int64(sizeGiB) * 1024 * 1024 * 1024,
-	})
+	}
+
+	if len(props) > 0 {
+		req.UserProperties = props[0]
+	}
+
+	return c.CreateDataset(ctx, req)
+}
+
+// CreateEncryptedZvol creates an encrypted zvol with the given name, size, and passphrase.
+func (c *Client) CreateEncryptedZvol(ctx context.Context, name string, sizeGiB int, passphrase string, props ...map[string]string) (*Dataset, error) {
+	req := CreateDatasetRequest{
+		Name:       name,
+		Type:       "VOLUME",
+		Volsize:    int64(sizeGiB) * 1024 * 1024 * 1024,
+		Encryption: true,
+		EncryptionOptions: &EncryptionOptions{
+			Algorithm:  "aes-256-gcm",
+			Passphrase: passphrase,
+		},
+	}
+
+	if len(props) > 0 {
+		req.UserProperties = props[0]
+	}
+
+	return c.CreateDataset(ctx, req)
+}
+
+// UnlockDataset unlocks an encrypted dataset or zvol with a passphrase.
+// Must be called after TrueNAS reboot before VMs using encrypted zvols can start.
+// JSON-RPC method: pool.dataset.unlock
+func (c *Client) UnlockDataset(ctx context.Context, path, passphrase string) error {
+	params := []any{
+		path,
+		map[string]any{
+			"datasets": []map[string]any{
+				{"name": path, "passphrase": passphrase},
+			},
+		},
+	}
+
+	if err := c.call(ctx, "pool.dataset.unlock", params, nil); err != nil {
+		return fmt.Errorf("pool.dataset.unlock %q failed: %w", path, err)
+	}
+
+	return nil
+}
+
+// LockDataset locks an encrypted dataset or zvol.
+// JSON-RPC method: pool.dataset.lock
+func (c *Client) LockDataset(ctx context.Context, path string) error {
+	if err := c.call(ctx, "pool.dataset.lock", []any{path}, nil); err != nil {
+		return fmt.Errorf("pool.dataset.lock %q failed: %w", path, err)
+	}
+
+	return nil
+}
+
+// IsDatasetLocked checks if an encrypted dataset is locked.
+// JSON-RPC method: pool.dataset.query with filter
+func (c *Client) IsDatasetLocked(ctx context.Context, path string) (bool, error) {
+	filter := []any{
+		[]any{[]any{"id", "=", path}},
+		map[string]any{"get": true},
+	}
+
+	var ds struct {
+		Locked bool `json:"locked"`
+	}
+
+	if err := c.call(ctx, "pool.dataset.query", filter, &ds); err != nil {
+		return false, fmt.Errorf("pool.dataset.query %q failed: %w", path, err)
+	}
+
+	return ds.Locked, nil
 }
 
 // EnsureDataset creates a FILESYSTEM dataset if it doesn't exist.

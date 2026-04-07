@@ -51,6 +51,12 @@
       "title": "Extra Extensions",
       "items": { "type": "string" },
       "description": "Additional Talos system extensions (e.g., siderolabs/iscsi-tools). qemu-guest-agent, nfs-utils, and util-linux-tools are always included."
+    },
+    "encrypted": {
+      "type": "boolean",
+      "title": "Encrypted Disk",
+      "default": false,
+      "description": "Enable ZFS native encryption (AES-256-GCM) on the VM disk. Requires ENCRYPTION_PASSPHRASE env var on the provider."
     }
   },
   "required": [

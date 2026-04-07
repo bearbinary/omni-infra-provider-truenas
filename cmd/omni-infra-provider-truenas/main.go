@@ -123,9 +123,10 @@ func run() error {
 
 	// Create provisioner
 	prov := provisioner.NewProvisioner(tnClient, provisioner.ProviderConfig{
-		DefaultPool:       defaultPool,
-		DefaultNICAttach:  defaultNICAttach,
-		DefaultBootMethod: defaultBootMethod,
+		DefaultPool:          defaultPool,
+		DefaultNICAttach:     defaultNICAttach,
+		DefaultBootMethod:    defaultBootMethod,
+		EncryptionPassphrase: os.Getenv("ENCRYPTION_PASSPHRASE"),
 	})
 
 	// Create infra provider

@@ -12,9 +12,10 @@ import (
 
 // ProviderConfig holds the provider-level configuration that applies to all VMs.
 type ProviderConfig struct {
-	DefaultPool       string
-	DefaultNICAttach  string // Bridge, VLAN, or physical interface for VM NICs
-	DefaultBootMethod string
+	DefaultPool          string
+	DefaultNICAttach     string // Bridge, VLAN, or physical interface for VM NICs
+	DefaultBootMethod    string
+	EncryptionPassphrase string // Passphrase for ZFS encrypted zvols (required when encrypted=true)
 }
 
 // Provisioner implements the Omni provision.Provisioner interface for TrueNAS.

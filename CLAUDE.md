@@ -58,6 +58,7 @@ All via environment variables (`.env` file loaded automatically). Key ones: `OMN
 - **`docs/architecture.md`** — Detailed architecture with Mermaid diagrams (system context, provision sequence, transport detection)
 - **`docs/troubleshooting.md`** — Common issues and solutions (startup failures, provisioning, debugging)
 - **`docs/testing.md`** — Unit, integration, and E2E test setup
+- **`docs/storage.md`** — CSI storage options guide: NAS-backed (NFS, iSCSI, democratic-csi) vs node-local (Longhorn, Ceph, Mayastor) with recommendations
 - **`docs/backlog.md`** — Feature roadmap and backlog items
 - **`docs/getting-started.md`** — Beginner tutorial: NAS to running Kubernetes cluster, no prior experience needed
 - **`docs/upgrading.md`** — Version upgrade guide and breaking changes

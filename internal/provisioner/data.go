@@ -8,6 +8,7 @@ type Data struct {
 	BootMethod   string   `yaml:"boot_method,omitempty"`
 	Architecture string   `yaml:"architecture,omitempty"`
 	Extensions   []string `yaml:"extensions,omitempty"` // Additional Talos system extensions beyond the defaults
+	Encrypted    bool     `yaml:"encrypted,omitempty"`  // Enable ZFS native encryption on the VM zvol
 	CPUs         int      `yaml:"cpus,omitempty"`
 	Memory       int      `yaml:"memory,omitempty"`
 	DiskSize     int      `yaml:"disk_size,omitempty"`
