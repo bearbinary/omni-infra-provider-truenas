@@ -121,6 +121,12 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 	}
 
 	data.ApplyDefaults(p.config)
+
+	// Validate pool before any operations
+	if err := p.validatePool(ctx, data.Pool); err != nil {
+		return err
+	}
+
 	arch := data.Architecture
 
 	imageURL, err := url.Parse(constants.ImageFactoryBaseURL)
@@ -319,8 +325,18 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	// Attach NIC
-	if _, err := p.client.AddNIC(ctx, vm.ID, data.NICAttach); err != nil {
+	nicDev, err := p.client.AddNIC(ctx, vm.ID, data.NICAttach)
+	if err != nil {
 		return fmt.Errorf("failed to attach NIC: %w", err)
+	}
+
+	// Log MAC address so users can create DHCP reservations in their router
+	if mac, ok := nicDev.Attributes["mac"].(string); ok && mac != "" {
+		logger.Info("VM NIC MAC address — use this for DHCP reservation in your router",
+			zap.String("mac", mac),
+			zap.String("vm_name", vmName),
+			zap.String("nic_attach", data.NICAttach),
+		)
 	}
 
 	// Start the VM
@@ -377,6 +393,28 @@ func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, p
 	state.CdromDeviceId = 0
 
 	logger.Info("CDROM removed — VM will boot directly from disk on next restart")
+
+	return nil
+}
+
+// validatePool checks that the configured pool exists on TrueNAS.
+// Provides clear error messages for common mistakes (e.g., using a dataset path instead of a pool name).
+func (p *Provisioner) validatePool(ctx context.Context, pool string) error {
+	exists, err := p.client.PoolExists(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("failed to verify pool %q: %w", pool, err)
+	}
+
+	if !exists {
+		// Check if it looks like a dataset path (contains "/")
+		if strings.Contains(pool, "/") {
+			return fmt.Errorf("pool %q not found — this looks like a dataset path, not a pool name. "+
+				"Use just the pool name (e.g., 'tank' not 'tank/my-dataset')", pool)
+		}
+
+		return fmt.Errorf("pool %q not found on TrueNAS — check that the pool exists and the name is correct. "+
+			"A pool is a top-level ZFS storage container (e.g., 'tank', 'default'), not a dataset", pool)
+	}
 
 	return nil
 }

@@ -21,6 +21,19 @@ Tracked improvements for future releases.
 - **VM Resource Monitoring** — Per-VM runtime stats via host monitor (v0.9.0)
 - **Docker Image Signing + SBOM** — Cosign keyless signing + SPDX SBOM on every release (v0.9.1)
 - **ZFS Encryption at Rest** — AES-256-GCM encrypted zvols with auto-unlock on reboot (v0.10.0)
+- **CNI Selection & Setup Guide** — Flannel, Cilium, Calico setup docs with Talos-specific config ([docs/cni.md](cni.md)) (v0.10.0)
+- **Multiple Pool Support** — Per-machine pool selection via `pool` field in MachineClass config, with docs and tests (v0.10.0)
+- **CSI Storage Guide** — NFS, iSCSI, democratic-csi, and node-local storage comparison ([docs/storage.md](storage.md)) (v0.10.0)
+- **Zvol Tagging** — All provider-managed zvols tagged with `org.omni:managed`, `org.omni:provider`, `org.omni:request-id` (v0.10.0)
+- **Pool Validation** — Clear error messages when pool doesn't exist or dataset path used instead of pool name (v0.11.0)
+- **MAC Address Logging** — VM NIC MAC logged for DHCP reservation setup (v0.11.0)
+- **Networking Guide** — Complete docs for UniFi, pfSense, OPNsense, Mikrotik, MetalLB, VIP, DHCP reservations ([docs/networking.md](networking.md)) (v0.11.0)
+- **Control Plane VIP** — Documented as Omni config patch in [networking guide](networking.md) (v0.11.0)
+- **Static IP / DHCP Reservations** — Documented router-side DHCP reservation workflow for all platforms (v0.11.0)
+
+## Upstream Issues
+
+- **Provision errors not visible in Omni UI** — SDK clears error on every retry, users only see "Provisioning" forever. Filed: [siderolabs/omni#2629](https://github.com/siderolabs/omni/issues/2629)
 
 ---
 
@@ -49,29 +62,6 @@ If you need replicated storage independent of the NAS, these options work — th
 
 ## Networking
 
-### Control Plane VIP
-Provide a shared virtual IP for the Kubernetes API server across control plane nodes, eliminating the need for an external load balancer. Talos uses etcd leader election to assign the VIP to one control plane node at a time (~1 min failover on unexpected failure). See [Talos VIP docs](https://docs.siderolabs.com/talos/v1.12/networking/advanced/vip).
-
-Implementation:
-- Add `vip` field to MachineClass config (or Omni cluster-level config patch)
-- Generate a Talos machine config patch with `Layer2VIPConfig` specifying the VIP address and network interface
-- Apply only to control plane nodes
-- Requirements: all control plane nodes must share a Layer 2 network, VIP must be outside DHCP range
-- Note: VIP is unavailable until etcd is bootstrapped; not recommended for Talos API access, only Kubernetes API
-
-### Static IP Assignment
-Assign predictable IPs to nodes for stable API server endpoints and reliable cluster operation. DHCP remains the default when no network config is set. When a user defines a network block in the MachineClass, the provider generates Talos machine config patches with static networking for each provisioned node.
-
-A typical homelab /24 layout: `.50-.200` for nodes, `.201-.250` for load balancer / MetalLB IPs — but the user controls the range.
-
-Implementation:
-- Add network config fields to `Data` struct and `schema.json`: `network_cidr` (e.g., `192.168.1.0/24`), `gateway`, `dns_servers`, `ip_range_start`, `ip_range_end`
-- Provider assigns the next available IP from the range when provisioning a node
-- Track assigned IPs in MachineSpec protobuf state to prevent conflicts
-- Generate a Talos machine config patch with static IP, gateway, and DNS for each node
-- Fall back to DHCP when network fields are empty (current behavior)
-- Validate that the range falls within the CIDR and doesn't overlap with the gateway
-
 ### Multiple NIC Support + VLAN Tagging
 Attach multiple NICs to a VM for network segmentation (e.g., cluster traffic on one NIC, storage/iSCSI on another). Each NIC can optionally tag traffic with a VLAN ID, removing the need for pre-configured bridge/VLAN interfaces on TrueNAS.
 
@@ -95,24 +85,22 @@ Implementation:
 - For dual-stack (IPv4 + IPv6): accept both IPv4 and IPv6 CIDRs in the list, Talos handles the rest
 - Validate that the advertised subnets match at least one NIC's network
 
-### CNI Selection & Setup Guide
-Document how to swap from the default Flannel CNI to Cilium or Calico via Omni config patches. This is a user-side change (Omni cluster config patch), not a provider-side change — but users need guidance since CNI must be chosen before cluster bootstrap.
-
-Options to cover:
-- **Flannel** (default) — zero config, works out of the box, sufficient for most clusters
-- **Cilium** (recommended for advanced use) — eBPF dataplane, Hubble observability, network policy enforcement. See [Siderolabs Cilium guide](https://docs.siderolabs.com/kubernetes-guides/cni/deploying-cilium)
-- **Calico** — NFTables or eBPF dataplane, Tigera operator, network policy. See [Siderolabs Calico guide](https://docs.siderolabs.com/kubernetes-guides/cni/deploy-calico)
-
-Documentation should include:
-- Applying the `cluster.network.cni.name: none` machine config patch as an Omni cluster-level config patch before bootstrap
-- Helm install or manifest deployment steps for each CNI
-- When to choose each option (Flannel for simplicity, Cilium/Calico for network policy and observability)
+---
 
 ---
 
-## Multi-Node
+## CI/CD & Release
 
-### Multi-Host Provider (Low Priority)
+### Integration Test CI
+Run integration tests against a real TrueNAS instance in CI (GitHub Actions self-hosted runner or cloud instance). See [feasibility & cost analysis](integration-test-ci.md).
+
+---
+
+## Might Implement
+
+Items that are feasible but niche — will implement if there's demand.
+
+### Multi-Host Provider
 Support multiple TrueNAS hosts behind a single provider instance. Enables HA and load distribution. Most users have a single NAS — this targets the rare multi-host setup.
 
 **Workaround today:** Run a separate provider instance per TrueNAS host, each registered with Omni. Omni handles scheduling across providers natively. This covers most use cases without any provider changes.
@@ -126,33 +114,6 @@ Implementation:
 - If a host goes down, new VMs are placed on healthy hosts
 - Existing VMs on a failed host are reported as unavailable to Omni
 - Add OTEL metrics per host: `truenas.host.vms_running`, `truenas.host.pool_free_bytes`
-
----
-
-## Security
-
-### UEFI Secure Boot
-Enable Secure Boot on VMs using Talos's signed boot chain. Talos handles all signing, UKI generation, and key enrollment automatically — the provider just needs to use the right ISO and configure the VM firmware. See [Talos SecureBoot docs](https://docs.siderolabs.com/talos/v1.12/platform-specific-installations/bare-metal-platforms/secureboot).
-
-Implementation:
-- Add `secure_boot` boolean to `Data` struct and `schema.json`
-- When enabled, download the SecureBoot-specific ISO from Image Factory instead of the standard nocloud ISO
-- Create the VM with OVMF firmware in Secure Boot + setup mode (first boot auto-enrolls keys)
-- Verify TrueNAS OVMF variant supports Secure Boot setup mode
-- Fall back to standard UEFI when `secure_boot` is false (current behavior)
-
----
-
-## CI/CD & Release
-
-### Integration Test CI
-Run integration tests against a real TrueNAS instance in CI (GitHub Actions self-hosted runner or cloud instance).
-
----
-
-## Might Implement
-
-Items that are feasible but niche — will implement if there's demand.
 
 ### GPU/PCIe Passthrough
 TrueNAS supports PCI device passthrough to VMs. Useful for AI/ML workloads (Ollama, vLLM), video transcoding (Plex/Jellyfin), and hardware crypto acceleration.
@@ -178,8 +139,8 @@ Items considered and intentionally ruled out.
 ### Cross-Host ZFS Replication
 Replicate VM zvols to a secondary TrueNAS host using `zfs send/recv` for DR failover. **Why not:** complexity is enormous for a homelab provider — replication lag tracking, split-brain handling, zvol promotion, and VM re-registration. Users needing DR should use TrueNAS's built-in replication tasks or a dedicated backup solution. Out of scope for this provider.
 
-### ZFS Encryption at Rest
-Create VM zvols with ZFS native encryption. **Why not:** requires key management (loading keys on reboot before VMs can start), and TrueNAS already supports pool-level encryption configured through its own UI. The provider shouldn't reimplement what TrueNAS handles natively. Users who want encryption should enable it at the pool or dataset level in TrueNAS.
+### UEFI Secure Boot
+Enable Secure Boot on VMs via the provider. **Why not:** Secure Boot is configured through Omni's cluster config patches and Talos machine configuration, not at the provider level. Talos handles UKI generation, key enrollment, and the signed boot chain automatically. The provider just boots VMs with standard UEFI firmware — Secure Boot is orthogonal to VM provisioning.
 
 ### VM Migration Between Pools
 Live-migrate a VM's zvol between pools using `zfs send/recv`. **Why not:** TrueNAS doesn't support this as an atomic operation — it requires stop, send/recv, path update, restart. Easier to deprovision and reprovision the VM on the new pool. Omni handles this gracefully since it treats VMs as cattle.

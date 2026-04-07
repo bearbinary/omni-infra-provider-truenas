@@ -24,10 +24,11 @@ The provider cannot connect to TrueNAS on startup.
 
 ### "pool not found on TrueNAS"
 
-The configured `DEFAULT_POOL` doesn't exist.
+The configured `DEFAULT_POOL` or MachineClass `pool` doesn't exist.
 
+- **Common mistake**: Using a dataset name (e.g., `tank/my-vms`) instead of a pool name (e.g., `tank`). Pools are top-level ZFS containers. Datasets live inside pools. The provider creates its own datasets (`<pool>/omni-vms/`, `<pool>/talos-iso/`) — just give it the pool name.
 - List available pools: `midclt call pool.query | jq '.[].name'` (on TrueNAS)
-- Update `DEFAULT_POOL` to match an existing pool name
+- Update `DEFAULT_POOL` or the MachineClass `pool` field to match an existing pool name
 - Pool names are case-sensitive
 
 ### "NIC attach target not found"
@@ -46,6 +47,34 @@ The `OMNI_ENDPOINT` environment variable is not set.
 - If using `.env`, make sure the file is in the working directory or mounted into the container
 
 ## Provisioning Issues
+
+### Omni shows "Provisioning" forever with no error
+
+Omni's UI shows the machine stuck in "Provisioning" state but no error message. This happens because the provider retries failed steps every 60 seconds, and each retry clears the error briefly.
+
+**How to see the actual error:**
+
+1. **Check provider logs** — the error is always logged:
+   ```bash
+   # If running locally
+   docker logs omni-infra-provider-truenas 2>&1 | grep "provision failed"
+   
+   # If running via the binary
+   grep "provision failed" /path/to/provider/output
+   ```
+
+2. **Check MachineRequestStatus via omnictl** — catches the error between retries:
+   ```bash
+   omnictl get machinerequeststatus -o yaml | grep -A2 "error:"
+   ```
+
+3. **Common causes:**
+   - **Pool doesn't exist**: `pool "previewk8" not found` — you specified a dataset name instead of a pool name. Use the top-level pool (e.g., `default`, `tank`), not a dataset path.
+   - **NIC attach invalid**: the bridge or VLAN doesn't exist on TrueNAS.
+   - **Pool full**: no space for the zvol.
+   - **TrueNAS unreachable**: WebSocket connection dropped.
+
+The provider will keep retrying until the issue is fixed. Once you correct the MachineClass config (e.g., fix the pool name), the next retry will succeed automatically.
 
 ### VMs are created but don't join Omni
 

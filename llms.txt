@@ -84,11 +84,14 @@ Includes: Windows/macOS/Linux instructions, inline troubleshooting at each step,
 - CLAUDE.md: AI assistant context for developing this codebase
 - CONTRIBUTING.md: Issues-only contribution model (no PRs accepted)
 - SECURITY.md: Vulnerability disclosure policy
-- CHANGELOG.md: Curated release history (v0.1.0 through v0.7.0)
+- CHANGELOG.md: Curated release history (v0.1.0 through current)
 - docs/architecture.md: Detailed architecture with Mermaid diagrams
+- docs/networking.md: Networking guide — bridges, DHCP reservations, MetalLB, VIP, UniFi/pfSense/OPNsense/Mikrotik
+- docs/storage.md: CSI storage guide — NFS, iSCSI, democratic-csi, node-local options
+- docs/cni.md: CNI selection guide — Flannel, Cilium, Calico with Talos-specific setup
 - docs/troubleshooting.md: Common issues and solutions
 - docs/testing.md: Unit, integration, and E2E test setup
-- docs/getting-started.md: Beginner tutorial from NAS to running Kubernetes cluster (no prior experience needed, includes Windows/macOS/Linux instructions, glossary, inline troubleshooting, FAQ)
+- docs/getting-started.md: Beginner tutorial from NAS to running Kubernetes cluster
 - docs/upgrading.md: Version upgrade guide and breaking changes
 - docs/provider-research.md: Internal research on all existing Omni provider implementations
 - docs/backlog.md: Feature roadmap

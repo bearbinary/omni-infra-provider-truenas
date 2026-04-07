@@ -448,7 +448,7 @@ make generate           # Regenerate protobuf from specs.proto
 
 Integration and E2E tests require a real TrueNAS SCALE instance. See [`docs/testing.md`](docs/testing.md) for setup instructions.
 
-For detailed system design, see [`docs/architecture.md`](docs/architecture.md). For common issues, see [`docs/troubleshooting.md`](docs/troubleshooting.md). For version upgrades, see [`docs/upgrading.md`](docs/upgrading.md).
+For detailed system design, see [`docs/architecture.md`](docs/architecture.md). For networking (bridges, DHCP, MetalLB, VIP, UniFi), see [`docs/networking.md`](docs/networking.md). For storage (NFS, iSCSI, CSI), see [`docs/storage.md`](docs/storage.md). For common issues, see [`docs/troubleshooting.md`](docs/troubleshooting.md). For version upgrades, see [`docs/upgrading.md`](docs/upgrading.md).
 
 ### Binary Releases
 
