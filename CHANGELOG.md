@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [v0.11.0] — Multi-NIC, Graceful Shutdown, Observability & Hardening
+## [v0.11.1] — Multi-NIC, Graceful Shutdown, Observability & Hardening
 
 ### Features
 - Add multiple NIC support with per-NIC VLAN tagging via `additional_nics` in MachineClass config
@@ -151,7 +151,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
-[v0.11.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.11.0
+[v0.11.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.11.1
 [v0.10.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.10.0
 [v0.9.4]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.9.4
 [v0.9.3]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.9.3
