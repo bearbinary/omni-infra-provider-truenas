@@ -5,6 +5,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"time"
@@ -49,7 +50,7 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 			}
 		}
 		if len(errs) > 0 {
-			return fmt.Errorf("telemetry shutdown errors: %v", errs)
+			return errors.Join(errs...)
 		}
 
 		return nil

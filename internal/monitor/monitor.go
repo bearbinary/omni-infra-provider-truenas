@@ -182,7 +182,7 @@ func (ps *PoolSelector) SelectPool(ctx context.Context, explicitPool string) (st
 		return "", fmt.Errorf("no healthy pools available")
 	}
 
-	ps.logger.Info("auto-selected pool",
+	ps.logger.Debug("auto-selected pool",
 		zap.String("pool", best.Name),
 		zap.Int64("free_gib", best.Free/(1024*1024*1024)),
 	)

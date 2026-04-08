@@ -3,6 +3,11 @@
 {# #}
 {# This provider uses JSON-RPC 2.0 via the Unix socket. REST v2.0 is NOT supported. #}
 {# The middleware socket is mounted for zero-config auth (no API key needed). #}
+{# #}
+{# SECURITY NOTE: Secrets (omniServiceAccountKey) are stored in the TrueNAS app #}
+{# database and visible to anyone with TrueNAS admin access. This is inherent to #}
+{# the TrueNAS app catalog model. The Unix socket transport avoids needing a #}
+{# TrueNAS API key, reducing the secret surface area. #}
 
 {% set app_name = "omni-infra-provider-truenas" %}
 

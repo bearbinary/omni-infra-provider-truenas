@@ -91,7 +91,9 @@ func TestData_ApplyDefaults(t *testing.T) {
 func TestExtensionMerge(t *testing.T) {
 	t.Run("defaults only", func(t *testing.T) {
 		data := Data{}
-		extensions := append(defaultExtensions, data.Extensions...)
+		extensions := make([]string, 0, len(defaultExtensions)+len(data.Extensions))
+		extensions = append(extensions, defaultExtensions...)
+		extensions = append(extensions, data.Extensions...)
 
 		assert.Equal(t, []string{
 			"siderolabs/qemu-guest-agent",
@@ -104,7 +106,9 @@ func TestExtensionMerge(t *testing.T) {
 		data := Data{
 			Extensions: []string{"siderolabs/iscsi-tools", "siderolabs/drbd"},
 		}
-		extensions := append(defaultExtensions, data.Extensions...)
+		extensions := make([]string, 0, len(defaultExtensions)+len(data.Extensions))
+		extensions = append(extensions, defaultExtensions...)
+		extensions = append(extensions, data.Extensions...)
 
 		assert.Equal(t, []string{
 			"siderolabs/qemu-guest-agent",
@@ -120,7 +124,9 @@ func TestExtensionMerge(t *testing.T) {
 		data := Data{
 			Extensions: []string{"siderolabs/qemu-guest-agent"}, // user adds one that's already default
 		}
-		extensions := append(defaultExtensions, data.Extensions...)
+		extensions := make([]string, 0, len(defaultExtensions)+len(data.Extensions))
+		extensions = append(extensions, defaultExtensions...)
+		extensions = append(extensions, data.Extensions...)
 
 		// Currently allows duplicates — the Image Factory deduplicates
 		assert.Len(t, extensions, 4)

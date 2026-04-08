@@ -10,6 +10,11 @@ exporters:
     tls:
       insecure: true
 
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
   prometheus:
     endpoint: 0.0.0.0:8889
 
@@ -19,6 +24,12 @@ exporters:
 processors:
   batch:
     timeout: 5s
+
+  resource:
+    attributes:
+      - key: service.name
+        action: upsert
+        value: omni-infra-provider-truenas
 
 service:
   pipelines:
@@ -32,5 +43,5 @@ service:
       exporters: [prometheus, debug]
     logs:
       receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
+      processors: [batch, resource]
+      exporters: [otlphttp/loki, debug]

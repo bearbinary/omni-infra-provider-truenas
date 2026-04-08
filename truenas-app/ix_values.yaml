@@ -4,19 +4,19 @@ omniEndpoint: ""
 omniServiceAccountKey: ""
 omniInsecureSkipVerify: false
 
-truenasUrl: "https://127.0.0.1/api/v2.0"
-truenasApiKey: ""
-truenasInsecureSkipVerify: true
-
 providerId: "truenas"
 providerName: "TrueNAS"
 providerDescription: "TrueNAS SCALE infrastructure provider"
 
 defaultPool: "default"
-defaultBridge: "br0"
+defaultNicAttach: ""
 defaultBootMethod: "UEFI"
 concurrency: 4
 logLevel: "info"
+
+image:
+  repository: ghcr.io/bearbinary/omni-infra-provider-truenas
+  tag: latest
 
 resources:
   limits:

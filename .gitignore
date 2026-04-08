@@ -28,3 +28,4 @@ config.yaml
 .agents/
 .claude/
 skills-lock.json
+.cache/

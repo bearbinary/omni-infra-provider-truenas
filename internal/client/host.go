@@ -15,6 +15,18 @@ type HostInfo struct {
 	LoadAvg  []float64 `json:"loadavg"` // 1, 5, 15 minute load averages
 }
 
+// SystemVersion returns the TrueNAS SCALE version string (e.g., "TrueNAS-SCALE-25.04.0").
+// JSON-RPC method: system.version
+func (c *Client) SystemVersion(ctx context.Context) (string, error) {
+	var version string
+
+	if err := c.call(ctx, "system.version", nil, &version); err != nil {
+		return "", fmt.Errorf("system.version failed: %w", err)
+	}
+
+	return version, nil
+}
+
 // GetHostInfo returns detailed TrueNAS host information.
 // JSON-RPC method: system.info
 func (c *Client) GetHostInfo(ctx context.Context) (*HostInfo, error) {

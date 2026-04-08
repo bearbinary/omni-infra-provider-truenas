@@ -70,3 +70,43 @@ groups:
         annotations:
           summary: "VM provisioning taking > 10 minutes"
           description: "New VM provisioning is taking longer than expected."
+
+      # Health checks failing
+      - alert: TrueNASHealthCheckFailing
+        expr: rate(truenas_healthcheck_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TrueNAS provider health checks failing"
+          description: "Health checks have been failing for 5+ minutes. The provider may be marked unhealthy in Omni."
+
+      # WebSocket reconnects happening frequently
+      - alert: TrueNASWSReconnectsHigh
+        expr: rate(truenas_ws_reconnects_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Frequent WebSocket reconnections to TrueNAS"
+          description: "WebSocket is reconnecting frequently. Check network stability and TrueNAS middleware health."
+
+      # Too many forced shutdowns (graceful timeout too short)
+      - alert: TrueNASForcedShutdownsHigh
+        expr: truenas_shutdown_forced_total / (truenas_shutdown_graceful_total + truenas_shutdown_forced_total) > 0.5
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Over 50% of VM shutdowns are forced"
+          description: "Most VMs are not shutting down gracefully. Consider increasing GRACEFUL_SHUTDOWN_TIMEOUT or checking qemu-guest-agent."
+
+      # Orphan VMs being cleaned up (indicates provider/Omni state drift)
+      - alert: TrueNASOrphanVMsDetected
+        expr: rate(truenas_cleanup_orphan_vms_total[1h]) > 0
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Orphan VMs detected and cleaned up"
+          description: "The cleanup process is finding and removing orphan VMs. This may indicate provider restarts or Omni state drift."

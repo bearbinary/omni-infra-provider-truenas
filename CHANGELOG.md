@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented here.
 
+## [v0.11.0] — Multi-NIC, Graceful Shutdown, Observability & Hardening
+
+### Features
+- Add multiple NIC support with per-NIC VLAN tagging via `additional_nics` in MachineClass config
+- Add `advertised_subnets` field for pinning etcd/kubelet to specific subnets with multi-NIC setups
+- Add graceful VM shutdown on deprovision (ACPI signal with configurable timeout before force-stop)
+- Add TrueNAS version check at startup — fails with clear error on versions below 25.04
+- Add memory overcommit pre-check — blocks VMs requesting >80% of host RAM
+- Set `MachineInfraID` and `MachineUUID` for Omni node-to-infrastructure correlation
+
+### Observability
+- Add 17 new OTEL metrics: per-step provision/deprovision durations, error categorization, ISO cache hits/misses, cleanup counters, WebSocket reconnects, rate limit queue depth, graceful shutdown outcomes
+- Add OTEL log-trace correlation via otelzap bridge (trace_id/span_id in structured logs)
+- Split monolithic Grafana dashboard into 4 focused dashboards (overview, provisioning, API performance, cleanup)
+- Add 4 new Prometheus alerting rules (health check failures, WebSocket reconnects, forced shutdowns, orphan VMs)
+- Add Loki log aggregation config to observability stack
+
+### Security & Hardening
+- Pin Docker base images to SHA256 digest to prevent supply chain tag mutation
+- Add `SecretString` type that redacts API keys from logs and fmt output
+- Default `TRUENAS_INSECURE_SKIP_VERIFY` to `false` (was `true`)
+- Add security comments to TrueNAS app template and Kubernetes secret manifest
+- Replace placeholder API key in `.env.test.example` with non-secret value
+- Add betterleaks secret scanning: pre-push git hook, CI job, baseline config
+
+### Quality
+- Fix all 21 golangci-lint v2 issues (errcheck, gocritic, gofmt, staticcheck, unused)
+- Update `.golangci.yml` for v2 (`gofmt` moved to formatters, `gosimple` merged into `staticcheck`)
+- Tune log levels (routine operations Info→Debug, NVRAM failures Warn→Error)
+- Add `make scan` and `make setup-hooks` targets
+
+### Documentation & SEO
+- Add MkDocs Material docs site with GitHub Pages deployment
+- Add CITATION.cff, FAQ page, FUNDING.yml
+- Expand llms.txt and llms-full.txt with Q&A pairs for AI/answer engine optimization
+- Add 7 GitHub topics (homelab, self-hosted, bare-metal, etc.)
+- Backfill CHANGELOG.md with all releases from v0.1.0 through v0.10.0
+- Restructure release workflow for immutable releases (single atomic upload, CHANGELOG.md-sourced notes)
+
 ## [v0.10.0] — ZFS Encryption, Zvol Tagging & Supply Chain Hardening
 
 - Add ZFS native AES-256-GCM encryption at rest for VM disks (`encrypted: true` in MachineClass)
@@ -112,6 +151,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.11.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.11.0
 [v0.10.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.10.0
 [v0.9.4]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.9.4
 [v0.9.3]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.9.3

@@ -47,18 +47,46 @@ func (c *Client) AddCDROM(ctx context.Context, vmID int, isoPath string) (*Devic
 	})
 }
 
+// NICConfig describes a NIC to attach to a VM.
+type NICConfig struct {
+	NICAttach           string `json:"nic_attach" yaml:"nic_attach"`                                             // Bridge, VLAN, or physical interface
+	Type                string `json:"type,omitempty" yaml:"type,omitempty"`                                     // VIRTIO (default) or E1000
+	VLANTag             int    `json:"vlan_id,omitempty" yaml:"vlan_id,omitempty"`                               // Optional: tag traffic with this VLAN ID
+	TrustGuestRxFilters bool   `json:"trust_guest_rx_filters,omitempty" yaml:"trust_guest_rx_filters,omitempty"` // Required for VLAN tagging
+}
+
 // AddNIC attaches a NIC device to a VM.
 // nicAttach can be a bridge (e.g., "br100"), VLAN interface (e.g., "vlan666"),
 // or physical interface (e.g., "enp5s0").
 func (c *Client) AddNIC(ctx context.Context, vmID int, nicAttach string) (*Device, error) {
+	return c.AddNICWithConfig(ctx, vmID, NICConfig{NICAttach: nicAttach}, 1003)
+}
+
+// AddNICWithConfig attaches a NIC device to a VM with full configuration options.
+func (c *Client) AddNICWithConfig(ctx context.Context, vmID int, cfg NICConfig, order int) (*Device, error) {
+	nicType := cfg.Type
+	if nicType == "" {
+		nicType = "VIRTIO"
+	}
+
+	attrs := map[string]any{
+		"dtype":      "NIC",
+		"type":       nicType,
+		"nic_attach": cfg.NICAttach,
+	}
+
+	if cfg.VLANTag > 0 {
+		attrs["vlan"] = cfg.VLANTag
+	}
+
+	if cfg.TrustGuestRxFilters {
+		attrs["trust_guest_rx_filters"] = true
+	}
+
 	return c.AddDevice(ctx, AddDeviceRequest{
-		VM:    vmID,
-		Order: 1003,
-		Attributes: map[string]any{
-			"dtype":      "NIC",
-			"type":       "VIRTIO",
-			"nic_attach": nicAttach,
-		},
+		VM:         vmID,
+		Order:      order,
+		Attributes: attrs,
 	})
 }
 

@@ -26,7 +26,8 @@ services:
       # --- TrueNAS (only needed for remote/WebSocket transport) ---
       TRUENAS_HOST: "${TRUENAS_HOST:-}"
       TRUENAS_API_KEY: "${TRUENAS_API_KEY:-}"
-      TRUENAS_INSECURE_SKIP_VERIFY: "${TRUENAS_INSECURE_SKIP_VERIFY:-true}"
+      # Set to "true" only if TrueNAS uses a self-signed certificate
+      TRUENAS_INSECURE_SKIP_VERIFY: "${TRUENAS_INSECURE_SKIP_VERIFY:-false}"
 
       # --- Provider ---
       PROVIDER_ID: "${PROVIDER_ID:-truenas}"

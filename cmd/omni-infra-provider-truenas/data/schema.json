@@ -5,6 +5,7 @@
       "type": "integer",
       "title": "CPUs",
       "minimum": 1,
+      "maximum": 512,
       "default": 2,
       "description": "Number of virtual CPUs"
     },
@@ -12,24 +13,30 @@
       "type": "integer",
       "title": "Memory (MiB)",
       "minimum": 1024,
+      "maximum": 16777216,
       "default": 4096,
-      "description": "Memory in MiB"
+      "description": "Memory in MiB (max 16 TiB)"
     },
     "disk_size": {
       "type": "integer",
       "title": "Disk Size (GiB)",
       "minimum": 10,
+      "maximum": 1048576,
       "default": 40,
-      "description": "Root disk size in GiB"
+      "description": "Root disk size in GiB (max 1 PiB)"
     },
     "pool": {
       "type": "string",
       "title": "ZFS Pool",
+      "maxLength": 253,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
       "description": "ZFS pool name (defaults to provider DEFAULT_POOL)"
     },
     "nic_attach": {
       "type": "string",
       "title": "NIC Attach",
+      "maxLength": 253,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
       "description": "Network interface for VM NIC — can be a bridge (br100), VLAN (vlan666), or physical interface (enp5s0). Defaults to provider DEFAULT_NIC_ATTACH."
     },
     "boot_method": {
@@ -49,7 +56,12 @@
     "extensions": {
       "type": "array",
       "title": "Extra Extensions",
-      "items": { "type": "string" },
+      "maxItems": 50,
+      "items": {
+        "type": "string",
+        "maxLength": 253,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$"
+      },
       "description": "Additional Talos system extensions (e.g., siderolabs/iscsi-tools). qemu-guest-agent, nfs-utils, and util-linux-tools are always included."
     },
     "encrypted": {
@@ -57,6 +69,42 @@
       "title": "Encrypted Disk",
       "default": false,
       "description": "Enable ZFS native encryption (AES-256-GCM) on the VM disk. Requires ENCRYPTION_PASSPHRASE env var on the provider."
+    },
+    "additional_nics": {
+      "type": "array",
+      "title": "Additional NICs",
+      "maxItems": 16,
+      "description": "Extra network interfaces for network segmentation (e.g., dedicated storage NIC). Primary NIC is always attached via nic_attach.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "nic_attach": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+            "description": "Bridge, VLAN, or physical interface (e.g., br200, vlan100, enp6s0)"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["VIRTIO", "E1000"],
+            "default": "VIRTIO",
+            "description": "NIC type (VIRTIO recommended)"
+          },
+          "vlan_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4094,
+            "description": "Optional: VLAN tag traffic at the VM level (trunk port)"
+          }
+        },
+        "required": ["nic_attach"]
+      }
+    },
+    "advertised_subnets": {
+      "type": "string",
+      "title": "Advertised Subnets",
+      "maxLength": 1024,
+      "description": "Pin etcd/kubelet to specific subnets when multiple NICs are present. Comma-separated CIDRs (e.g., 192.168.100.0/24). Required for stable multi-NIC clusters."
     }
   },
   "required": [

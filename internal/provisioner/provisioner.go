@@ -3,6 +3,7 @@ package provisioner
 
 import (
 	"sync"
+	"time"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
@@ -12,10 +13,11 @@ import (
 
 // ProviderConfig holds the provider-level configuration that applies to all VMs.
 type ProviderConfig struct {
-	DefaultPool          string
-	DefaultNICAttach     string // Bridge, VLAN, or physical interface for VM NICs
-	DefaultBootMethod    string
-	EncryptionPassphrase string // Passphrase for ZFS encrypted zvols (required when encrypted=true)
+	DefaultPool             string
+	DefaultNICAttach        string // Bridge, VLAN, or physical interface for VM NICs
+	DefaultBootMethod       string
+	EncryptionPassphrase    string        // Passphrase for ZFS encrypted zvols (required when encrypted=true)
+	GracefulShutdownTimeout time.Duration // How long to wait for ACPI shutdown before force (default: 30s, 0=force immediately)
 }
 
 // Provisioner implements the Omni provision.Provisioner interface for TrueNAS.

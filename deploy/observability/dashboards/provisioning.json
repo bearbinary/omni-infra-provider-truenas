@@ -1,0 +1,267 @@
+{
+  "annotations": { "list": [] },
+  "description": "VM provisioning and deprovisioning performance, step-level breakdown, ISO management",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    { "title": "Overview", "url": "/d/truenas-overview", "type": "link" },
+    { "title": "API Performance", "url": "/d/truenas-api", "type": "link" },
+    { "title": "Cleanup & Maintenance", "url": "/d/truenas-cleanup", "type": "link" }
+  ],
+  "panels": [
+    {
+      "title": "Provision Duration",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "title": "Provision Duration (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(truenas_provision_duration_seconds_bucket{job=~\"$job\"}[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(truenas_provision_duration_seconds_bucket{job=~\"$job\"}[5m]))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, rate(truenas_provision_duration_seconds_bucket{job=~\"$job\"}[5m]))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Deprovision Duration (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(truenas_deprovision_duration_seconds_bucket{job=~\"$job\"}[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(truenas_deprovision_duration_seconds_bucket{job=~\"$job\"}[5m]))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, rate(truenas_deprovision_duration_seconds_bucket{job=~\"$job\"}[5m]))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Step Breakdown",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "collapsed": false
+    },
+    {
+      "title": "Provision Step Duration (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"createSchematic\",job=~\"$job\"}[5m]))", "legendFormat": "createSchematic" },
+        { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"uploadISO\",job=~\"$job\"}[5m]))", "legendFormat": "uploadISO" },
+        { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"createVM\",job=~\"$job\"}[5m]))", "legendFormat": "createVM" },
+        { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"removeCDROM\",job=~\"$job\"}[5m]))", "legendFormat": "removeCDROM" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Deprovision Step Duration (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, rate(truenas_deprovision_step_duration_seconds_bucket{step=\"cleanupVM\",job=~\"$job\"}[5m]))", "legendFormat": "cleanupVM" },
+        { "expr": "histogram_quantile(0.95, rate(truenas_deprovision_step_duration_seconds_bucket{step=\"cleanupZvol\",job=~\"$job\"}[5m]))", "legendFormat": "cleanupZvol" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Error Breakdown",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "collapsed": false
+    },
+    {
+      "title": "Provision Errors by Category",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "targets": [
+        { "expr": "rate(truenas_provision_errors_total{job=~\"$job\"}[5m])", "legendFormat": "{{ error_category }}" }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Error Distribution",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 19 },
+      "targets": [
+        { "expr": "truenas_provision_errors_total{job=~\"$job\"}", "legendFormat": "{{ error_category }}" }
+      ],
+      "options": { "legend": { "displayMode": "table", "placement": "right" }, "pieType": "donut" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Zvols / Snapshots",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 19 },
+      "targets": [
+        { "expr": "truenas_zvols_resized_total{job=~\"$job\"}", "legendFormat": "Zvol Resizes" },
+        { "expr": "truenas_snapshots_created_total{job=~\"$job\"}", "legendFormat": "Snapshots" },
+        { "expr": "truenas_snapshots_rolled_back_total{job=~\"$job\"}", "legendFormat": "Rollbacks" }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "auto" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "VM Error Rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 23 },
+      "targets": [
+        { "expr": "rate(truenas_vms_errored_total{job=~\"$job\"}[5m])", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.01 }] } }
+      },
+      "options": { "colorMode": "background", "graphMode": "area" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "ISO Management",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "collapsed": false
+    },
+    {
+      "title": "ISO Cache Hit Rate",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 28 },
+      "targets": [
+        { "expr": "truenas_iso_cache_hits_total{job=~\"$job\"} / (truenas_iso_cache_hits_total{job=~\"$job\"} + truenas_iso_cache_misses_total{job=~\"$job\"}) * 100", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 50 }, { "color": "green", "value": 80 }] } }
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "ISO Cache Hits vs Misses",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 28 },
+      "targets": [
+        { "expr": "rate(truenas_iso_cache_hits_total{job=~\"$job\"}[5m])", "legendFormat": "Hits/s" },
+        { "expr": "rate(truenas_iso_cache_misses_total{job=~\"$job\"}[5m])", "legendFormat": "Misses/s" }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Hits/s" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Misses/s" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "ISO Download Duration (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 28 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, rate(truenas_iso_download_duration_seconds_bucket{job=~\"$job\"}[5m]))", "legendFormat": "p95" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "ISO Upload Bytes",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 28 },
+      "targets": [
+        { "expr": "rate(truenas_iso_upload_bytes_total{job=~\"$job\"}[5m])", "legendFormat": "Upload rate" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Traces & Logs",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
+      "collapsed": false
+    },
+    {
+      "title": "Recent Provision Traces",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceqlSearch",
+          "filters": [
+            { "id": "service-name", "tag": "service.name", "operator": "=", "value": ["omni-infra-provider-truenas"], "scope": "resource" },
+            { "id": "span-name", "tag": "name", "operator": "=~", "value": ["provision.*|truenas.upload_file"], "scope": "span" }
+          ],
+          "limit": 20
+        }
+      ],
+      "datasource": { "type": "tempo", "uid": "tempo" }
+    },
+    {
+      "title": "Provision Logs (errors & warnings)",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 },
+      "targets": [
+        { "expr": "{service_name=\"omni-infra-provider-truenas\"} | json | level=~\"error|warn\"", "refId": "A" }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true, "dedupStrategy": "none" },
+      "datasource": { "type": "loki", "uid": "loki" }
+    },
+    {
+      "title": "Profiling",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 43 },
+      "collapsed": false
+    },
+    {
+      "title": "CPU Profile — Provision Hot Paths",
+      "type": "flamegraph",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 44 },
+      "targets": [
+        {
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "labelSelector": "{service_name=\"omni-infra-provider-truenas\"}",
+          "queryType": "profile",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "grafana-pyroscope-datasource", "uid": "pyroscope" }
+    },
+    {
+      "title": "Alloc Profile — Memory Hot Paths",
+      "type": "flamegraph",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 44 },
+      "targets": [
+        {
+          "profileTypeId": "memory:alloc_space:bytes:space:bytes",
+          "labelSelector": "{service_name=\"omni-infra-provider-truenas\"}",
+          "queryType": "profile",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "grafana-pyroscope-datasource", "uid": "pyroscope" }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["truenas", "omni", "provisioning"],
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(truenas_vms_provisioned_total, job)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "time": { "from": "now-3h", "to": "now" },
+  "refresh": "30s",
+  "title": "TrueNAS Provider / Provisioning",
+  "uid": "truenas-provisioning"
+}

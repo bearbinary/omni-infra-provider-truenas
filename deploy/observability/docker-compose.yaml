@@ -4,10 +4,14 @@
 # Then run the provider with:
 #   OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 PYROSCOPE_URL=http://localhost:4040 ./_out/omni-infra-provider-truenas
 #
+# Port conflicts? Override any port with env vars:
+#   GRAFANA_PORT=13000 OTEL_PORT=14317 PROM_PORT=19090 LOKI_PORT=13100 docker compose ... up -d
+#
 # Dashboards:
-#   Grafana:    http://localhost:3000 (admin/admin) — auto-loads TrueNAS Provider dashboard
-#   Pyroscope:  http://localhost:4040
-#   Prometheus: http://localhost:9090 — includes alerting rules
+#   Grafana:    http://localhost:${GRAFANA_PORT:-3000} (admin/admin) — auto-loads TrueNAS Provider dashboards
+#   Pyroscope:  http://localhost:${PYROSCOPE_PORT:-4040}
+#   Prometheus: http://localhost:${PROM_PORT:-9090} — includes alerting rules
+#   Loki:       http://localhost:${LOKI_PORT:-3100} — log aggregation (queried via Grafana)
 
 services:
   otel-collector:
@@ -15,8 +19,8 @@ services:
     volumes:
       - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
-      - "4317:4317"   # OTLP gRPC
-      - "8889:8889"   # Prometheus metrics endpoint
+      - "${OTEL_PORT:-4317}:4317"
+      - "${OTEL_METRICS_PORT:-8889}:8889"
 
   tempo:
     image: grafana/tempo:2.7.2
@@ -30,17 +34,25 @@ services:
       - ./prometheus.yaml:/etc/prometheus/prometheus.yml:ro
       - ./alerts:/etc/prometheus/alerts:ro
     ports:
-      - "9090:9090"
+      - "${PROM_PORT:-9090}:9090"
+
+  loki:
+    image: grafana/loki:3.5.0
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./loki.yaml:/etc/loki/loki.yaml:ro
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
 
   pyroscope:
     image: grafana/pyroscope:1.13.3
     ports:
-      - "4040:4040"
+      - "${PYROSCOPE_PORT:-4040}:4040"
 
   grafana:
     image: grafana/grafana:11.6.0
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin

@@ -24,14 +24,17 @@ import (
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
 
-// userError returns a user-friendly error message for Omni UI display.
-func userError(err error) string {
-	return client.UserFriendlyError(err)
-}
-
 var provTracer = otel.Tracer("truenas-provisioner")
 
 const errUnmarshalProviderData = "failed to unmarshal provider data: %w"
+
+// hashRequestID returns a truncated SHA-256 hash of the request ID for use in
+// trace attributes. This avoids exposing raw request IDs (which map to VM names,
+// zvol paths, and SideroLink tokens) in OTEL telemetry data.
+func hashRequestID(requestID string) string {
+	h := sha256.Sum256([]byte(requestID))
+	return hex.EncodeToString(h[:8]) // 16 hex chars — enough for correlation, not reversible
+}
 
 // Default extensions included in every TrueNAS VM.
 var defaultExtensions = []string{
@@ -42,14 +45,19 @@ var defaultExtensions = []string{
 
 // stepCreateSchematic generates a Talos image factory schematic ID.
 func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+	stepStart := time.Now()
 	ctx, span := provTracer.Start(ctx, "provision.createSchematic",
-		trace.WithAttributes(attribute.String("request_id", pctx.GetRequestID())),
+		trace.WithAttributes(attribute.String("request_id_hash", hashRequestID(pctx.GetRequestID()))),
 	)
 	defer func() {
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
+			recordProvisionError(ctx, err)
+		} else {
+			span.SetStatus(codes.Ok, "")
 		}
+		recordStepDuration(ctx, "createSchematic", stepStart)
 		span.End()
 	}()
 	// Connection params include SideroLink endpoint and join token with encoded request ID.
@@ -63,7 +71,9 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 		return fmt.Errorf(errUnmarshalProviderData, err)
 	}
 
-	extensions := append(defaultExtensions, data.Extensions...)
+	extensions := make([]string, 0, len(defaultExtensions)+len(data.Extensions))
+	extensions = append(extensions, defaultExtensions...)
+	extensions = append(extensions, data.Extensions...)
 
 	schematic, err := pctx.GenerateSchematicID(ctx, logger,
 		provision.WithExtraKernelArgs(extraArgs...),
@@ -96,21 +106,26 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 
 	state.Schematic = schematic
 
-	logger.Info("created schematic", zap.String("schematic_id", schematic))
+	logger.Debug("created schematic", zap.String("schematic_id", schematic))
 
 	return nil
 }
 
 // stepUploadISO downloads the Talos ISO and uploads it to TrueNAS.
 func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+	stepStart := time.Now()
 	ctx, span := provTracer.Start(ctx, "provision.uploadISO",
-		trace.WithAttributes(attribute.String("request_id", pctx.GetRequestID())),
+		trace.WithAttributes(attribute.String("request_id_hash", hashRequestID(pctx.GetRequestID()))),
 	)
 	defer func() {
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
+			recordProvisionError(ctx, err)
+		} else {
+			span.SetStatus(codes.Ok, "")
 		}
+		recordStepDuration(ctx, "uploadISO", stepStart)
 		span.End()
 	}()
 	pctx.State.TypedSpec().Value.TalosVersion = pctx.GetTalosVersion()
@@ -161,7 +176,10 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 		}
 
 		if exists {
-			logger.Info("ISO already exists, skipping download", zap.String("path", isoPath))
+			logger.Debug("ISO already exists, skipping download", zap.String("path", isoPath))
+			if telemetry.ISOCacheHits != nil {
+				telemetry.ISOCacheHits.Add(ctx, 1)
+			}
 
 			return nil, nil
 		}
@@ -171,17 +189,30 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 			return nil, fmt.Errorf("failed to ensure ISO dataset: %w", err)
 		}
 
+		if telemetry.ISOCacheMisses != nil {
+			telemetry.ISOCacheMisses.Add(ctx, 1)
+		}
+
+		isoStart := time.Now()
+
 		logger.Info("downloading Talos ISO",
 			zap.String("url", imageURL.String()),
 			zap.String("dest", isoPath),
 		)
 
 		// Download ISO from image factory
-		resp, err := http.Get(imageURL.String()) //nolint:gosec,noctx
+		isoReq, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL.String(), nil) //nolint:gosec
+		if err != nil {
+			return nil, fmt.Errorf("failed to create ISO download request: %w", err)
+		}
+
+		isoClient := &http.Client{Timeout: 10 * time.Minute}
+
+		resp, err := isoClient.Do(isoReq)
 		if err != nil {
 			return nil, fmt.Errorf("failed to download ISO: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("ISO download returned status %d", resp.StatusCode)
@@ -190,6 +221,10 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 		// Upload to TrueNAS
 		if err := p.client.UploadFile(ctx, isoPath, resp.Body, resp.ContentLength); err != nil {
 			return nil, fmt.Errorf("failed to upload ISO to TrueNAS: %w", err)
+		}
+
+		if telemetry.ISODownloadDuration != nil {
+			telemetry.ISODownloadDuration.Record(ctx, time.Since(isoStart).Seconds())
 		}
 
 		logger.Info("ISO uploaded successfully", zap.String("path", isoPath))
@@ -202,8 +237,9 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 
 // stepCreateVM creates the VM on TrueNAS with disk, CDROM, and NIC devices.
 func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+	stepStart := time.Now()
 	ctx, span := provTracer.Start(ctx, "provision.createVM",
-		trace.WithAttributes(attribute.String("request_id", pctx.GetRequestID())),
+		trace.WithAttributes(attribute.String("request_id_hash", hashRequestID(pctx.GetRequestID()))),
 	)
 	defer func() {
 		if err != nil {
@@ -212,7 +248,11 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			if telemetry.VMsErrored != nil {
 				telemetry.VMsErrored.Add(ctx, 1)
 			}
+			recordProvisionError(ctx, err)
+		} else {
+			span.SetStatus(codes.Ok, "")
 		}
+		recordStepDuration(ctx, "createVM", stepStart)
 		span.End()
 	}()
 	state := pctx.State.TypedSpec().Value
@@ -230,13 +270,47 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	data.ApplyDefaults(p.config)
 
+	// Validate all user-provided names before using them in paths or API calls
+	if err := data.Validate(); err != nil {
+		return fmt.Errorf("invalid MachineClass config: %w", err)
+	}
+
 	// Pre-check: verify pool has enough free space for the zvol
 	requiredBytes := int64(data.DiskSize) * 1024 * 1024 * 1024
 	freeBytes, err := p.client.PoolFreeSpace(ctx, data.Pool)
 
+	if err == nil {
+		logger.Debug("pool space check",
+			zap.String("pool", data.Pool),
+			zap.Int64("free_gib", freeBytes/(1024*1024*1024)),
+			zap.Int("required_gib", data.DiskSize),
+		)
+	}
+
 	if err == nil && freeBytes < requiredBytes {
 		return fmt.Errorf("pool %q has %d GiB free but VM needs %d GiB — free up space or use a different pool",
 			data.Pool, freeBytes/(1024*1024*1024), data.DiskSize)
+	}
+
+	// Pre-check: verify VM memory doesn't exceed safe threshold of total host RAM.
+	// This checks against total physmem (not free RAM) because TrueNAS dynamically
+	// manages ZFS ARC. A single VM requesting >80% of total RAM would starve ZFS.
+	hostMem, memErr := p.client.SystemMemoryAvailable(ctx)
+	if memErr == nil {
+		requestedMiB := int64(data.Memory)
+		hostMiB := hostMem / (1024 * 1024)
+
+		logger.Debug("memory check",
+			zap.Int64("host_mib", hostMiB),
+			zap.Int64("requested_mib", requestedMiB),
+			zap.Int64("threshold_mib", hostMiB*80/100),
+		)
+
+		if requestedMiB > hostMiB*80/100 {
+			return fmt.Errorf("host has %d MiB total memory but VM requests %d MiB — "+
+				"a single VM should not exceed 80%% of host RAM (TrueNAS needs the rest for ZFS ARC). "+
+				"Reduce VM memory or add more host RAM", hostMiB, requestedMiB)
+		}
 	}
 
 	// Create zvol for the VM disk
@@ -263,7 +337,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 			// Encrypted zvol exists — unlock if locked
 			if locked, lockErr := p.client.IsDatasetLocked(ctx, zvolPath); lockErr == nil && locked {
-				logger.Info("unlocking encrypted zvol", zap.String("path", zvolPath))
+				logger.Debug("unlocking encrypted zvol", zap.String("path", zvolPath))
 
 				if unlockErr := p.client.UnlockDataset(ctx, zvolPath, p.config.EncryptionPassphrase); unlockErr != nil {
 					return fmt.Errorf("failed to unlock encrypted zvol %q: %w", zvolPath, unlockErr)
@@ -306,6 +380,12 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	state.VmId = int32(vm.ID)
 
+	// Set machine identifiers for Omni correlation
+	vmIDStr := fmt.Sprintf("%d", vm.ID)
+	pctx.SetMachineInfraID(vmIDStr)
+	// Use the request ID as the machine UUID — it's unique per machine and stable across restarts
+	pctx.SetMachineUUID(pctx.GetRequestID())
+
 	logger.Info("created VM", zap.String("name", vmName), zap.Int("id", vm.ID))
 	p.TrackVMName(vmName)
 
@@ -324,10 +404,10 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		return fmt.Errorf("failed to attach disk: %w", err)
 	}
 
-	// Attach NIC
+	// Attach primary NIC
 	nicDev, err := p.client.AddNIC(ctx, vm.ID, data.NICAttach)
 	if err != nil {
-		return fmt.Errorf("failed to attach NIC: %w", err)
+		return fmt.Errorf("failed to attach primary NIC: %w", err)
 	}
 
 	// Log MAC address so users can create DHCP reservations in their router
@@ -336,6 +416,44 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			zap.String("mac", mac),
 			zap.String("vm_name", vmName),
 			zap.String("nic_attach", data.NICAttach),
+			zap.String("role", "primary"),
+		)
+	}
+
+	// Attach additional NICs
+	for i, nic := range data.AdditionalNICs {
+		nicCfg := client.NICConfig{
+			NICAttach:           nic.NICAttach,
+			Type:                nic.Type,
+			VLANTag:             nic.VLANTag,
+			TrustGuestRxFilters: nic.VLANTag > 0, // Enable for VLAN tagging at VM level
+		}
+
+		dev, nicErr := p.client.AddNICWithConfig(ctx, vm.ID, nicCfg, 1004+i)
+		if nicErr != nil {
+			return fmt.Errorf("failed to attach additional NIC %d (%s): %w", i, nic.NICAttach, nicErr)
+		}
+
+		mac := ""
+		if m, ok := dev.Attributes["mac"].(string); ok {
+			mac = m
+		}
+
+		logger.Debug("attached additional NIC",
+			zap.Int("index", i),
+			zap.String("nic_attach", nic.NICAttach),
+			zap.Int("vlan_id", nic.VLANTag),
+			zap.String("mac", mac),
+			zap.String("vm_name", vmName),
+		)
+	}
+
+	// Warn if multiple NICs without advertised_subnets
+	if len(data.AdditionalNICs) > 0 && data.AdvertisedSubnets == "" {
+		logger.Warn("multiple NICs configured without advertised_subnets — etcd/kubelet may pick the wrong interface. "+
+			"Set advertised_subnets to pin cluster traffic to the primary NIC's subnet.",
+			zap.String("vm_name", vmName),
+			zap.Int("total_nics", 1+len(data.AdditionalNICs)),
 		)
 	}
 
@@ -355,14 +473,19 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 // stepRemoveCDROM detaches the ISO CDROM once Talos has installed to disk.
 // Waits for the machine to be allocated in Omni (meaning Talos installed, rebooted, and rejoined).
 func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+	stepStart := time.Now()
 	ctx, span := provTracer.Start(ctx, "provision.removeCDROM",
-		trace.WithAttributes(attribute.String("request_id", pctx.GetRequestID())),
+		trace.WithAttributes(attribute.String("request_id_hash", hashRequestID(pctx.GetRequestID()))),
 	)
 	defer func() {
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
+			recordProvisionError(ctx, err)
+		} else {
+			span.SetStatus(codes.Ok, "")
 		}
+		recordStepDuration(ctx, "removeCDROM", stepStart)
 		span.End()
 	}()
 
@@ -376,12 +499,12 @@ func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, p
 	// Wait until Omni has allocated this machine (ID is set when the machine
 	// connects via SideroLink, gets config, installs to disk, reboots, and rejoins).
 	if pctx.MachineRequestStatus.TypedSpec().Value.Id == "" {
-		logger.Info("waiting for machine to be allocated before removing CDROM")
+		logger.Debug("waiting for machine to be allocated before removing CDROM")
 
 		return provision.NewRetryInterval(30 * time.Second)
 	}
 
-	logger.Info("removing CDROM device",
+	logger.Debug("removing CDROM device",
 		zap.Int32("device_id", state.CdromDeviceId),
 		zap.Int32("vm_id", state.VmId),
 	)
@@ -395,6 +518,44 @@ func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, p
 	logger.Info("CDROM removed — VM will boot directly from disk on next restart")
 
 	return nil
+}
+
+// recordStepDuration records the duration of a provision step.
+func recordStepDuration(ctx context.Context, step string, start time.Time) {
+	if telemetry.StepDuration != nil {
+		telemetry.StepDuration.Record(ctx, time.Since(start).Seconds(), telemetry.WithStep(step))
+	}
+}
+
+// recordProvisionError categorizes and records a provision error.
+func recordProvisionError(ctx context.Context, err error) {
+	if telemetry.ProvisionErrors == nil || err == nil {
+		return
+	}
+
+	category := "unknown"
+
+	errMsg := err.Error()
+	switch {
+	case strings.Contains(errMsg, "pool") && strings.Contains(errMsg, "not found"):
+		category = "pool_not_found"
+	case strings.Contains(errMsg, "ENOSPC") || strings.Contains(errMsg, "pool is full"):
+		category = "pool_full"
+	case strings.Contains(errMsg, "nic_attach") || strings.Contains(errMsg, "NIC"):
+		category = "nic_invalid"
+	case strings.Contains(errMsg, "reconnect") || strings.Contains(errMsg, "unreachable"):
+		category = "connection"
+	case strings.Contains(errMsg, "permission") || strings.Contains(errMsg, "EACCES"):
+		category = "auth"
+	case strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline"):
+		category = "timeout"
+	case strings.Contains(errMsg, "memory") || strings.Contains(errMsg, "RAM"):
+		category = "memory"
+	case strings.Contains(errMsg, "schematic") || strings.Contains(errMsg, "ISO"):
+		category = "image"
+	}
+
+	telemetry.ProvisionErrors.Add(ctx, 1, telemetry.WithErrorCategory(category))
 }
 
 // validatePool checks that the configured pool exists on TrueNAS.
@@ -457,10 +618,19 @@ func (p *Provisioner) maybeResizeZvol(ctx context.Context, logger *zap.Logger, z
 // snapshotBeforeUpgrade creates a ZFS snapshot before a Talos version upgrade.
 // Returns the full snapshot ID (dataset@snapname) or empty string on failure.
 func (p *Provisioner) snapshotBeforeUpgrade(ctx context.Context, logger *zap.Logger, zvolPath, oldVersion, newVersion string) string {
+	ctx, span := provTracer.Start(ctx, "provision.snapshotBeforeUpgrade",
+		trace.WithAttributes(
+			attribute.String("zvol", zvolPath),
+			attribute.String("from_version", oldVersion),
+			attribute.String("to_version", newVersion),
+		),
+	)
+	defer span.End()
+
 	snapName := fmt.Sprintf("omni-pre-upgrade-%s-%d", newVersion, time.Now().Unix())
 	snapID := zvolPath + "@" + snapName
 
-	logger.Info("creating pre-upgrade snapshot",
+	logger.Debug("creating pre-upgrade snapshot",
 		zap.String("zvol", zvolPath),
 		zap.String("from_version", oldVersion),
 		zap.String("to_version", newVersion),
@@ -516,11 +686,19 @@ func (p *Provisioner) swapCDROMForUpgrade(ctx context.Context, logger *zap.Logge
 
 	state.CdromDeviceId = int32(dev.ID)
 
-	logger.Info("CDROM swapped to new ISO", zap.Int("device_id", dev.ID))
+	logger.Debug("CDROM swapped to new ISO", zap.Int("device_id", dev.ID))
 }
 
 // enforceSnapshotRetention keeps only the last N snapshots for a dataset.
 func (p *Provisioner) enforceSnapshotRetention(ctx context.Context, logger *zap.Logger, dataset string, keep int) {
+	ctx, span := provTracer.Start(ctx, "provision.enforceSnapshotRetention",
+		trace.WithAttributes(
+			attribute.String("dataset", dataset),
+			attribute.Int("keep", keep),
+		),
+	)
+	defer span.End()
+
 	snaps, err := p.client.ListSnapshots(ctx, dataset)
 	if err != nil {
 		logger.Warn("failed to list snapshots for retention", zap.String("dataset", dataset), zap.Error(err))
@@ -549,7 +727,7 @@ func (p *Provisioner) enforceSnapshotRetention(ctx context.Context, logger *zap.
 	// Delete oldest snapshots (list is typically in creation order)
 	toDelete := omniSnaps[:len(omniSnaps)-keep]
 	for _, s := range toDelete {
-		logger.Info("deleting old snapshot", zap.String("snapshot", s.ID))
+		logger.Debug("deleting old snapshot", zap.String("snapshot", s.ID))
 
 		if err := p.client.DeleteSnapshot(ctx, s.ID); err != nil {
 			logger.Warn("failed to delete old snapshot", zap.String("snapshot", s.ID), zap.Error(err))
@@ -573,7 +751,7 @@ func (p *Provisioner) resetNVRAMIfNeeded(ctx context.Context, logger *zap.Logger
 		)
 
 		if err := p.client.ResetVMNVRAM(ctx, vmID); err != nil {
-			logger.Warn("NVRAM reset failed — may need manual intervention",
+			logger.Error("NVRAM reset failed — manual intervention required",
 				zap.Int("vm_id", vmID),
 				zap.Error(err),
 			)
@@ -585,7 +763,7 @@ func (p *Provisioner) resetNVRAMIfNeeded(ctx context.Context, logger *zap.Logger
 
 		// Try to start the VM after NVRAM reset
 		if err := p.client.StartVM(ctx, vmID); err != nil {
-			logger.Warn("failed to start VM after NVRAM reset", zap.Int("vm_id", vmID), zap.Error(err))
+			logger.Error("failed to start VM after NVRAM reset", zap.Int("vm_id", vmID), zap.Error(err))
 		}
 	}
 }
@@ -625,7 +803,7 @@ func (p *Provisioner) checkExistingVM(ctx context.Context, logger *zap.Logger, s
 
 func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, vm *client.VM, vmName string) *error {
 	if vm.Status.State == "RUNNING" {
-		logger.Info("VM is already running", zap.Int("vm_id", vm.ID))
+		logger.Debug("VM is already running", zap.Int("vm_id", vm.ID))
 		p.TrackVMName(vmName)
 
 		if telemetry.VMsProvisioned != nil {

@@ -16,6 +16,11 @@ func WithStep(step string) metric.MeasurementOption {
 	return metric.WithAttributes(attribute.String("step", step))
 }
 
+// WithErrorCategory returns a metric option with the error category attribute.
+func WithErrorCategory(category string) metric.MeasurementOption {
+	return metric.WithAttributes(attribute.String("error_category", category))
+}
+
 // WithPool returns a metric option with the pool attribute.
 func WithPool(pool string) metric.MeasurementOption {
 	return metric.WithAttributes(attribute.String("pool", pool))
@@ -31,17 +36,51 @@ var (
 	SnapshotsRolledBack metric.Int64Counter
 
 	// Host health gauges
-	HostCPUCores        metric.Int64Gauge
-	HostMemoryTotal     metric.Int64Gauge
-	HostPoolFreeBytes   metric.Int64Gauge
-	HostPoolUsedBytes   metric.Int64Gauge
-	HostPoolHealthy     metric.Int64Gauge
-	HostDisksTotal      metric.Int64Gauge
-	HostVMsRunning      metric.Int64Gauge
+	HostCPUCores      metric.Int64Gauge
+	HostMemoryTotal   metric.Int64Gauge
+	HostPoolFreeBytes metric.Int64Gauge
+	HostPoolUsedBytes metric.Int64Gauge
+	HostPoolHealthy   metric.Int64Gauge
+	HostDisksTotal    metric.Int64Gauge
+	HostVMsRunning    metric.Int64Gauge
+
+	// Duration histograms
 	ProvisionDuration   metric.Float64Histogram
 	DeprovisionDuration metric.Float64Histogram
 	APICallDuration     metric.Float64Histogram
 	ISODownloadDuration metric.Float64Histogram
+
+	// Connection & resilience
+	WSReconnects       metric.Int64Counter
+	RateLimitQueueSize metric.Int64Gauge
+
+	// Cleanup
+	CleanupISOsRemoved metric.Int64Counter
+	CleanupOrphanVMs   metric.Int64Counter
+	CleanupOrphanZvols metric.Int64Counter
+
+	// Provision steps (individual durations)
+	StepDuration metric.Float64Histogram
+
+	// Error categorization
+	ProvisionErrors metric.Int64Counter
+
+	// ISO cache
+	ISOCacheHits   metric.Int64Counter
+	ISOCacheMisses metric.Int64Counter
+
+	// File upload
+	ISOUploadBytes metric.Int64Counter
+
+	// Health check
+	HealthCheckErrors metric.Int64Counter
+
+	// Graceful shutdown outcomes
+	GracefulShutdownSuccess metric.Int64Counter
+	GracefulShutdownTimeout metric.Int64Counter
+
+	// Deprovision step durations
+	DeprovisionStepDuration metric.Float64Histogram
 )
 
 func initMetrics() {
@@ -79,6 +118,69 @@ func initMetrics() {
 	)
 	ISODownloadDuration, _ = meter.Float64Histogram("truenas.iso.download.duration",
 		metric.WithDescription("Duration of ISO download in seconds"),
+		metric.WithUnit("s"),
+	)
+
+	// Connection & resilience
+	WSReconnects, _ = meter.Int64Counter("truenas.ws.reconnects",
+		metric.WithDescription("Total WebSocket reconnection attempts"),
+	)
+	RateLimitQueueSize, _ = meter.Int64Gauge("truenas.ratelimit.queue_size",
+		metric.WithDescription("Current number of API calls waiting for a rate limit slot"),
+	)
+
+	// Cleanup
+	CleanupISOsRemoved, _ = meter.Int64Counter("truenas.cleanup.isos_removed",
+		metric.WithDescription("Total stale ISOs removed by cleanup"),
+	)
+	CleanupOrphanVMs, _ = meter.Int64Counter("truenas.cleanup.orphan_vms",
+		metric.WithDescription("Total orphan VMs removed by cleanup"),
+	)
+	CleanupOrphanZvols, _ = meter.Int64Counter("truenas.cleanup.orphan_zvols",
+		metric.WithDescription("Total orphan zvols removed by cleanup"),
+	)
+
+	// Per-step duration
+	StepDuration, _ = meter.Float64Histogram("truenas.provision.step.duration",
+		metric.WithDescription("Duration of individual provision steps"),
+		metric.WithUnit("s"),
+	)
+
+	// Error categorization
+	ProvisionErrors, _ = meter.Int64Counter("truenas.provision.errors",
+		metric.WithDescription("Provision errors by category"),
+	)
+
+	// ISO cache
+	ISOCacheHits, _ = meter.Int64Counter("truenas.iso.cache.hits",
+		metric.WithDescription("ISO cache hits (download skipped)"),
+	)
+	ISOCacheMisses, _ = meter.Int64Counter("truenas.iso.cache.misses",
+		metric.WithDescription("ISO cache misses (download required)"),
+	)
+
+	// File upload
+	ISOUploadBytes, _ = meter.Int64Counter("truenas.iso.upload.bytes",
+		metric.WithDescription("Total bytes uploaded to TrueNAS (ISOs)"),
+		metric.WithUnit("By"),
+	)
+
+	// Health check
+	HealthCheckErrors, _ = meter.Int64Counter("truenas.healthcheck.errors",
+		metric.WithDescription("Total health check failures"),
+	)
+
+	// Graceful shutdown outcomes
+	GracefulShutdownSuccess, _ = meter.Int64Counter("truenas.shutdown.graceful",
+		metric.WithDescription("VMs that shut down gracefully via ACPI"),
+	)
+	GracefulShutdownTimeout, _ = meter.Int64Counter("truenas.shutdown.forced",
+		metric.WithDescription("VMs that required force stop after graceful timeout"),
+	)
+
+	// Deprovision step durations
+	DeprovisionStepDuration, _ = meter.Float64Histogram("truenas.deprovision.step.duration",
+		metric.WithDescription("Duration of individual deprovision steps"),
 		metric.WithUnit("s"),
 	)
 

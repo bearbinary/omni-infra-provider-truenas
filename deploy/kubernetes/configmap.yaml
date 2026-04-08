@@ -13,7 +13,9 @@ data:
   # Required — TrueNAS host (WebSocket transport, since Unix socket is not available in k8s)
   # This provider requires TrueNAS SCALE 25.04+ (JSON-RPC 2.0). REST v2.0 is NOT supported.
   TRUENAS_HOST: "truenas.local"
-  TRUENAS_INSECURE_SKIP_VERIFY: "true"
+  # Set to "true" only if TrueNAS uses a self-signed certificate.
+  # WARNING: Disabling TLS verification allows MITM attacks — avoid in production.
+  TRUENAS_INSECURE_SKIP_VERIFY: "false"
 
   # Provider identity
   PROVIDER_ID: "truenas"

@@ -8,10 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
+
+var cleanupTracer = otel.Tracer("truenas-cleanup")
 
 // Config holds cleanup configuration.
 type Config struct {
@@ -75,9 +80,14 @@ func (cl *Cleaner) Run(ctx context.Context) {
 }
 
 func (cl *Cleaner) runOnce(ctx context.Context) {
+	start := time.Now()
+	cl.logger.Debug("cleanup cycle starting")
+
 	cl.cleanupISOs(ctx)
 	cl.cleanupOrphanVMs(ctx)
 	cl.cleanupOrphanZvols(ctx)
+
+	cl.logger.Debug("cleanup cycle complete", zap.Duration("elapsed", time.Since(start)))
 }
 
 // cleanupISOs removes stale ISOs from <pool>/talos-iso/.
@@ -86,6 +96,9 @@ func (cl *Cleaner) runOnce(ctx context.Context) {
 // removes all files. If any ISO is still active, we skip cleanup entirely —
 // active ISOs will be re-downloaded if needed after a full wipe.
 func (cl *Cleaner) cleanupISOs(ctx context.Context) {
+	ctx, span := cleanupTracer.Start(ctx, "cleanup.isos")
+	defer span.End()
+
 	isoDir := "/mnt/" + cl.config.Pool + "/talos-iso"
 	isoDataset := cl.config.Pool + "/talos-iso"
 
@@ -120,7 +133,7 @@ func (cl *Cleaner) cleanupISOs(ctx context.Context) {
 		return
 	}
 
-	cl.logger.Info("found stale ISOs",
+	cl.logger.Debug("found stale ISOs",
 		zap.Int("stale", staleISOs),
 		zap.Int("total", totalISOs),
 		zap.Int("active", totalISOs-staleISOs),
@@ -128,12 +141,17 @@ func (cl *Cleaner) cleanupISOs(ctx context.Context) {
 
 	// Only wipe if ALL ISOs are stale (no active ISOs to preserve)
 	if staleISOs < totalISOs {
-		cl.logger.Info("skipping ISO cleanup — some ISOs are still active",
+		cl.logger.Debug("skipping ISO cleanup — some ISOs are still active",
 			zap.Int("active", totalISOs-staleISOs),
 		)
 
 		return
 	}
+
+	span.SetAttributes(
+		attribute.Int("stale_isos", staleISOs),
+		attribute.Int("total_isos", totalISOs),
+	)
 
 	cl.logger.Info("all ISOs are stale — recreating dataset",
 		zap.String("dataset", isoDataset),
@@ -142,11 +160,17 @@ func (cl *Cleaner) cleanupISOs(ctx context.Context) {
 
 	if err := cl.client.RecreateDataset(ctx, isoDataset); err != nil {
 		cl.logger.Warn("failed to recreate ISO dataset", zap.Error(err))
+		span.RecordError(err)
+	} else if telemetry.CleanupISOsRemoved != nil {
+		telemetry.CleanupISOsRemoved.Add(ctx, int64(staleISOs))
 	}
 }
 
 // cleanupOrphanVMs finds VMs with the omni_ prefix that are not tracked by Omni.
 func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
+	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanVMs")
+	defer span.End()
+
 	vms, err := cl.client.ListVMs(ctx)
 	if err != nil {
 		cl.logger.Warn("failed to list VMs for orphan cleanup", zap.Error(err))
@@ -168,7 +192,7 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 			continue
 		}
 
-		cl.logger.Info("removing orphan VM",
+		cl.logger.Debug("removing orphan VM",
 			zap.String("name", vm.Name),
 			zap.Int("id", vm.ID),
 		)
@@ -179,12 +203,18 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 
 		if err := cl.client.DeleteVM(ctx, vm.ID); err != nil {
 			cl.logger.Warn("failed to delete orphan VM", zap.Int("id", vm.ID), zap.Error(err))
+			span.RecordError(err)
+		} else if telemetry.CleanupOrphanVMs != nil {
+			telemetry.CleanupOrphanVMs.Add(ctx, 1)
 		}
 	}
 }
 
 // cleanupOrphanZvols finds zvols under <pool>/omni-vms/ that are not tracked by Omni.
 func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
+	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanZvols")
+	defer span.End()
+
 	parentPath := cl.config.Pool + "/omni-vms"
 
 	datasets, err := cl.client.ListChildDatasets(ctx, parentPath)
@@ -211,12 +241,15 @@ func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
 			continue
 		}
 
-		cl.logger.Info("removing orphan zvol",
+		cl.logger.Debug("removing orphan zvol",
 			zap.String("path", ds.ID),
 		)
 
 		if err := cl.client.DeleteDataset(ctx, ds.ID); err != nil {
 			cl.logger.Warn("failed to delete orphan zvol", zap.String("path", ds.ID), zap.Error(err))
+			span.RecordError(err)
+		} else if telemetry.CleanupOrphanZvols != nil {
+			telemetry.CleanupOrphanZvols.Add(ctx, 1)
 		}
 	}
 }

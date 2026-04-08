@@ -89,7 +89,7 @@ func TestInit_RealOTELCollector(t *testing.T) {
 			t.Skip("No OTEL collector available — set OTEL_TEST_ENDPOINT or start deploy/observability stack")
 		}
 
-		conn.Close()
+		_ = conn.Close()
 		endpoint = "localhost:4317"
 	}
 
@@ -125,7 +125,7 @@ func TestInit_RealPyroscope(t *testing.T) {
 			t.Skip("No Pyroscope available — set PYROSCOPE_TEST_URL or start deploy/observability stack")
 		}
 
-		conn.Close()
+		_ = conn.Close()
 		pyroscopeURL = "http://localhost:4040"
 	}
 

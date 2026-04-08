@@ -37,7 +37,7 @@ func newSocketTransport(path string) (*socketTransport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot connect to middleware socket at %s: %w", path, err)
 	}
-	conn.Close()
+	_ = conn.Close()
 
 	return &socketTransport{socketPath: path}, nil
 }
@@ -75,11 +75,13 @@ func (t *socketTransport) Call(ctx context.Context, method string, params any, r
 	if err != nil {
 		return fmt.Errorf("failed to connect to middleware socket: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
-	// Set deadline from context
+	// Set deadline from context, or default to 30s to prevent indefinite blocking
 	if deadline, ok := ctx.Deadline(); ok {
 		conn.SetDeadline(deadline) //nolint:errcheck
+	} else {
+		conn.SetDeadline(time.Now().Add(30 * time.Second)) //nolint:errcheck
 	}
 
 	req := jsonRPCRequest{
@@ -113,14 +115,21 @@ func (t *socketTransport) Call(ctx context.Context, method string, params any, r
 
 // UploadFile writes a file directly to the filesystem via the socket.
 // When running on the TrueNAS host, we can write files directly since we
-// have local filesystem access.
-func (t *socketTransport) UploadFile(ctx context.Context, destPath string, data io.Reader, _ int64) error {
-	content, err := io.ReadAll(data)
+// have local filesystem access. Streams directly to disk to avoid buffering
+// entire ISOs (which can be hundreds of MB) in memory.
+func (t *socketTransport) UploadFile(_ context.Context, destPath string, data io.Reader, _ int64) error {
+	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		return fmt.Errorf("failed to read upload data: %w", err)
+		return fmt.Errorf("failed to create file %q: %w", destPath, err)
 	}
 
-	return os.WriteFile(destPath, content, 0o755)
+	if _, err := io.Copy(f, data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(destPath) // Clean up partial file
+		return fmt.Errorf("failed to write file %q: %w", destPath, err)
+	}
+
+	return f.Close()
 }
 
 // normalizeParams ensures params are sent as a JSON array (TrueNAS middleware expects positional params).

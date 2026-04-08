@@ -12,11 +12,14 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/siderolabs/omni/client/pkg/client"
 	"github.com/siderolabs/omni/client/pkg/infra"
+	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -47,6 +50,13 @@ func main() {
 func run() error {
 	// Load .env file if present — does not override existing env vars.
 	// Silently ignored if .env doesn't exist (Docker/k8s set env vars directly).
+	//
+	// SECURITY: godotenv loads from the working directory. If an attacker can write
+	// a .env file (e.g., via volume mount misconfiguration), they could override
+	// TRUENAS_HOST, TRUENAS_API_KEY, or OMNI_ENDPOINT. Mitigations:
+	//   - Docker: read_only: true in the TrueNAS app template
+	//   - Kubernetes: readOnlyRootFilesystem: true in the deployment securityContext
+	//   - godotenv does NOT override existing env vars (existing values take precedence)
 	_ = godotenv.Load()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
@@ -82,7 +92,21 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize telemetry: %w", err)
 	}
-	defer telemetryShutdown(ctx)
+	defer func() { _ = telemetryShutdown(ctx) }()
+
+	if version == "dev" && os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		logger.Warn("running with version='dev' while OTEL is enabled — " +
+			"telemetry data will not be correlated to a release. " +
+			"Build with -ldflags=\"-X main.version=vX.Y.Z\" for production.")
+	}
+
+	// Add otelzap bridge for log-trace correlation (logs include trace_id/span_id)
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		otelCore := otelzap.NewCore("omni-infra-provider-truenas")
+		logger = logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+			return zapcore.NewTee(core, otelCore)
+		}))
+	}
 
 	// Read configuration from environment variables
 	omniEndpoint := os.Getenv("OMNI_ENDPOINT")
@@ -90,7 +114,7 @@ func run() error {
 		return fmt.Errorf("OMNI_ENDPOINT is required")
 	}
 
-	omniServiceAccountKey := os.Getenv("OMNI_SERVICE_ACCOUNT_KEY")
+	omniServiceAccountKey := truenasclient.NewSecretString(os.Getenv("OMNI_SERVICE_ACCOUNT_KEY"))
 
 	providerID := os.Getenv("PROVIDER_ID")
 	if providerID != "" {
@@ -108,14 +132,14 @@ func run() error {
 	tnClient, err := truenasclient.New(truenasclient.Config{
 		Host:               os.Getenv("TRUENAS_HOST"),
 		APIKey:             os.Getenv("TRUENAS_API_KEY"),
-		InsecureSkipVerify: envBool("TRUENAS_INSECURE_SKIP_VERIFY", true),
+		InsecureSkipVerify: envBool("TRUENAS_INSECURE_SKIP_VERIFY", false),
 		SocketPath:         os.Getenv("TRUENAS_SOCKET_PATH"),
 		MaxConcurrentCalls: envInt("TRUENAS_MAX_CONCURRENT_CALLS", 8),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create TrueNAS client: %w", err)
 	}
-	defer tnClient.Close()
+	defer func() { _ = tnClient.Close() }()
 
 	logger.Info("TrueNAS client connected",
 		zap.String("transport", tnClient.TransportName()),
@@ -123,13 +147,15 @@ func run() error {
 
 	// Create provisioner
 	prov := provisioner.NewProvisioner(tnClient, provisioner.ProviderConfig{
-		DefaultPool:          defaultPool,
-		DefaultNICAttach:     defaultNICAttach,
-		DefaultBootMethod:    defaultBootMethod,
-		EncryptionPassphrase: os.Getenv("ENCRYPTION_PASSPHRASE"),
+		DefaultPool:             defaultPool,
+		DefaultNICAttach:        defaultNICAttach,
+		DefaultBootMethod:       defaultBootMethod,
+		EncryptionPassphrase:    os.Getenv("ENCRYPTION_PASSPHRASE"),
+		GracefulShutdownTimeout: time.Duration(envInt("GRACEFUL_SHUTDOWN_TIMEOUT", 30)) * time.Second,
 	})
 
 	// Create infra provider
+	//goland:noinspection ALL — false positive: Go compiler infers generic type params correctly
 	ip, err := infra.NewProvider(meta.ProviderID, prov, infra.ProviderConfig{
 		Name:        envString("PROVIDER_NAME", "TrueNAS"),
 		Description: envString("PROVIDER_DESCRIPTION", "TrueNAS SCALE infrastructure provider"),
@@ -167,8 +193,8 @@ func run() error {
 		client.WithInsecureSkipTLSVerify(envBool("OMNI_INSECURE_SKIP_VERIFY", false)),
 	}
 
-	if omniServiceAccountKey != "" {
-		clientOptions = append(clientOptions, client.WithServiceAccount(omniServiceAccountKey))
+	if !omniServiceAccountKey.IsEmpty() {
+		clientOptions = append(clientOptions, client.WithServiceAccount(omniServiceAccountKey.Reveal()))
 	}
 
 	return ip.Run(ctx, logger,
@@ -183,6 +209,19 @@ func run() error {
 func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenasclient.Client, pool, nicAttach string) error {
 	if err := tnClient.Ping(ctx); err != nil {
 		return fmt.Errorf("startup check failed — TrueNAS API unreachable: %w", err)
+	}
+
+	// Verify TrueNAS version is 25.04+ (JSON-RPC 2.0 required)
+	ver, err := tnClient.SystemVersion(ctx)
+	if err != nil {
+		logger.Warn("could not check TrueNAS version", zap.Error(err))
+	} else {
+		logger.Info("TrueNAS version", zap.String("version", ver))
+
+		if !isSupportedTrueNASVersion(ver) {
+			return fmt.Errorf("startup check failed — TrueNAS SCALE 25.04+ (Fangtooth) required, found %q. "+
+				"This provider uses JSON-RPC 2.0 which is not available on older versions", ver)
+		}
 	}
 
 	if exists, err := tnClient.PoolExists(ctx, pool); err != nil {
@@ -208,37 +247,86 @@ func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenas
 		zap.String("nic_attach", nicAttach),
 	)
 
+	// Warn about encryption passphrase over insecure transport
+	if os.Getenv("ENCRYPTION_PASSPHRASE") != "" && tnClient.TransportName() == "websocket" {
+		if envBool("TRUENAS_INSECURE_SKIP_VERIFY", false) {
+			logger.Warn("ENCRYPTION_PASSPHRASE is set with TRUENAS_INSECURE_SKIP_VERIFY=true — " +
+				"the passphrase will be sent over a TLS connection without certificate verification. " +
+				"A MITM attacker could intercept the passphrase. Set TRUENAS_INSECURE_SKIP_VERIFY=false " +
+				"or use the Unix socket transport for maximum security.")
+		}
+	}
+
 	return nil
 }
 
 func newHealthCheck(tnClient *truenasclient.Client, pool, nicAttach string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if err := tnClient.Ping(ctx); err != nil {
+			recordHealthCheckError(ctx)
+
 			return fmt.Errorf("TrueNAS API unreachable: %w", err)
 		}
 
 		exists, err := tnClient.PoolExists(ctx, pool)
 		if err != nil {
+			recordHealthCheckError(ctx)
+
 			return fmt.Errorf("failed to check pool %q: %w", pool, err)
 		}
 
 		if !exists {
+			recordHealthCheckError(ctx)
+
 			return fmt.Errorf("pool %q not found on TrueNAS", pool)
 		}
 
 		if nicAttach != "" {
 			valid, nicErr := tnClient.NICAttachValid(ctx, nicAttach)
 			if nicErr != nil {
+				recordHealthCheckError(ctx)
+
 				return fmt.Errorf("failed to validate NIC attach %q: %w", nicAttach, nicErr)
 			}
 
 			if !valid {
+				recordHealthCheckError(ctx)
+
 				return fmt.Errorf("NIC attach target %q not found on TrueNAS", nicAttach)
 			}
 		}
 
 		return nil
 	}
+}
+
+func recordHealthCheckError(ctx context.Context) {
+	if telemetry.HealthCheckErrors != nil {
+		telemetry.HealthCheckErrors.Add(ctx, 1)
+	}
+}
+
+// isSupportedTrueNASVersion checks if the version string indicates 25.x or later.
+// Extracts the major version number and compares >= 25.
+func isSupportedTrueNASVersion(ver string) bool {
+	// Version format: "TrueNAS-SCALE-25.04.0" or similar
+	// Extract digits after the last dash
+	parts := strings.Split(ver, "-")
+	for _, part := range parts {
+		if len(part) > 0 && part[0] >= '0' && part[0] <= '9' {
+			// Found the version number part (e.g., "25.04.0")
+			dotParts := strings.Split(part, ".")
+			if len(dotParts) >= 1 {
+				major, err := strconv.Atoi(dotParts[0])
+				if err == nil {
+					return major >= 25
+				}
+			}
+		}
+	}
+
+	// Can't parse — assume supported (don't block on unexpected format)
+	return true
 }
 
 func envString(key, defaultVal string) string {

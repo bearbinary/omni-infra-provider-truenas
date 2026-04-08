@@ -85,7 +85,7 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("WebSocket transport requires TRUENAS_API_KEY")
 	}
 
-	t, err := newWSTransport(cfg.Host, cfg.APIKey, cfg.InsecureSkipVerify)
+	t, err := newWSTransport(cfg.Host, NewSecretString(cfg.APIKey), cfg.InsecureSkipVerify)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect via websocket: %w", err)
 	}
@@ -118,6 +118,11 @@ var tracer = otel.Tracer("truenas-client")
 
 // call executes a JSON-RPC method and decodes the result.
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
+	// Record queue depth before acquiring
+	if telemetry.RateLimitQueueSize != nil {
+		telemetry.RateLimitQueueSize.Record(ctx, int64(len(c.semaphore)))
+	}
+
 	// Rate limit: acquire semaphore slot
 	select {
 	case c.semaphore <- struct{}{}:

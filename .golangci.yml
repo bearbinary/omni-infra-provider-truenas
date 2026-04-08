@@ -10,10 +10,12 @@ linters:
     - ineffassign
     - staticcheck
     - unused
-    - gosimple
     - gocritic
-    - gofmt
     - misspell
+
+formatters:
+  enable:
+    - gofmt
 
 issues:
   exclude-rules:
