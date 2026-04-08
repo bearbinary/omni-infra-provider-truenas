@@ -12,6 +12,7 @@ import (
 )
 
 func TestValidatePool_Exists(t *testing.T) {
+	t.Parallel()
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "pool.query" {
 			return []map[string]any{{"name": "tank"}}, nil
@@ -25,6 +26,7 @@ func TestValidatePool_Exists(t *testing.T) {
 }
 
 func TestValidatePool_NotFound(t *testing.T) {
+	t.Parallel()
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "pool.query" {
 			return []map[string]any{}, nil
@@ -40,6 +42,7 @@ func TestValidatePool_NotFound(t *testing.T) {
 }
 
 func TestValidatePool_DatasetPath(t *testing.T) {
+	t.Parallel()
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "pool.query" {
 			return []map[string]any{}, nil
@@ -55,6 +58,7 @@ func TestValidatePool_DatasetPath(t *testing.T) {
 }
 
 func TestValidatePool_APIError(t *testing.T) {
+	t.Parallel()
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "pool.query" {
 			return nil, &client.APIError{Code: 13, Message: "permission denied"}

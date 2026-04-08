@@ -130,11 +130,11 @@ flowchart TD
     Ping -->|fail| Die([Exit with error])
     Ping -->|ok| Pool[Verify DEFAULT_POOL exists]
     Pool -->|not found| Die
-    Pool -->|ok| NIC{DEFAULT_NIC_ATTACH set?}
+    Pool -->|ok| NIC{DEFAULT_NETWORK_INTERFACE set?}
     NIC -->|yes| ValidateNIC[Validate NIC target exists]
     ValidateNIC -->|not found| Die
     ValidateNIC -->|ok| Ready([Ready — accept MachineRequests])
-    NIC -->|no| Warn[Log warning: MachineClass must specify nic_attach]
+    NIC -->|no| Warn[Log warning: MachineClass must specify network_interface]
     Warn --> Ready
 ```
 

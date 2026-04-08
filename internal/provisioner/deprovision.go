@@ -150,8 +150,13 @@ loop:
 			return true
 		}
 
+		pollInterval := p.config.PollInterval
+		if pollInterval == 0 {
+			pollInterval = 2 * time.Second
+		}
+
 		select {
-		case <-time.After(2 * time.Second):
+		case <-time.After(pollInterval):
 		case <-ctx.Done():
 			logger.Debug("context cancelled during graceful shutdown", zap.Int("vm_id", vmID))
 

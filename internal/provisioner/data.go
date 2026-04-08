@@ -3,27 +3,35 @@ package provisioner
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Data is the provider custom machine config from the MachineClass.
 // Fields map to the schema.json that is reported to Omni.
 // AdditionalNIC describes an extra NIC to attach to the VM beyond the primary.
 type AdditionalNIC struct {
-	NICAttach string `yaml:"nic_attach"`        // Required: bridge, VLAN, or physical interface
-	Type      string `yaml:"type,omitempty"`    // VIRTIO (default) or E1000
-	VLANTag   int    `yaml:"vlan_id,omitempty"` // Optional: tag traffic with this VLAN ID at the VM level
+	NetworkInterface string `yaml:"network_interface"` // Required: bridge, VLAN, or physical interface
+	Type             string `yaml:"type,omitempty"`    // VIRTIO (default) or E1000
+	VLANTag          int    `yaml:"vlan_id,omitempty"` // Optional: tag traffic with this VLAN ID at the VM level
 }
 
 type Data struct {
-	Pool         string   `yaml:"pool,omitempty"`
-	NICAttach    string   `yaml:"nic_attach,omitempty"` // Primary NIC: bridge, VLAN, or physical interface
-	BootMethod   string   `yaml:"boot_method,omitempty"`
-	Architecture string   `yaml:"architecture,omitempty"`
-	Extensions   []string `yaml:"extensions,omitempty"` // Additional Talos system extensions beyond the defaults
-	Encrypted    bool     `yaml:"encrypted,omitempty"`  // Enable ZFS native encryption on the VM zvol
-	CPUs         int      `yaml:"cpus,omitempty"`
-	Memory       int      `yaml:"memory,omitempty"`
-	DiskSize     int      `yaml:"disk_size,omitempty"`
+	Pool             string   `yaml:"pool,omitempty"`
+	NetworkInterface string   `yaml:"network_interface,omitempty"` // Primary NIC: bridge, VLAN, or physical interface
+	BootMethod       string   `yaml:"boot_method,omitempty"`
+	Architecture     string   `yaml:"architecture,omitempty"`
+	Extensions       []string `yaml:"extensions,omitempty"` // Additional Talos system extensions beyond the defaults
+	Encrypted        bool     `yaml:"encrypted,omitempty"`  // Enable ZFS native encryption on the VM zvol
+	CPUs             int      `yaml:"cpus,omitempty"`
+	Memory           int      `yaml:"memory,omitempty"`
+	DiskSize         int      `yaml:"disk_size,omitempty"`
+
+	// DatasetPrefix is an optional ZFS dataset path under the pool.
+	// When set, zvols are created at <pool>/<dataset_prefix>/omni-vms/<request-id>
+	// and ISOs are cached at <pool>/<dataset_prefix>/talos-iso/.
+	// Each segment must be a valid ZFS name (no slashes in individual segments).
+	// Example: "previewk8/k8" places zvols at default/previewk8/k8/omni-vms/...
+	DatasetPrefix string `yaml:"dataset_prefix,omitempty"`
 
 	// Multi-NIC: attach additional NICs for network segmentation
 	AdditionalNICs []AdditionalNIC `yaml:"additional_nics,omitempty"`
@@ -51,8 +59,8 @@ func (d *Data) ApplyDefaults(cfg ProviderConfig) {
 		d.Pool = cfg.DefaultPool
 	}
 
-	if d.NICAttach == "" {
-		d.NICAttach = cfg.DefaultNICAttach
+	if d.NetworkInterface == "" {
+		d.NetworkInterface = cfg.DefaultNetworkInterface
 	}
 
 	if d.BootMethod == "" {
@@ -66,6 +74,16 @@ func (d *Data) ApplyDefaults(cfg ProviderConfig) {
 	if d.Architecture == "" {
 		d.Architecture = "amd64"
 	}
+}
+
+// BasePath returns the ZFS dataset root for this machine config.
+// If DatasetPrefix is set, returns "<pool>/<prefix>", otherwise just "<pool>".
+func (d *Data) BasePath() string {
+	if d.DatasetPrefix != "" {
+		return d.Pool + "/" + d.DatasetPrefix
+	}
+
+	return d.Pool
 }
 
 // safeNameRe matches ZFS-safe identifiers: alphanumeric, hyphens, underscores, dots.
@@ -92,31 +110,45 @@ func (d *Data) Validate() error {
 		return err
 	}
 
-	if err := validateSafeName("nic_attach", d.NICAttach); err != nil {
+	if err := validateSafeName("network_interface", d.NetworkInterface); err != nil {
 		return err
+	}
+
+	// Validate each segment of dataset_prefix individually (slashes are path separators, not part of names)
+	if d.DatasetPrefix != "" {
+		segments := strings.Split(d.DatasetPrefix, "/")
+		for i, seg := range segments {
+			if seg == "" {
+				return fmt.Errorf("dataset_prefix has empty segment at position %d — use 'a/b' not 'a//b' or '/a/b'", i)
+			}
+
+			if err := validateSafeName(fmt.Sprintf("dataset_prefix segment %d (%q)", i, seg), seg); err != nil {
+				return err
+			}
+		}
 	}
 
 	seen := make(map[string]bool)
 
 	// Primary NIC is always in the "seen" set
-	if d.NICAttach != "" {
-		seen[d.NICAttach] = true
+	if d.NetworkInterface != "" {
+		seen[d.NetworkInterface] = true
 	}
 
 	for i, nic := range d.AdditionalNICs {
-		if nic.NICAttach == "" {
-			return fmt.Errorf("additional_nics[%d]: nic_attach is required", i)
+		if nic.NetworkInterface == "" {
+			return fmt.Errorf("additional_nics[%d]: network_interface is required", i)
 		}
 
-		if err := validateSafeName(fmt.Sprintf("additional_nics[%d].nic_attach", i), nic.NICAttach); err != nil {
+		if err := validateSafeName(fmt.Sprintf("additional_nics[%d].network_interface", i), nic.NetworkInterface); err != nil {
 			return err
 		}
 
-		if seen[nic.NICAttach] {
-			return fmt.Errorf("additional_nics[%d]: duplicate nic_attach %q — each NIC must use a different interface", i, nic.NICAttach)
+		if seen[nic.NetworkInterface] {
+			return fmt.Errorf("additional_nics[%d]: duplicate network_interface %q — each NIC must use a different interface", i, nic.NetworkInterface)
 		}
 
-		seen[nic.NICAttach] = true
+		seen[nic.NetworkInterface] = true
 
 		if nic.VLANTag < 0 || nic.VLANTag > 4094 {
 			return fmt.Errorf("additional_nics[%d]: vlan_id must be between 1 and 4094, got %d", i, nic.VLANTag)

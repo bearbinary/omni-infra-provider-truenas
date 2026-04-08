@@ -11,6 +11,7 @@ import (
 )
 
 func TestSocketUploadFile_Permissions(t *testing.T) {
+	t.Parallel()
 	// Create a temp dir to simulate filesystem
 	tmpDir := t.TempDir()
 	destPath := filepath.Join(tmpDir, "test.iso")
@@ -29,6 +30,7 @@ func TestSocketUploadFile_Permissions(t *testing.T) {
 }
 
 func TestSocketUploadFile_NotWorldWritable(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	destPath := filepath.Join(tmpDir, "test.iso")
 
@@ -43,6 +45,7 @@ func TestSocketUploadFile_NotWorldWritable(t *testing.T) {
 }
 
 func TestWSTransport_PlainWSRequiresInsecure(t *testing.T) {
+	t.Parallel()
 	// With insecureSkipVerify=false, dialWebSocket should NOT fall back to ws://
 	// We can't easily test the full dial without a real server, but we can verify
 	// the error message guides users correctly.
@@ -53,6 +56,7 @@ func TestWSTransport_PlainWSRequiresInsecure(t *testing.T) {
 }
 
 func TestWSTransport_PlainWSAllowedWhenInsecure(t *testing.T) {
+	t.Parallel()
 	// With insecureSkipVerify=true, it should try ws:// as fallback
 	// Both will fail (no server), but the error should mention the host, not the flag
 	_, err := dialWebSocket("localhost:99999", true)
@@ -62,6 +66,7 @@ func TestWSTransport_PlainWSAllowedWhenInsecure(t *testing.T) {
 }
 
 func TestAPIKeyNotInTransportString(t *testing.T) {
+	t.Parallel()
 	// Verify that even if someone somehow prints the transport struct,
 	// the API key is redacted
 	transport := &wsTransport{
@@ -76,6 +81,7 @@ func TestAPIKeyNotInTransportString(t *testing.T) {
 }
 
 func TestAlertRulesCount(t *testing.T) {
+	t.Parallel()
 	// Verify we have enough alert rules (should include the new security alerts)
 	data, err := os.ReadFile("../../deploy/observability/alerts/truenas-provider.rules.yml")
 	require.NoError(t, err)

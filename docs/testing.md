@@ -29,7 +29,7 @@ Exercises the full client CRUD lifecycle against a real TrueNAS instance. VMs ar
 |---|---|
 | `TestIntegration_Ping` | API reachability + auth validation |
 | `TestIntegration_PoolExists` | Pool existence check (positive + negative) |
-| `TestIntegration_NICAttachValid` | NIC attach target check (positive + negative) |
+| `TestIntegration_NICAttachValid` | network interface target check (positive + negative) |
 | `TestIntegration_DatasetLifecycle` | Create dataset, EnsureDataset idempotency, delete, delete again |
 | `TestIntegration_ZvolLifecycle` | Create 1 GiB zvol, delete |
 | `TestIntegration_FileExistence` | Check /mnt exists, check nonexistent path |
@@ -151,7 +151,7 @@ docker run -d --network=host \
   -e TRUENAS_HOST="192.168.1.100" \
   -e TRUENAS_API_KEY="<key>" \
   -e DEFAULT_POOL="tank" \
-  -e DEFAULT_NIC_ATTACH="br0" \
+  -e DEFAULT_NETWORK_INTERFACE="br0" \
   ghcr.io/bearbinary/omni-infra-provider-truenas:latest
 ```
 
@@ -167,7 +167,7 @@ Or via Docker Compose on TrueNAS: paste `deploy/docker-compose.yaml` into Apps >
 | Full teardown | Delete MachineSet. | All VMs and zvols cleaned up. |
 | Crash recovery | Kill provider container mid-provision, restart. | Provider resumes from last completed step. |
 | Concurrent provisioning | Request 5 machines simultaneously. | All 5 provision without race conditions. |
-| Invalid NIC attach | Set `nic_attach: "nonexistent"` in MachineClass. | Step fails with clear error in MachineRequestStatus. |
+| Invalid network interface | Set `network_interface: "nonexistent"` in MachineClass. | Step fails with clear error in MachineRequestStatus. |
 
 #### Example MachineClass
 
@@ -184,7 +184,7 @@ spec:
     memory: 4096
     disk_size: 40
     pool: "tank"
-    nic_attach: "br0"
+    network_interface: "br0"
     boot_method: "UEFI"
 ```
 

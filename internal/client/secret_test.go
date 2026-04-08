@@ -10,11 +10,13 @@ import (
 )
 
 func TestSecretString_Reveal(t *testing.T) {
+	t.Parallel()
 	s := NewSecretString("my-api-key-12345")
 	assert.Equal(t, "my-api-key-12345", s.Reveal())
 }
 
 func TestSecretString_String_Redacted(t *testing.T) {
+	t.Parallel()
 	s := NewSecretString("super-secret-value")
 	assert.Equal(t, "[REDACTED]", s.String())
 	// Verify fmt.Sprint uses String()
@@ -24,12 +26,14 @@ func TestSecretString_String_Redacted(t *testing.T) {
 }
 
 func TestSecretString_GoString_Redacted(t *testing.T) {
+	t.Parallel()
 	s := NewSecretString("super-secret-value")
 	assert.Equal(t, "SecretString{[REDACTED]}", s.GoString())
 	assert.Equal(t, "SecretString{[REDACTED]}", fmt.Sprintf("%#v", s))
 }
 
 func TestSecretString_MarshalJSON_Redacted(t *testing.T) {
+	t.Parallel()
 	s := NewSecretString("super-secret-value")
 	data, err := json.Marshal(s)
 	require.NoError(t, err)
@@ -37,6 +41,7 @@ func TestSecretString_MarshalJSON_Redacted(t *testing.T) {
 }
 
 func TestSecretString_MarshalJSON_InStruct(t *testing.T) {
+	t.Parallel()
 	type Config struct {
 		APIKey SecretString `json:"api_key"`
 		Host   string       `json:"host"`
@@ -54,11 +59,13 @@ func TestSecretString_MarshalJSON_InStruct(t *testing.T) {
 }
 
 func TestSecretString_IsEmpty(t *testing.T) {
+	t.Parallel()
 	assert.True(t, NewSecretString("").IsEmpty())
 	assert.False(t, NewSecretString("something").IsEmpty())
 }
 
 func TestSecretString_NotInErrorMessage(t *testing.T) {
+	t.Parallel()
 	s := NewSecretString("super-secret-value")
 	err := fmt.Errorf("connection failed with key %s", s)
 	assert.Contains(t, err.Error(), "[REDACTED]")

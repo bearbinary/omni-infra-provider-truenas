@@ -36,7 +36,7 @@ services:
       PROVIDER_DESCRIPTION: "{{ values.providerDescription | default('TrueNAS SCALE infrastructure provider') }}"
 
       DEFAULT_POOL: "{{ values.defaultPool | default('default') }}"
-      DEFAULT_NIC_ATTACH: "{{ values.defaultNicAttach | default('') }}"
+      DEFAULT_NETWORK_INTERFACE: "{{ values.defaultNetworkInterface | default('') }}"
       DEFAULT_BOOT_METHOD: "{{ values.defaultBootMethod | default('UEFI') }}"
       CONCURRENCY: "{{ values.concurrency | default(4) }}"
       LOG_LEVEL: "{{ values.logLevel | default('info') }}"

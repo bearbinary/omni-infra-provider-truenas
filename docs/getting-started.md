@@ -190,14 +190,14 @@ services:
       OMNI_ENDPOINT: "https://your-omni-instance.omni.siderolabs.com"
       OMNI_SERVICE_ACCOUNT_KEY: "paste-your-key-from-step-1-here"
       DEFAULT_POOL: "tank"
-      DEFAULT_NIC_ATTACH: "br0"
+      DEFAULT_NETWORK_INTERFACE: "br0"
 ```
 
 4. **Replace the four values:**
    - `OMNI_ENDPOINT` — your Omni URL (from Step 1)
    - `OMNI_SERVICE_ACCOUNT_KEY` — the key you saved in Step 1
    - `DEFAULT_POOL` — your ZFS pool name (from Step 2)
-   - `DEFAULT_NIC_ATTACH` — your bridge name (from Step 2)
+   - `DEFAULT_NETWORK_INTERFACE` — your bridge name (from Step 2)
 
 5. Click **Deploy** / **Install**
 
@@ -206,7 +206,7 @@ services:
 Check the app logs in TrueNAS. You should see:
 
 ```
-"startup checks passed" transport=socket pool=tank nic_attach=br0
+"startup checks passed" transport=socket pool=tank network_interface=br0
 "starting TrueNAS infra provider" provider_id=truenas omni_endpoint=https://...
 ```
 
@@ -219,7 +219,7 @@ If you see both lines, the provider is connected and ready.
 | `OMNI_ENDPOINT is required` | Missing or empty Omni URL | Double-check `OMNI_ENDPOINT` in your compose config |
 | `TrueNAS API unreachable` | Can't connect to TrueNAS middleware | Make sure the volume mount `/var/run/middleware` is present and spelled correctly |
 | `pool "X" not found` | Wrong pool name | Check your pool name in **TrueNAS > Storage** — it's case-sensitive |
-| `NIC attach target "X" not found` | Bridge doesn't exist or name is wrong | Check your bridge name in **TrueNAS > Network > Interfaces** |
+| `network interface target "X" not found` | Bridge doesn't exist or name is wrong | Check your bridge name in **TrueNAS > Network > Interfaces** |
 
 For more details, see [troubleshooting.md](troubleshooting.md).
 

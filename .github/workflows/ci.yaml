@@ -32,9 +32,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install betterleaks
+      - name: Install betterleaks v1.1.1
+        env:
+          BETTERLEAKS_VERSION: "1.1.1"
+          BETTERLEAKS_SHA256: "d590d5f051e49f6769c61dc8cebbce947b20a4042e2915ee234760f81a01c8c4"
         run: |
-          curl -sSfL https://github.com/betterleaks/betterleaks/releases/latest/download/betterleaks-linux-amd64 -o /usr/local/bin/betterleaks
+          curl -sSfL "https://github.com/betterleaks/betterleaks/releases/download/v${BETTERLEAKS_VERSION}/betterleaks_${BETTERLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/betterleaks.tar.gz
+          echo "${BETTERLEAKS_SHA256}  /tmp/betterleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/betterleaks.tar.gz -C /usr/local/bin betterleaks
           chmod +x /usr/local/bin/betterleaks
 
       - name: Scan for secrets
@@ -49,18 +54,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # golangci-lint does not yet support Go 1.26 — use go vet + gofmt directly
-      - name: Vet
-        run: go vet ./...
-
-      - name: Format check
-        run: |
-          UNFORMATTED=$(gofmt -l .)
-          if [ -n "$UNFORMATTED" ]; then
-            echo "Files not formatted:"
-            echo "$UNFORMATTED"
-            exit 1
-          fi
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
 
   vulncheck:
     runs-on: ubuntu-latest

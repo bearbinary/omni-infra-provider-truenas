@@ -12,7 +12,7 @@ import (
 
 func TestValidate_NoAdditionalNICs(t *testing.T) {
 	d := Data{}
-	d.ApplyDefaults(ProviderConfig{DefaultPool: "tank", DefaultNICAttach: "br0"})
+	d.ApplyDefaults(ProviderConfig{DefaultPool: "tank", DefaultNetworkInterface: "br0"})
 
 	err := d.Validate()
 	require.NoError(t, err, "no additional NICs should be valid")
@@ -21,7 +21,7 @@ func TestValidate_NoAdditionalNICs(t *testing.T) {
 func TestValidate_ValidAdditionalNIC(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200"},
+			{NetworkInterface: "br200"},
 		},
 	}
 
@@ -32,9 +32,9 @@ func TestValidate_ValidAdditionalNIC(t *testing.T) {
 func TestValidate_MultipleAdditionalNICs(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200", Type: "VIRTIO"},
-			{NICAttach: "vlan300", VLANTag: 300},
-			{NICAttach: "enp6s0", Type: "E1000"},
+			{NetworkInterface: "br200", Type: "VIRTIO"},
+			{NetworkInterface: "vlan300", VLANTag: 300},
+			{NetworkInterface: "enp6s0", Type: "E1000"},
 		},
 	}
 
@@ -42,24 +42,24 @@ func TestValidate_MultipleAdditionalNICs(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestValidate_MissingNICAttach(t *testing.T) {
+func TestValidate_MissingNetworkInterface(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: ""},
+			{NetworkInterface: ""},
 		},
 	}
 
 	err := d.Validate()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "nic_attach is required")
+	assert.Contains(t, err.Error(), "network_interface is required")
 	assert.Contains(t, err.Error(), "[0]")
 }
 
-func TestValidate_MissingNICAttach_SecondNIC(t *testing.T) {
+func TestValidate_MissingNetworkInterface_SecondNIC(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200"},
-			{NICAttach: ""},
+			{NetworkInterface: "br200"},
+			{NetworkInterface: ""},
 		},
 	}
 
@@ -72,7 +72,7 @@ func TestValidate_InvalidVLANTag_Zero(t *testing.T) {
 	// VLAN 0 is technically valid (native VLAN) but we treat 0 as "not set"
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200", VLANTag: 0},
+			{NetworkInterface: "br200", VLANTag: 0},
 		},
 	}
 
@@ -83,7 +83,7 @@ func TestValidate_InvalidVLANTag_Zero(t *testing.T) {
 func TestValidate_InvalidVLANTag_Negative(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200", VLANTag: -1},
+			{NetworkInterface: "br200", VLANTag: -1},
 		},
 	}
 
@@ -95,7 +95,7 @@ func TestValidate_InvalidVLANTag_Negative(t *testing.T) {
 func TestValidate_InvalidVLANTag_TooHigh(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200", VLANTag: 4095},
+			{NetworkInterface: "br200", VLANTag: 4095},
 		},
 	}
 
@@ -107,8 +107,8 @@ func TestValidate_InvalidVLANTag_TooHigh(t *testing.T) {
 func TestValidate_ValidVLANTag_Boundary(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200", VLANTag: 1},
-			{NICAttach: "br201", VLANTag: 4094},
+			{NetworkInterface: "br200", VLANTag: 1},
+			{NetworkInterface: "br201", VLANTag: 4094},
 		},
 	}
 
@@ -119,7 +119,7 @@ func TestValidate_ValidVLANTag_Boundary(t *testing.T) {
 func TestValidate_InvalidNICType(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200", Type: "INVALID"},
+			{NetworkInterface: "br200", Type: "INVALID"},
 		},
 	}
 
@@ -131,9 +131,9 @@ func TestValidate_InvalidNICType(t *testing.T) {
 func TestValidate_ValidNICTypes(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200", Type: "VIRTIO"},
-			{NICAttach: "br201", Type: "E1000"},
-			{NICAttach: "br202"}, // empty = VIRTIO default
+			{NetworkInterface: "br200", Type: "VIRTIO"},
+			{NetworkInterface: "br201", Type: "E1000"},
+			{NetworkInterface: "br202"}, // empty = VIRTIO default
 		},
 	}
 
@@ -144,21 +144,21 @@ func TestValidate_ValidNICTypes(t *testing.T) {
 // --- AdditionalNIC preserved through defaults ---
 
 func TestData_AdditionalNICsPreserved(t *testing.T) {
-	cfg := ProviderConfig{DefaultPool: "tank", DefaultNICAttach: "br0"}
+	cfg := ProviderConfig{DefaultPool: "tank", DefaultNetworkInterface: "br0"}
 
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200", VLANTag: 100},
-			{NICAttach: "enp6s0"},
+			{NetworkInterface: "br200", VLANTag: 100},
+			{NetworkInterface: "enp6s0"},
 		},
 		AdvertisedSubnets: "192.168.100.0/24",
 	}
 	d.ApplyDefaults(cfg)
 
 	assert.Len(t, d.AdditionalNICs, 2)
-	assert.Equal(t, "br200", d.AdditionalNICs[0].NICAttach)
+	assert.Equal(t, "br200", d.AdditionalNICs[0].NetworkInterface)
 	assert.Equal(t, 100, d.AdditionalNICs[0].VLANTag)
-	assert.Equal(t, "enp6s0", d.AdditionalNICs[1].NICAttach)
+	assert.Equal(t, "enp6s0", d.AdditionalNICs[1].NetworkInterface)
 	assert.Equal(t, "192.168.100.0/24", d.AdvertisedSubnets)
 }
 
@@ -175,7 +175,7 @@ func TestData_EmptyAdditionalNICs(t *testing.T) {
 // --- VLAN tag enables TrustGuestRxFilters ---
 
 func TestAdditionalNIC_VLANTagEnablesTrust(t *testing.T) {
-	nic := AdditionalNIC{NICAttach: "enp5s0", VLANTag: 100}
+	nic := AdditionalNIC{NetworkInterface: "enp5s0", VLANTag: 100}
 
 	// The provisioner should set TrustGuestRxFilters when VLANTag > 0
 	assert.Greater(t, nic.VLANTag, 0, "VLAN tag should be set")
@@ -197,42 +197,42 @@ func TestData_AdvertisedSubnets_DualStack(t *testing.T) {
 
 // --- Duplicate NIC detection ---
 
-func TestValidate_DuplicateNICAttach_SameAsPrimary(t *testing.T) {
+func TestValidate_DuplicateNetworkInterface_SameAsPrimary(t *testing.T) {
 	d := Data{
-		NICAttach: "br100",
+		NetworkInterface: "br100",
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br100"}, // Same as primary
+			{NetworkInterface: "br100"}, // Same as primary
 		},
 	}
 
 	err := d.Validate()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "duplicate nic_attach")
+	assert.Contains(t, err.Error(), "duplicate network_interface")
 	assert.Contains(t, err.Error(), "br100")
 }
 
-func TestValidate_DuplicateNICAttach_WithinAdditional(t *testing.T) {
+func TestValidate_DuplicateNetworkInterface_WithinAdditional(t *testing.T) {
 	d := Data{
-		NICAttach: "br100",
+		NetworkInterface: "br100",
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200"},
-			{NICAttach: "br200"}, // Duplicate within additional
+			{NetworkInterface: "br200"},
+			{NetworkInterface: "br200"}, // Duplicate within additional
 		},
 	}
 
 	err := d.Validate()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "duplicate nic_attach")
+	assert.Contains(t, err.Error(), "duplicate network_interface")
 	assert.Contains(t, err.Error(), "[1]") // Second one flagged
 }
 
 func TestValidate_NoDuplicate_DifferentInterfaces(t *testing.T) {
 	d := Data{
-		NICAttach: "br100",
+		NetworkInterface: "br100",
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "br200"},
-			{NICAttach: "vlan300"},
-			{NICAttach: "enp6s0"},
+			{NetworkInterface: "br200"},
+			{NetworkInterface: "vlan300"},
+			{NetworkInterface: "enp6s0"},
 		},
 	}
 
@@ -246,12 +246,12 @@ func TestValidate_MaxNICs(t *testing.T) {
 	// TrueNAS supports many NICs — verify we don't break with several
 	nics := make([]AdditionalNIC, 10)
 	for i := range nics {
-		nics[i] = AdditionalNIC{NICAttach: fmt.Sprintf("br%d", 200+i)}
+		nics[i] = AdditionalNIC{NetworkInterface: fmt.Sprintf("br%d", 200+i)}
 	}
 
 	d := Data{
-		NICAttach:      "br100",
-		AdditionalNICs: nics,
+		NetworkInterface: "br100",
+		AdditionalNICs:   nics,
 	}
 
 	err := d.Validate()
@@ -265,7 +265,7 @@ func TestValidate_VLANTag_CommonValues(t *testing.T) {
 	for _, vlan := range commonVLANs {
 		d := Data{
 			AdditionalNICs: []AdditionalNIC{
-				{NICAttach: "enp5s0", VLANTag: vlan},
+				{NetworkInterface: "enp5s0", VLANTag: vlan},
 			},
 		}
 

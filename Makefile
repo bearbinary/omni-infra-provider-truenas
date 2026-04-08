@@ -8,10 +8,10 @@ build:
 	CGO_ENABLED=0 go build -o _out/$(BINARY) ./cmd/$(BINARY)
 
 test:
-	go test ./... -count=1
+	go test -race ./... -count=1
 
 test-v:
-	go test ./... -v -count=1
+	go test -race ./... -v -count=1
 
 test-integration:  ## Run client integration tests against a real TrueNAS
 	go test -tags=integration ./internal/client/... -v -count=1 -timeout=120s
@@ -31,7 +31,7 @@ setup-hooks:  ## Install git hooks (pre-push secret scanning)
 	@echo "Git hooks installed"
 
 image:
-	docker build -t $(IMAGE):$(TAG) .
+	docker build --build-arg VERSION=$(TAG) -t $(IMAGE):$(TAG) .
 
 generate:
 	protoc --go_out=. --go_opt=paths=source_relative api/specs/specs.proto

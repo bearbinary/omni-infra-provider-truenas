@@ -40,7 +40,8 @@ func TestCleanupVM_GracefulShutdown_VMStopsInTime(t *testing.T) {
 		}
 	}), ProviderConfig{
 		DefaultPool:             "tank",
-		GracefulShutdownTimeout: 5 * time.Second,
+		GracefulShutdownTimeout: 100 * time.Millisecond,
+		PollInterval:            10 * time.Millisecond,
 	})
 
 	err := p.cleanupVM(context.Background(), testLogger(), 42)
@@ -76,7 +77,8 @@ func TestCleanupVM_GracefulShutdown_Timeout_ForcesStop(t *testing.T) {
 		}
 	}), ProviderConfig{
 		DefaultPool:             "tank",
-		GracefulShutdownTimeout: 3 * time.Second, // Short timeout for test speed
+		GracefulShutdownTimeout: 100 * time.Millisecond,
+		PollInterval:            10 * time.Millisecond,
 	})
 
 	err := p.cleanupVM(context.Background(), testLogger(), 42)
@@ -98,14 +100,15 @@ func TestCleanupVM_ContextCancelled_DuringGraceful(t *testing.T) {
 		}
 	}), ProviderConfig{
 		DefaultPool:             "tank",
-		GracefulShutdownTimeout: 30 * time.Second,
+		GracefulShutdownTimeout: 200 * time.Millisecond,
+		PollInterval:            10 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Cancel after 1 second — should not wait the full 30s
+	// Cancel after 50ms — should not wait the full graceful timeout
 	go func() {
-		time.Sleep(1 * time.Second)
+		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
 
@@ -113,8 +116,8 @@ func TestCleanupVM_ContextCancelled_DuringGraceful(t *testing.T) {
 	_ = p.cleanupVM(ctx, testLogger(), 42) // May error due to cancelled context on subsequent calls
 	elapsed := time.Since(start)
 
-	// Key assertion: should NOT wait the full 30s graceful timeout
-	assert.Less(t, elapsed, 10*time.Second, "should exit quickly when context cancelled, not wait 30s")
+	// Key assertion: should NOT wait the full graceful timeout
+	assert.Less(t, elapsed, 2*time.Second, "should exit quickly when context cancelled")
 }
 
 func TestCleanupVM_VMAlreadyStopped(t *testing.T) {
@@ -129,7 +132,7 @@ func TestCleanupVM_VMAlreadyStopped(t *testing.T) {
 		default:
 			return nil, nil
 		}
-	}), ProviderConfig{DefaultPool: "tank"})
+	}), ProviderConfig{DefaultPool: "tank", PollInterval: 10 * time.Millisecond})
 
 	err := p.cleanupVM(context.Background(), testLogger(), 42)
 	require.NoError(t, err)
@@ -147,7 +150,7 @@ func TestCleanupVM_VMNotFound_DuringPoll(t *testing.T) {
 		default:
 			return nil, nil
 		}
-	}), ProviderConfig{DefaultPool: "tank"})
+	}), ProviderConfig{DefaultPool: "tank", PollInterval: 10 * time.Millisecond})
 
 	err := p.cleanupVM(context.Background(), testLogger(), 42)
 	require.NoError(t, err, "should succeed if VM disappears during poll")

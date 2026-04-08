@@ -34,7 +34,7 @@ services:
       PROVIDER_NAME: "${PROVIDER_NAME:-TrueNAS}"
       DEFAULT_POOL: "${DEFAULT_POOL:-default}"
       # ISOs are cached automatically under <pool>/talos-iso/ — no config needed
-      DEFAULT_NIC_ATTACH: "${DEFAULT_NIC_ATTACH:-}"
+      DEFAULT_NETWORK_INTERFACE: "${DEFAULT_NETWORK_INTERFACE:-}"
       DEFAULT_BOOT_METHOD: "${DEFAULT_BOOT_METHOD:-UEFI}"
       CONCURRENCY: "${CONCURRENCY:-4}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"

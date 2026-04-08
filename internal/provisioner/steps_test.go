@@ -15,9 +15,9 @@ import (
 
 func testProvisioner(handler client.MockHandler) *Provisioner {
 	return NewProvisioner(client.NewMockClient(handler), ProviderConfig{
-		DefaultPool:       "tank",
-		DefaultNICAttach:  "br0",
-		DefaultBootMethod: "UEFI",
+		DefaultPool:             "tank",
+		DefaultNetworkInterface: "br0",
+		DefaultBootMethod:       "UEFI",
 	})
 }
 

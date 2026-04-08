@@ -49,7 +49,7 @@ func (c *Client) AddCDROM(ctx context.Context, vmID int, isoPath string) (*Devic
 
 // NICConfig describes a NIC to attach to a VM.
 type NICConfig struct {
-	NICAttach           string `json:"nic_attach" yaml:"nic_attach"`                                             // Bridge, VLAN, or physical interface
+	NetworkInterface    string `json:"network_interface" yaml:"network_interface"`                               // Bridge, VLAN, or physical interface
 	Type                string `json:"type,omitempty" yaml:"type,omitempty"`                                     // VIRTIO (default) or E1000
 	VLANTag             int    `json:"vlan_id,omitempty" yaml:"vlan_id,omitempty"`                               // Optional: tag traffic with this VLAN ID
 	TrustGuestRxFilters bool   `json:"trust_guest_rx_filters,omitempty" yaml:"trust_guest_rx_filters,omitempty"` // Required for VLAN tagging
@@ -59,7 +59,7 @@ type NICConfig struct {
 // nicAttach can be a bridge (e.g., "br100"), VLAN interface (e.g., "vlan666"),
 // or physical interface (e.g., "enp5s0").
 func (c *Client) AddNIC(ctx context.Context, vmID int, nicAttach string) (*Device, error) {
-	return c.AddNICWithConfig(ctx, vmID, NICConfig{NICAttach: nicAttach}, 1003)
+	return c.AddNICWithConfig(ctx, vmID, NICConfig{NetworkInterface: nicAttach}, 1003)
 }
 
 // AddNICWithConfig attaches a NIC device to a VM with full configuration options.
@@ -72,7 +72,7 @@ func (c *Client) AddNICWithConfig(ctx context.Context, vmID int, cfg NICConfig, 
 	attrs := map[string]any{
 		"dtype":      "NIC",
 		"type":       nicType,
-		"nic_attach": cfg.NICAttach,
+		"nic_attach": cfg.NetworkInterface,
 	}
 
 	if cfg.VLANTag > 0 {

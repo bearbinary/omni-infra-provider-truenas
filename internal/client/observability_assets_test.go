@@ -12,6 +12,7 @@ import (
 )
 
 func TestAlertingRules_ValidYAML(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("../../deploy/observability/alerts/truenas-provider.rules.yml")
 	require.NoError(t, err, "should be able to read alerting rules file")
 
@@ -38,6 +39,7 @@ func TestAlertingRules_ValidYAML(t *testing.T) {
 }
 
 func TestGrafanaDashboards_ValidJSON(t *testing.T) {
+	t.Parallel()
 	dashboardDir := "../../deploy/observability/dashboards"
 
 	expected := map[string]struct {

@@ -122,7 +122,7 @@ func run() error {
 	}
 
 	defaultPool := envString("DEFAULT_POOL", "default")
-	defaultNICAttach := envString("DEFAULT_NIC_ATTACH", "")
+	defaultNetworkInterface := envString("DEFAULT_NETWORK_INTERFACE", "")
 	defaultBootMethod := envString("DEFAULT_BOOT_METHOD", "UEFI")
 	concurrency := envInt("CONCURRENCY", 4)
 
@@ -148,7 +148,7 @@ func run() error {
 	// Create provisioner
 	prov := provisioner.NewProvisioner(tnClient, provisioner.ProviderConfig{
 		DefaultPool:             defaultPool,
-		DefaultNICAttach:        defaultNICAttach,
+		DefaultNetworkInterface: defaultNetworkInterface,
 		DefaultBootMethod:       defaultBootMethod,
 		EncryptionPassphrase:    os.Getenv("ENCRYPTION_PASSPHRASE"),
 		GracefulShutdownTimeout: time.Duration(envInt("GRACEFUL_SHUTDOWN_TIMEOUT", 30)) * time.Second,
@@ -166,7 +166,7 @@ func run() error {
 		return fmt.Errorf("failed to create infra provider: %w", err)
 	}
 
-	if err := runStartupChecks(ctx, logger, tnClient, defaultPool, defaultNICAttach); err != nil {
+	if err := runStartupChecks(ctx, logger, tnClient, defaultPool, defaultNetworkInterface); err != nil {
 		return err
 	}
 
@@ -186,7 +186,7 @@ func run() error {
 		zap.String("provider_id", meta.ProviderID),
 		zap.String("omni_endpoint", omniEndpoint),
 		zap.String("default_pool", defaultPool),
-		zap.String("default_nic_attach", defaultNICAttach),
+		zap.String("default_network_interface", defaultNetworkInterface),
 	)
 
 	clientOptions := []client.Option{
@@ -202,11 +202,11 @@ func run() error {
 		infra.WithClientOptions(clientOptions...),
 		infra.WithEncodeRequestIDsIntoTokens(),
 		infra.WithConcurrency(uint(concurrency)),
-		infra.WithHealthCheckFunc(newHealthCheck(tnClient, defaultPool, defaultNICAttach)),
+		infra.WithHealthCheckFunc(newHealthCheck(tnClient, defaultPool, defaultNetworkInterface)),
 	)
 }
 
-func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenasclient.Client, pool, nicAttach string) error {
+func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenasclient.Client, pool, networkInterface string) error {
 	if err := tnClient.Ping(ctx); err != nil {
 		return fmt.Errorf("startup check failed — TrueNAS API unreachable: %w", err)
 	}
@@ -230,21 +230,21 @@ func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenas
 		return fmt.Errorf("startup check failed — pool %q not found on TrueNAS", pool)
 	}
 
-	if nicAttach != "" {
-		if valid, err := tnClient.NICAttachValid(ctx, nicAttach); err != nil {
-			return fmt.Errorf("startup check failed — cannot verify NIC attach target %q: %w", nicAttach, err)
+	if networkInterface != "" {
+		if valid, err := tnClient.NetworkInterfaceValid(ctx, networkInterface); err != nil {
+			return fmt.Errorf("startup check failed — cannot verify network interface %q: %w", networkInterface, err)
 		} else if !valid {
-			choices, _ := tnClient.NICAttachChoices(ctx)
-			return fmt.Errorf("startup check failed — NIC attach target %q not found on TrueNAS. Available: %v", nicAttach, choices)
+			choices, _ := tnClient.NetworkInterfaceChoices(ctx)
+			return fmt.Errorf("startup check failed — network interface %q not found on TrueNAS. Available: %v", networkInterface, choices)
 		}
 	} else {
-		logger.Warn("DEFAULT_NIC_ATTACH not set — MachineClass configs must specify nic_attach")
+		logger.Warn("DEFAULT_NETWORK_INTERFACE not set — MachineClass configs must specify network_interface")
 	}
 
 	logger.Info("startup checks passed",
 		zap.String("transport", tnClient.TransportName()),
 		zap.String("pool", pool),
-		zap.String("nic_attach", nicAttach),
+		zap.String("network_interface", networkInterface),
 	)
 
 	// Warn about encryption passphrase over insecure transport
@@ -260,7 +260,7 @@ func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenas
 	return nil
 }
 
-func newHealthCheck(tnClient *truenasclient.Client, pool, nicAttach string) func(context.Context) error {
+func newHealthCheck(tnClient *truenasclient.Client, pool, networkInterface string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if err := tnClient.Ping(ctx); err != nil {
 			recordHealthCheckError(ctx)
@@ -281,18 +281,18 @@ func newHealthCheck(tnClient *truenasclient.Client, pool, nicAttach string) func
 			return fmt.Errorf("pool %q not found on TrueNAS", pool)
 		}
 
-		if nicAttach != "" {
-			valid, nicErr := tnClient.NICAttachValid(ctx, nicAttach)
+		if networkInterface != "" {
+			valid, nicErr := tnClient.NetworkInterfaceValid(ctx, networkInterface)
 			if nicErr != nil {
 				recordHealthCheckError(ctx)
 
-				return fmt.Errorf("failed to validate NIC attach %q: %w", nicAttach, nicErr)
+				return fmt.Errorf("failed to validate network interface %q: %w", networkInterface, nicErr)
 			}
 
 			if !valid {
 				recordHealthCheckError(ctx)
 
-				return fmt.Errorf("NIC attach target %q not found on TrueNAS", nicAttach)
+				return fmt.Errorf("network interface %q not found on TrueNAS", networkInterface)
 			}
 		}
 

@@ -163,8 +163,8 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 	pctx.State.TypedSpec().Value.ImageId = imageID
 	p.TrackImageID(imageID)
 
-	// ISOs are cached under <pool>/talos-iso/, downloaded automatically from Image Factory
-	isoDataset := data.Pool + "/talos-iso"
+	// ISOs are cached under <basePath>/talos-iso/, downloaded automatically from Image Factory
+	isoDataset := data.BasePath() + "/talos-iso"
 	isoPath := "/mnt/" + isoDataset + "/" + isoFileName
 
 	// Use singleflight to prevent concurrent downloads of the same ISO
@@ -184,7 +184,13 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 			return nil, nil
 		}
 
-		// Ensure the dataset exists
+		// Ensure the dataset hierarchy exists
+		if data.DatasetPrefix != "" {
+			if err := p.client.EnsureDataset(ctx, data.BasePath()); err != nil {
+				return nil, fmt.Errorf("failed to ensure dataset prefix: %w", err)
+			}
+		}
+
 		if err := p.client.EnsureDataset(ctx, isoDataset); err != nil {
 			return nil, fmt.Errorf("failed to ensure ISO dataset: %w", err)
 		}
@@ -315,13 +321,20 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	// Create zvol for the VM disk
 	requestID := pctx.GetRequestID()
-	zvolPath := data.Pool + "/omni-vms/" + requestID
+	basePath := data.BasePath()
+	zvolPath := basePath + "/omni-vms/" + requestID
 
 	// Tag all provider-managed zvols with Omni metadata
 	omniProps := client.OmniManagedProperties(requestID)
 
-	// Ensure parent dataset exists
-	if err := p.client.EnsureDataset(ctx, data.Pool+"/omni-vms"); err != nil {
+	// Ensure parent dataset hierarchy exists
+	if data.DatasetPrefix != "" {
+		if err := p.client.EnsureDataset(ctx, basePath); err != nil {
+			return fmt.Errorf("failed to ensure dataset prefix %q: %w", basePath, err)
+		}
+	}
+
+	if err := p.client.EnsureDataset(ctx, basePath+"/omni-vms"); err != nil {
 		return fmt.Errorf("failed to ensure omni-vms dataset: %w", err)
 	}
 
@@ -389,8 +402,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	logger.Info("created VM", zap.String("name", vmName), zap.Int("id", vm.ID))
 	p.TrackVMName(vmName)
 
-	// Attach CDROM with Talos ISO (cached under <pool>/talos-iso/)
-	isoPath := "/mnt/" + data.Pool + "/talos-iso/" + state.ImageId + ".iso"
+	// Attach CDROM with Talos ISO (cached under <basePath>/talos-iso/)
+	isoPath := "/mnt/" + basePath + "/talos-iso/" + state.ImageId + ".iso"
 
 	cdrom, err := p.client.AddCDROM(ctx, vm.ID, isoPath)
 	if err != nil {
@@ -405,7 +418,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	// Attach primary NIC
-	nicDev, err := p.client.AddNIC(ctx, vm.ID, data.NICAttach)
+	nicDev, err := p.client.AddNIC(ctx, vm.ID, data.NetworkInterface)
 	if err != nil {
 		return fmt.Errorf("failed to attach primary NIC: %w", err)
 	}
@@ -415,7 +428,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		logger.Info("VM NIC MAC address — use this for DHCP reservation in your router",
 			zap.String("mac", mac),
 			zap.String("vm_name", vmName),
-			zap.String("nic_attach", data.NICAttach),
+			zap.String("network_interface", data.NetworkInterface),
 			zap.String("role", "primary"),
 		)
 	}
@@ -423,7 +436,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	// Attach additional NICs
 	for i, nic := range data.AdditionalNICs {
 		nicCfg := client.NICConfig{
-			NICAttach:           nic.NICAttach,
+			NetworkInterface:    nic.NetworkInterface,
 			Type:                nic.Type,
 			VLANTag:             nic.VLANTag,
 			TrustGuestRxFilters: nic.VLANTag > 0, // Enable for VLAN tagging at VM level
@@ -431,7 +444,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 		dev, nicErr := p.client.AddNICWithConfig(ctx, vm.ID, nicCfg, 1004+i)
 		if nicErr != nil {
-			return fmt.Errorf("failed to attach additional NIC %d (%s): %w", i, nic.NICAttach, nicErr)
+			return fmt.Errorf("failed to attach additional NIC %d (%s): %w", i, nic.NetworkInterface, nicErr)
 		}
 
 		mac := ""
@@ -441,7 +454,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 		logger.Debug("attached additional NIC",
 			zap.Int("index", i),
-			zap.String("nic_attach", nic.NICAttach),
+			zap.String("network_interface", nic.NetworkInterface),
 			zap.Int("vlan_id", nic.VLANTag),
 			zap.String("mac", mac),
 			zap.String("vm_name", vmName),
@@ -533,29 +546,36 @@ func recordProvisionError(ctx context.Context, err error) {
 		return
 	}
 
-	category := "unknown"
+	telemetry.ProvisionErrors.Add(ctx, 1, telemetry.WithErrorCategory(categorizeError(err)))
+}
+
+// categorizeError returns a category string for a provision error.
+func categorizeError(err error) string {
+	if err == nil {
+		return "unknown"
+	}
 
 	errMsg := err.Error()
 	switch {
 	case strings.Contains(errMsg, "pool") && strings.Contains(errMsg, "not found"):
-		category = "pool_not_found"
+		return "pool_not_found"
 	case strings.Contains(errMsg, "ENOSPC") || strings.Contains(errMsg, "pool is full"):
-		category = "pool_full"
-	case strings.Contains(errMsg, "nic_attach") || strings.Contains(errMsg, "NIC"):
-		category = "nic_invalid"
+		return "pool_full"
+	case strings.Contains(errMsg, "network_interface") || strings.Contains(errMsg, "nic_attach") || strings.Contains(errMsg, "NIC"):
+		return "nic_invalid"
 	case strings.Contains(errMsg, "reconnect") || strings.Contains(errMsg, "unreachable"):
-		category = "connection"
+		return "connection"
 	case strings.Contains(errMsg, "permission") || strings.Contains(errMsg, "EACCES"):
-		category = "auth"
+		return "auth"
 	case strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline"):
-		category = "timeout"
+		return "timeout"
 	case strings.Contains(errMsg, "memory") || strings.Contains(errMsg, "RAM"):
-		category = "memory"
+		return "memory"
 	case strings.Contains(errMsg, "schematic") || strings.Contains(errMsg, "ISO"):
-		category = "image"
+		return "image"
+	default:
+		return "unknown"
 	}
-
-	telemetry.ProvisionErrors.Add(ctx, 1, telemetry.WithErrorCategory(category))
 }
 
 // validatePool checks that the configured pool exists on TrueNAS.
@@ -668,7 +688,7 @@ func (p *Provisioner) swapCDROMForUpgrade(ctx context.Context, logger *zap.Logge
 
 	data.ApplyDefaults(p.config)
 
-	isoPath := "/mnt/" + data.Pool + "/talos-iso/" + state.ImageId + ".iso"
+	isoPath := "/mnt/" + data.BasePath() + "/talos-iso/" + state.ImageId + ".iso"
 
 	logger.Info("swapping CDROM to new ISO for upgrade",
 		zap.Int32("vm_id", state.VmId),

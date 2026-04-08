@@ -51,7 +51,7 @@ The interface must have:
 - Connectivity to the internet (VMs need outbound access to reach Omni via SideroLink/WireGuard on port 443)
 - DHCP available on the network (Talos uses DHCP by default)
 
-To list available choices: `midclt call vm.device.nic_attach_choices` via SSH.
+To list available choices: `midclt call vm.device.network_interface_choices` via SSH.
 
 ### 6. TrueNAS API Key (Remote Deployments Only)
 
@@ -84,14 +84,14 @@ services:
       OMNI_ENDPOINT: "https://<omni-url>"
       OMNI_SERVICE_ACCOUNT_KEY: "<key-from-step-3-above>"
       DEFAULT_POOL: "<pool-name>"
-      DEFAULT_NIC_ATTACH: "<interface-name>"
+      DEFAULT_NETWORK_INTERFACE: "<interface-name>"
 ```
 
 **Step 3:** Replace the four placeholder values:
 - `OMNI_ENDPOINT`: Their Omni URL (e.g., `https://omni.example.com`)
 - `OMNI_SERVICE_ACCOUNT_KEY`: The key from the service account creation step
 - `DEFAULT_POOL`: Their ZFS pool name (e.g., `default`, `tank`)
-- `DEFAULT_NIC_ATTACH`: Their network interface (e.g., `br0`, `vlan100`)
+- `DEFAULT_NETWORK_INTERFACE`: Their network interface (e.g., `br0`, `vlan100`)
 
 **Step 4:** Deploy the app. Check logs for:
 ```
@@ -112,7 +112,7 @@ Best for: Running on an external Kubernetes cluster.
 data:
   OMNI_ENDPOINT: "https://<omni-url>"
   DEFAULT_POOL: "<pool-name>"
-  DEFAULT_NIC_ATTACH: "<interface-name>"
+  DEFAULT_NETWORK_INTERFACE: "<interface-name>"
   TRUENAS_HOST: "<truenas-hostname-or-ip>"
 ```
 
@@ -151,7 +151,7 @@ OMNI_SERVICE_ACCOUNT_KEY=<key>
 TRUENAS_HOST=<truenas-hostname-or-ip>
 TRUENAS_API_KEY=<truenas-api-key>
 DEFAULT_POOL=<pool-name>
-DEFAULT_NIC_ATTACH=<interface-name>
+DEFAULT_NETWORK_INTERFACE=<interface-name>
 ```
 
 **Step 4:** Start:
@@ -172,7 +172,7 @@ After deployment, guide the user through these checks:
 
 Look for these two lines in the logs:
 ```
-"startup checks passed" transport=<socket|websocket> pool=<name> nic_attach=<name>
+"startup checks passed" transport=<socket|websocket> pool=<name> network_interface=<name>
 "starting TrueNAS infra provider" provider_id=truenas omni_endpoint=https://...
 ```
 
@@ -240,7 +240,7 @@ cpus: 8
 memory: 16384
 disk_size: 200
 pool: "fast-nvme"           # Different ZFS pool
-nic_attach: "vlan100"       # Different network
+network_interface: "vlan100"       # Different network
 boot_method: "BIOS"         # Instead of UEFI
 architecture: "arm64"       # Instead of amd64
 extensions:
@@ -268,7 +268,7 @@ These are included in every VM automatically — users do NOT need to add them:
 | `PROVIDER_NAME` | No | `TrueNAS` | Display name in Omni UI |
 | `PROVIDER_DESCRIPTION` | No | `TrueNAS SCALE infrastructure provider` | Description in Omni UI |
 | `DEFAULT_POOL` | No | `default` | ZFS pool for VM zvols and ISO cache |
-| `DEFAULT_NIC_ATTACH` | No | — | Network interface for VM NICs |
+| `DEFAULT_NETWORK_INTERFACE` | No | — | Network interface for VM NICs |
 | `DEFAULT_BOOT_METHOD` | No | `UEFI` | VM boot method: `UEFI` or `BIOS` |
 | `CONCURRENCY` | No | `4` | Max parallel provision/deprovision workers |
 | `LOG_LEVEL` | No | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
@@ -287,7 +287,7 @@ These are included in every VM automatically — users do NOT need to add them:
 |---|---|---|
 | `TrueNAS API unreachable` | Can't connect to TrueNAS | **Socket:** Check volume mount. **WebSocket:** Check `TRUENAS_HOST` is reachable and `TRUENAS_API_KEY` is valid. |
 | `pool "X" not found` | Pool name wrong or doesn't exist | Check pool name with `midclt call pool.query`. Names are case-sensitive. |
-| `NIC attach target "X" not found` | Interface doesn't exist | Check with `midclt call vm.device.nic_attach_choices`. May need to create a bridge first. |
+| `network interface target "X" not found` | Interface doesn't exist | Check with `midclt call vm.device.network_interface_choices`. May need to create a bridge first. |
 | `OMNI_ENDPOINT is required` | Missing env var | Set the `OMNI_ENDPOINT` environment variable. |
 
 ### VMs Created But Don't Join Omni

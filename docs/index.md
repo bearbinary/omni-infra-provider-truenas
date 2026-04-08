@@ -72,7 +72,7 @@ flowchart TD
           OMNI_ENDPOINT: "https://omni.example.com"
           OMNI_SERVICE_ACCOUNT_KEY: "<your-key>"
           DEFAULT_POOL: "default"
-          DEFAULT_NIC_ATTACH: "br0"
+          DEFAULT_NETWORK_INTERFACE: "br0"
     ```
 
 === "Kubernetes"

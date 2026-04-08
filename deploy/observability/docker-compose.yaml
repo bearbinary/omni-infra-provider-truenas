@@ -39,8 +39,10 @@ services:
   loki:
     image: grafana/loki:3.5.0
     command: ["-config.file=/etc/loki/loki.yaml"]
+    user: "0"
     volumes:
       - ./loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/var/loki
     ports:
       - "${LOKI_PORT:-3100}:3100"
 
@@ -60,3 +62,6 @@ services:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
       - ./dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  loki-data:

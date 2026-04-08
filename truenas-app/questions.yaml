@@ -78,10 +78,10 @@ questions:
       default: "default"
       required: true
 
-  - variable: defaultNicAttach
-    label: Default NIC Attach
+  - variable: defaultNetworkInterface
+    label: Default Network Interface
     description: >
-      Network interface for VM NICs — can be a bridge (br100),
+      Host network interface for VMs — can be a bridge (br100),
       VLAN interface (vlan666), or physical interface (enp5s0).
     group: VM Defaults
     schema:

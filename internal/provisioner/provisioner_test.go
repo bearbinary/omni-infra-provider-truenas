@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 )
 
 func TestProvisioner_ConcurrentTrackAndRead(t *testing.T) {
@@ -84,4 +86,70 @@ func TestProvisioner_TrackingConcurrency(t *testing.T) {
 	p.TrackImageID("ghi789")
 	assert.False(t, imageIDs["ghi789"])          // old snapshot
 	assert.True(t, p.ActiveImageIDs()["ghi789"]) // new snapshot
+}
+
+func TestProvisionSteps_ReturnsCorrectSteps(t *testing.T) {
+	t.Parallel()
+
+	p := NewProvisioner(nil, ProviderConfig{DefaultPool: "tank"})
+	steps := p.ProvisionSteps()
+
+	assert.Len(t, steps, 4, "should return exactly 4 provision steps")
+
+	expectedNames := []string{
+		"createSchematic",
+		"uploadISO",
+		"createVM",
+		"removeCDROM",
+	}
+
+	for i, step := range steps {
+		assert.Equal(t, expectedNames[i], step.Name(), "step %d should be %q", i, expectedNames[i])
+	}
+}
+
+func TestIsAlreadyExists(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		err    error
+		expect bool
+	}{
+		{"nil error", nil, false},
+		{"EEXIST code", &client.APIError{Code: client.ErrCodeExists, Message: "already exists"}, true},
+		{"message contains already exists", &client.APIError{Code: 14, Message: "dataset already exists"}, true},
+		{"message contains Already exists", &client.APIError{Code: 11, Message: "Already exists"}, true},
+		{"unrelated error", &client.APIError{Code: 99, Message: "something else"}, false},
+		{"non-API error", fmt.Errorf("connection refused"), false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.expect, isAlreadyExists(tc.err))
+		})
+	}
+}
+
+func TestIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		err    error
+		expect bool
+	}{
+		{"nil error", nil, false},
+		{"ENOENT code", &client.APIError{Code: client.ErrCodeNotFound, Message: "not found"}, true},
+		{"different code", &client.APIError{Code: 99, Message: "not found"}, false},
+		{"non-API error", fmt.Errorf("not found"), false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.expect, isNotFound(tc.err))
+		})
+	}
 }

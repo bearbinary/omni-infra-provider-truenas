@@ -62,17 +62,17 @@ func testPool(t *testing.T) string {
 	return pool
 }
 
-// testNICAttach returns the NIC attach target to use for tests.
-func testNICAttach(t *testing.T) string {
+// testNetworkInterface returns the NIC attach target to use for tests.
+func testNetworkInterface(t *testing.T) string {
 	t.Helper()
 
-	nic := os.Getenv("TRUENAS_TEST_NIC_ATTACH")
+	nic := os.Getenv("TRUENAS_TEST_NETWORK_INTERFACE")
 	if nic == "" {
 		nic = os.Getenv("TRUENAS_TEST_BRIDGE") // backwards compat
 	}
 
 	if nic == "" {
-		t.Skip("TRUENAS_TEST_NIC_ATTACH must be set (bridge, VLAN, or physical interface)")
+		t.Skip("TRUENAS_TEST_NETWORK_INTERFACE must be set (bridge, VLAN, or physical interface)")
 	}
 
 	return nic
@@ -115,21 +115,21 @@ func TestIntegration_PoolExists(t *testing.T) {
 	assert.False(t, exists, "nonexistent pool should not exist")
 }
 
-func TestIntegration_NICAttachValid(t *testing.T) {
+func TestIntegration_NetworkInterfaceValid(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
-	nic := testNICAttach(t)
+	nic := testNetworkInterface(t)
 
-	valid, err := c.NICAttachValid(ctx, nic)
+	valid, err := c.NetworkInterfaceValid(ctx, nic)
 	require.NoError(t, err)
 	assert.True(t, valid, "NIC attach %q should be valid", nic)
 
-	valid, err = c.NICAttachValid(ctx, "nonexistent-interface-xyz")
+	valid, err = c.NetworkInterfaceValid(ctx, "nonexistent-interface-xyz")
 	require.NoError(t, err)
 	assert.False(t, valid, "nonexistent interface should not be valid")
 
 	// Also verify choices returns something
-	choices, err := c.NICAttachChoices(ctx)
+	choices, err := c.NetworkInterfaceChoices(ctx)
 	require.NoError(t, err)
 	assert.NotEmpty(t, choices, "should have at least one NIC attach choice")
 	t.Logf("Available NIC attach targets: %v", choices)
@@ -314,7 +314,7 @@ func TestIntegration_DeviceAttachment(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
 	pool := testPool(t)
-	nicAttach := testNICAttach(t)
+	networkIface := testNetworkInterface(t)
 
 	vmName := "omniinttest" + uniqueName("dev")
 
@@ -353,7 +353,7 @@ func TestIntegration_DeviceAttachment(t *testing.T) {
 	})
 
 	// Attach NIC
-	nicDev, err := c.AddNIC(ctx, vm.ID, nicAttach)
+	nicDev, err := c.AddNIC(ctx, vm.ID, networkIface)
 	require.NoError(t, err, "should attach NIC")
 	assert.Equal(t, "NIC", nicDev.Attributes["dtype"])
 
@@ -573,7 +573,7 @@ func TestIntegration_FullProvisionDeprovision(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
 	pool := testPool(t)
-	nicAttach := testNICAttach(t)
+	networkIface := testNetworkInterface(t)
 
 	requestID := "e2e-" + uniqueName("prov")
 	vmName := "omni_" + strings.ReplaceAll(requestID, "-", "_")
@@ -608,7 +608,7 @@ func TestIntegration_FullProvisionDeprovision(t *testing.T) {
 	assert.Equal(t, "DISK", diskDev.Attributes["dtype"])
 
 	// 5. Attach NIC
-	nicDev, err := c.AddNIC(ctx, vm.ID, nicAttach)
+	nicDev, err := c.AddNIC(ctx, vm.ID, networkIface)
 	require.NoError(t, err, "should attach NIC")
 	assert.Equal(t, "NIC", nicDev.Attributes["dtype"])
 
@@ -655,7 +655,7 @@ func TestIntegration_FullProvisionDeprovision(t *testing.T) {
 func TestIntegration_DeviceDelete(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
-	nicAttach := testNICAttach(t)
+	networkIface := testNetworkInterface(t)
 
 	vmName := "omniinttest" + uniqueName("devdel")
 
@@ -673,7 +673,7 @@ func TestIntegration_DeviceDelete(t *testing.T) {
 	})
 
 	// Attach a NIC
-	dev, err := c.AddNIC(ctx, vm.ID, nicAttach)
+	dev, err := c.AddNIC(ctx, vm.ID, networkIface)
 	require.NoError(t, err)
 
 	// Delete the device

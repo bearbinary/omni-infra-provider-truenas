@@ -31,11 +31,11 @@ The configured `DEFAULT_POOL` or MachineClass `pool` doesn't exist.
 - Update `DEFAULT_POOL` or the MachineClass `pool` field to match an existing pool name
 - Pool names are case-sensitive
 
-### "NIC attach target not found"
+### "network interface target not found"
 
-The configured `DEFAULT_NIC_ATTACH` interface doesn't exist.
+The configured `DEFAULT_NETWORK_INTERFACE` interface doesn't exist.
 
-- List available choices: `midclt call vm.device.nic_attach_choices` (on TrueNAS)
+- List available choices: `midclt call vm.device.network_interface_choices` (on TrueNAS)
 - Common values: `br0`, `br100`, `vlan100`, `enp5s0`
 - Bridge interfaces must be created manually in TrueNAS UI under **Network > Interfaces** before use
 
@@ -70,7 +70,7 @@ Omni's UI shows the machine stuck in "Provisioning" state but no error message. 
 
 3. **Common causes:**
    - **Pool doesn't exist**: `pool "previewk8" not found` — you specified a dataset name instead of a pool name. Use the top-level pool (e.g., `default`, `tank`), not a dataset path.
-   - **NIC attach invalid**: the bridge or VLAN doesn't exist on TrueNAS.
+   - **network interface invalid**: the bridge or VLAN doesn't exist on TrueNAS.
    - **Pool full**: no space for the zvol.
    - **TrueNAS unreachable**: WebSocket connection dropped.
 
@@ -82,7 +82,7 @@ The VM boots but never appears in Omni.
 
 1. **Check VM console** in TrueNAS UI — is Talos booting? Look for kernel output.
 2. **Network connectivity** — the VM needs outbound internet access to reach Omni via SideroLink (WireGuard on port 443). Verify:
-   - The NIC attach target has internet access
+   - The network interface target has internet access
    - No firewall blocking outbound WireGuard traffic
    - DNS resolution works from the VM's network
 3. **Wrong boot method** — if the VM shows a BIOS/UEFI shell instead of booting, try switching `boot_method` between `UEFI` and `BIOS`

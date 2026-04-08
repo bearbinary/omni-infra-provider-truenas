@@ -413,9 +413,9 @@ func (c *Client) PoolExists(ctx context.Context, pool string) (bool, error) {
 	return len(pools) > 0, nil
 }
 
-// NICAttachChoices returns the valid NIC attach targets (bridges, VLANs, physical interfaces).
+// NetworkInterfaceChoices returns the valid NIC attach targets (bridges, VLANs, physical interfaces).
 // JSON-RPC method: vm.device.nic_attach_choices
-func (c *Client) NICAttachChoices(ctx context.Context) (map[string]string, error) {
+func (c *Client) NetworkInterfaceChoices(ctx context.Context) (map[string]string, error) {
 	var choices map[string]string
 
 	if err := c.call(ctx, "vm.device.nic_attach_choices", nil, &choices); err != nil {
@@ -425,15 +425,15 @@ func (c *Client) NICAttachChoices(ctx context.Context) (map[string]string, error
 	return choices, nil
 }
 
-// NICAttachValid checks if a NIC attach target exists on TrueNAS.
+// NetworkInterfaceValid checks if a NIC attach target exists on TrueNAS.
 // Valid targets include bridges, VLANs, and physical interfaces.
-func (c *Client) NICAttachValid(ctx context.Context, nicAttach string) (bool, error) {
-	choices, err := c.NICAttachChoices(ctx)
+func (c *Client) NetworkInterfaceValid(ctx context.Context, networkInterface string) (bool, error) {
+	choices, err := c.NetworkInterfaceChoices(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	_, exists := choices[nicAttach]
+	_, exists := choices[networkInterface]
 
 	return exists, nil
 }

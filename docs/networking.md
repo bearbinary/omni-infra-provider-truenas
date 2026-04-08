@@ -38,7 +38,7 @@ A bridge groups one or more physical NICs into a virtual switch. VMs connect to 
 3. Bridge Members: select your physical NIC (e.g., `enp5s0`)
 4. If using VLANs: the physical NIC should be a trunk port carrying your VLAN tags
 
-Set `DEFAULT_NIC_ATTACH=br0` (or `br100` for a VLAN-tagged bridge) on the provider.
+Set `DEFAULT_NETWORK_INTERFACE=br0` (or `br100` for a VLAN-tagged bridge) on the provider.
 
 ### Option B: VLAN Interface
 
@@ -49,7 +49,7 @@ If your physical NIC is a trunk port and you want VMs on a specific VLAN without
 3. Parent Interface: your physical NIC
 4. VLAN Tag: `100`
 
-Set `DEFAULT_NIC_ATTACH=vlan100` on the provider.
+Set `DEFAULT_NETWORK_INTERFACE=vlan100` on the provider.
 
 ### Option C: Physical NIC
 
@@ -99,7 +99,7 @@ The provider logs each VM's MAC address during provisioning:
 
 ```
 VM NIC MAC address — use this for DHCP reservation in your router
-  mac=00:a0:98:18:c4:af  vm_name=omni_cluster_workers_abc123  nic_attach=br100
+  mac=00:a0:98:18:c4:af  vm_name=omni_cluster_workers_abc123  network_interface=br100
 ```
 
 You can also find it in TrueNAS UI: **Virtualization > click VM > Devices > NIC**.
@@ -292,7 +292,7 @@ Do **not** use UniFi Auto-Scale Network for Kubernetes VMs. Create a dedicated V
 
 4. **Set the provider config**
    ```
-   DEFAULT_NIC_ATTACH=br100
+   DEFAULT_NETWORK_INTERFACE=br100
    ```
 
 #### Why Not Auto-Scale Network?
@@ -377,10 +377,10 @@ Each cluster's MachineClass targets a different bridge:
 
 ```yaml
 # Production
-nic_attach: "br100"
+network_interface: "br100"
 
 # Staging
-nic_attach: "br101"
+network_interface: "br101"
 ```
 
 VMs on different VLANs can't communicate at Layer 2 — full isolation without firewall rules.

@@ -55,13 +55,13 @@ func TestContract_VMQuery(t *testing.T) {
 	// May be empty if no VMs exist — that's fine
 }
 
-func TestContract_VMDeviceNICAttachChoices(t *testing.T) {
+func TestContract_VMDeviceNetworkInterfaceChoices(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
 
-	choices, err := c.NICAttachChoices(ctx)
+	choices, err := c.NetworkInterfaceChoices(ctx)
 	require.NoError(t, err, "vm.device.nic_attach_choices should exist and be callable")
-	assert.NotEmpty(t, choices, "should have at least one NIC attach choice")
+	assert.NotEmpty(t, choices, "should have at least one network interface choice")
 }
 
 func TestContract_FilesystemStat(t *testing.T) {

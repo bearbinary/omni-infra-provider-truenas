@@ -210,7 +210,7 @@ func UserFriendlyError(err error) string {
 		return "TrueNAS permission denied — check API key permissions"
 	case ErrCodeInvalid:
 		if strings.Contains(apiErr.Message, "nic_attach") || strings.Contains(apiErr.Message, "NIC") {
-			return fmt.Sprintf("NIC attach target not found on TrueNAS: %s", apiErr.Message)
+			return fmt.Sprintf("network interface not found on TrueNAS: %s", apiErr.Message)
 		}
 
 		if strings.Contains(apiErr.Message, "name") {

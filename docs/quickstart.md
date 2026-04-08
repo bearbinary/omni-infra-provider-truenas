@@ -37,7 +37,7 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
           OMNI_ENDPOINT: "https://omni.example.com"
           OMNI_SERVICE_ACCOUNT_KEY: "<your-key>"
           DEFAULT_POOL: "default"
-          DEFAULT_NIC_ATTACH: "br0"
+          DEFAULT_NETWORK_INTERFACE: "br0"
     ```
 
 === "Kubernetes"
@@ -82,7 +82,7 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 | Variable | Default | Description |
 |---|---|---|
 | `DEFAULT_POOL` | `default` | ZFS pool for VM zvols and ISO cache |
-| `DEFAULT_NIC_ATTACH` | — | Network interface for VM NICs |
+| `DEFAULT_NETWORK_INTERFACE` | — | Network interface for VM NICs |
 | `DEFAULT_BOOT_METHOD` | `UEFI` | VM boot method (`UEFI` or `BIOS`) |
 | `CONCURRENCY` | `4` | Max parallel provision/deprovision workers |
 | `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
@@ -97,7 +97,7 @@ These fields go in the MachineClass `configpatch`:
 | `memory` | int | Yes | `4096` | Memory in MiB (min: 1024) |
 | `disk_size` | int | Yes | `40` | Root disk in GiB (min: 10) |
 | `pool` | string | No | `DEFAULT_POOL` | ZFS pool for zvols and ISOs |
-| `nic_attach` | string | No | `DEFAULT_NIC_ATTACH` | Bridge, VLAN, or physical interface |
+| `network_interface` | string | No | `DEFAULT_NETWORK_INTERFACE` | Bridge, VLAN, or physical interface |
 | `boot_method` | string | No | `UEFI` | `UEFI` or `BIOS` |
 | `architecture` | string | No | `amd64` | `amd64` or `arm64` |
 | `extensions` | list | No | — | Additional Talos extensions |

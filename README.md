@@ -131,7 +131,7 @@ services:
       OMNI_ENDPOINT: "https://omni.example.com"
       OMNI_SERVICE_ACCOUNT_KEY: "<your-key>"
       DEFAULT_POOL: "default"
-      DEFAULT_NIC_ATTACH: "br0"
+      DEFAULT_NETWORK_INTERFACE: "br0"
 ```
 
 ### Option 2: Kubernetes
@@ -182,7 +182,7 @@ All configuration is via environment variables. A `.env` file is loaded automati
 | Variable | Default | Description |
 |---|---|---|
 | `DEFAULT_POOL` | `default` | ZFS pool for VM zvols and ISO cache |
-| `DEFAULT_NIC_ATTACH` | — | Network interface for VM NICs (bridge, VLAN, or physical) |
+| `DEFAULT_NETWORK_INTERFACE` | — | Network interface for VM NICs (bridge, VLAN, or physical) |
 | `DEFAULT_BOOT_METHOD` | `UEFI` | VM boot method (`UEFI` or `BIOS`) |
 | `CONCURRENCY` | `4` | Max parallel provision/deprovision workers |
 | `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
@@ -258,7 +258,7 @@ spec:
       memory: 16384
       disk_size: 200
       pool: "fast-nvme"
-      nic_attach: "vlan100"
+      network_interface: "vlan100"
 EOF
 ```
 
@@ -315,7 +315,7 @@ To move a VM to a different pool, update the `pool` field in its MachineClass an
 3. Configure CPUs, Memory, Disk Size, and optional overrides
 4. Set the desired replica count and create the cluster
 
-Fields left blank use the provider's defaults (`DEFAULT_POOL`, `DEFAULT_NIC_ATTACH`, etc.).
+Fields left blank use the provider's defaults (`DEFAULT_POOL`, `DEFAULT_NETWORK_INTERFACE`, etc.).
 
 ### MachineClass Config Reference
 
@@ -327,7 +327,7 @@ These fields go in the MachineClass `configpatch` (CLI) or the provider config f
 | `memory` | int | Yes | `4096` | Memory in MiB (min: 1024) |
 | `disk_size` | int | Yes | `40` | Root disk in GiB (min: 10) |
 | `pool` | string | No | `DEFAULT_POOL` | ZFS pool for zvols and ISOs |
-| `nic_attach` | string | No | `DEFAULT_NIC_ATTACH` | Bridge, VLAN, or physical interface |
+| `network_interface` | string | No | `DEFAULT_NETWORK_INTERFACE` | Bridge, VLAN, or physical interface |
 | `boot_method` | string | No | `UEFI` | `UEFI` or `BIOS` |
 | `architecture` | string | No | `amd64` | `amd64` or `arm64` |
 | `extensions` | list | No | — | Additional Talos extensions (merged with defaults) |

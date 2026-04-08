@@ -30,14 +30,33 @@
       "title": "ZFS Pool",
       "maxLength": 253,
       "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-      "description": "ZFS pool name (defaults to provider DEFAULT_POOL)"
+      "description": "ZFS pool name for VM storage"
     },
-    "nic_attach": {
+    "dataset_prefix": {
       "type": "string",
-      "title": "NIC Attach",
+      "title": "Dataset Prefix",
+      "maxLength": 253,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9._-]$",
+      "description": "Optional ZFS dataset path under the pool. Zvols are created at <pool>/<prefix>/omni-vms/<id>. Example: 'previewk8/k8' places zvols at default/previewk8/k8/omni-vms/..."
+    },
+    "network_interface": {
+      "type": "string",
+      "title": "Network Interface",
       "maxLength": 253,
       "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-      "description": "Network interface for VM NIC — can be a bridge (br100), VLAN (vlan666), or physical interface (enp5s0). Defaults to provider DEFAULT_NIC_ATTACH."
+      "description": "Host network interface for the VM — can be a bridge (br100), VLAN (vlan666), or physical interface (enp5s0). Defaults to provider DEFAULT_NETWORK_INTERFACE."
+    },
+    "encrypted": {
+      "type": "boolean",
+      "title": "Encrypted Disk",
+      "default": false,
+      "description": "Enable ZFS native encryption (AES-256-GCM) on the VM disk. Requires ENCRYPTION_PASSPHRASE env var on the provider."
+    },
+    "advertised_subnets": {
+      "type": "string",
+      "title": "Advertised Subnets",
+      "maxLength": 1024,
+      "description": "Pin etcd/kubelet to specific subnets when multiple NICs are present. Comma-separated CIDRs (e.g., 192.168.100.0/24). Required for stable multi-NIC clusters."
     },
     "boot_method": {
       "type": "string",
@@ -64,21 +83,15 @@
       },
       "description": "Additional Talos system extensions (e.g., siderolabs/iscsi-tools). qemu-guest-agent, nfs-utils, and util-linux-tools are always included."
     },
-    "encrypted": {
-      "type": "boolean",
-      "title": "Encrypted Disk",
-      "default": false,
-      "description": "Enable ZFS native encryption (AES-256-GCM) on the VM disk. Requires ENCRYPTION_PASSPHRASE env var on the provider."
-    },
     "additional_nics": {
       "type": "array",
       "title": "Additional NICs",
       "maxItems": 16,
-      "description": "Extra network interfaces for network segmentation (e.g., dedicated storage NIC). Primary NIC is always attached via nic_attach.",
+      "description": "Extra network interfaces for network segmentation. Primary NIC is always attached via network_interface.",
       "items": {
         "type": "object",
         "properties": {
-          "nic_attach": {
+          "network_interface": {
             "type": "string",
             "maxLength": 253,
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
@@ -97,19 +110,17 @@
             "description": "Optional: VLAN tag traffic at the VM level (trunk port)"
           }
         },
-        "required": ["nic_attach"]
+        "required": ["network_interface"]
       }
-    },
-    "advertised_subnets": {
-      "type": "string",
-      "title": "Advertised Subnets",
-      "maxLength": 1024,
-      "description": "Pin etcd/kubelet to specific subnets when multiple NICs are present. Comma-separated CIDRs (e.g., 192.168.100.0/24). Required for stable multi-NIC clusters."
     }
   },
   "required": [
     "cpus",
     "memory",
-    "disk_size"
+    "disk_size",
+    "pool",
+    "network_interface",
+    "boot_method",
+    "architecture"
   ]
 }

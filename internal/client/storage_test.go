@@ -101,7 +101,7 @@ func TestPoolExists_False(t *testing.T) {
 	assert.False(t, exists)
 }
 
-func TestNICAttachValid_True(t *testing.T) {
+func TestNetworkInterfaceValid_True(t *testing.T) {
 	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
 		assert.Equal(t, "vm.device.nic_attach_choices", method)
 
@@ -112,19 +112,19 @@ func TestNICAttachValid_True(t *testing.T) {
 		}, nil
 	})
 
-	valid, err := c.NICAttachValid(context.Background(), "vlan666")
+	valid, err := c.NetworkInterfaceValid(context.Background(), "vlan666")
 	require.NoError(t, err)
 	assert.True(t, valid)
 }
 
-func TestNICAttachValid_False(t *testing.T) {
+func TestNetworkInterfaceValid_False(t *testing.T) {
 	c := newMockClient(t, func(_ string, _ json.RawMessage) (any, *jsonRPCError) {
 		return map[string]string{
 			"br100": "br100",
 		}, nil
 	})
 
-	valid, err := c.NICAttachValid(context.Background(), "vlan999")
+	valid, err := c.NetworkInterfaceValid(context.Background(), "vlan999")
 	require.NoError(t, err)
 	assert.False(t, valid)
 }

@@ -19,7 +19,7 @@ func TestAddNICWithConfig_Default(t *testing.T) {
 		return Device{ID: 1, VM: 42, Attributes: map[string]any{"dtype": "NIC"}}, nil
 	})
 
-	cfg := NICConfig{NICAttach: "br200"}
+	cfg := NICConfig{NetworkInterface: "br200"}
 	_, err := c.AddNICWithConfig(context.Background(), 42, cfg, 1004)
 	require.NoError(t, err)
 
@@ -38,7 +38,7 @@ func TestAddNICWithConfig_E1000(t *testing.T) {
 		return Device{ID: 2, VM: 42, Attributes: map[string]any{"dtype": "NIC"}}, nil
 	})
 
-	cfg := NICConfig{NICAttach: "enp6s0", Type: "E1000"}
+	cfg := NICConfig{NetworkInterface: "enp6s0", Type: "E1000"}
 	_, err := c.AddNICWithConfig(context.Background(), 42, cfg, 1005)
 	require.NoError(t, err)
 
@@ -55,7 +55,7 @@ func TestAddNICWithConfig_TrustGuestRxFilters(t *testing.T) {
 	})
 
 	cfg := NICConfig{
-		NICAttach:           "enp5s0",
+		NetworkInterface:    "enp5s0",
 		TrustGuestRxFilters: true,
 	}
 	_, err := c.AddNICWithConfig(context.Background(), 42, cfg, 1004)
@@ -89,7 +89,7 @@ func TestAddNICWithConfig_VLANTag(t *testing.T) {
 	})
 
 	cfg := NICConfig{
-		NICAttach:           "enp5s0",
+		NetworkInterface:    "enp5s0",
 		VLANTag:             100,
 		TrustGuestRxFilters: true,
 	}
@@ -109,7 +109,7 @@ func TestAddNICWithConfig_NoVLANTag(t *testing.T) {
 		return Device{ID: 5, VM: 42, Attributes: map[string]any{"dtype": "NIC"}}, nil
 	})
 
-	cfg := NICConfig{NICAttach: "br200"}
+	cfg := NICConfig{NetworkInterface: "br200"}
 	_, err := c.AddNICWithConfig(context.Background(), 42, cfg, 1004)
 	require.NoError(t, err)
 
@@ -117,9 +117,9 @@ func TestAddNICWithConfig_NoVLANTag(t *testing.T) {
 }
 
 func TestNICConfig_ZeroValueDefaults(t *testing.T) {
-	cfg := NICConfig{NICAttach: "br0"}
+	cfg := NICConfig{NetworkInterface: "br0"}
 
-	assert.Equal(t, "br0", cfg.NICAttach)
+	assert.Equal(t, "br0", cfg.NetworkInterface)
 	assert.Empty(t, cfg.Type, "type should default to empty (VIRTIO applied in AddNICWithConfig)")
 	assert.Equal(t, 0, cfg.VLANTag, "vlan_id should default to 0 (not set)")
 	assert.False(t, cfg.TrustGuestRxFilters)

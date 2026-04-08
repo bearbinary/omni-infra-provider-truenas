@@ -24,7 +24,7 @@ data:
 
   # VM provisioning defaults
   DEFAULT_POOL: "default"
-  DEFAULT_NIC_ATTACH: ""
+  DEFAULT_NETWORK_INTERFACE: ""
   DEFAULT_BOOT_METHOD: "UEFI"
   CONCURRENCY: "4"
   LOG_LEVEL: "info"

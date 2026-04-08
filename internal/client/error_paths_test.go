@@ -44,7 +44,7 @@ func TestAddNIC_InvalidAttach(t *testing.T) {
 	assert.Error(t, err)
 
 	msg := UserFriendlyError(err)
-	assert.Contains(t, msg, "NIC attach target not found")
+	assert.Contains(t, msg, "network interface not found")
 }
 
 func TestGetVM_Unauthorized(t *testing.T) {

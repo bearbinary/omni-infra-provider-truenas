@@ -8,6 +8,7 @@ import (
 )
 
 func TestValidateSafeName_ValidNames(t *testing.T) {
+	t.Parallel()
 	validNames := []string{
 		"default",
 		"tank",
@@ -29,11 +30,13 @@ func TestValidateSafeName_ValidNames(t *testing.T) {
 }
 
 func TestValidateSafeName_Empty(t *testing.T) {
+	t.Parallel()
 	// Empty is allowed — validation for required fields is done elsewhere
 	assert.NoError(t, validateSafeName("test", ""))
 }
 
 func TestValidateSafeName_PathTraversal(t *testing.T) {
+	t.Parallel()
 	malicious := []string{
 		"../etc",
 		"../../passwd",
@@ -52,6 +55,7 @@ func TestValidateSafeName_PathTraversal(t *testing.T) {
 }
 
 func TestValidateSafeName_SpecialChars(t *testing.T) {
+	t.Parallel()
 	malicious := []string{
 		"pool name",       // spaces
 		"pool;rm -rf /",   // command injection
@@ -74,6 +78,7 @@ func TestValidateSafeName_SpecialChars(t *testing.T) {
 }
 
 func TestValidateSafeName_StartsWithSpecialChar(t *testing.T) {
+	t.Parallel()
 	// Must start with alphanumeric
 	invalid := []string{
 		"-leading-hyphen",
@@ -91,9 +96,10 @@ func TestValidateSafeName_StartsWithSpecialChar(t *testing.T) {
 }
 
 func TestData_Validate_PoolInjection(t *testing.T) {
+	t.Parallel()
 	d := &Data{
-		Pool:      "../etc",
-		NICAttach: "br100",
+		Pool:             "../etc",
+		NetworkInterface: "br100",
 	}
 
 	err := d.Validate()
@@ -102,9 +108,10 @@ func TestData_Validate_PoolInjection(t *testing.T) {
 }
 
 func TestData_Validate_NICInjection(t *testing.T) {
+	t.Parallel()
 	d := &Data{
-		Pool:      "tank",
-		NICAttach: "br100; rm -rf /",
+		Pool:             "tank",
+		NetworkInterface: "br100; rm -rf /",
 	}
 
 	err := d.Validate()
@@ -113,11 +120,12 @@ func TestData_Validate_NICInjection(t *testing.T) {
 }
 
 func TestData_Validate_AdditionalNICInjection(t *testing.T) {
+	t.Parallel()
 	d := &Data{
-		Pool:      "tank",
-		NICAttach: "br100",
+		Pool:             "tank",
+		NetworkInterface: "br100",
 		AdditionalNICs: []AdditionalNIC{
-			{NICAttach: "../../etc/shadow"},
+			{NetworkInterface: "../../etc/shadow"},
 		},
 	}
 
@@ -127,18 +135,21 @@ func TestData_Validate_AdditionalNICInjection(t *testing.T) {
 }
 
 func TestHashRequestID_Deterministic(t *testing.T) {
+	t.Parallel()
 	h1 := hashRequestID("test-request-123")
 	h2 := hashRequestID("test-request-123")
 	assert.Equal(t, h1, h2)
 }
 
 func TestHashRequestID_DifferentInputsDifferentOutput(t *testing.T) {
+	t.Parallel()
 	h1 := hashRequestID("request-a")
 	h2 := hashRequestID("request-b")
 	assert.NotEqual(t, h1, h2)
 }
 
 func TestHashRequestID_DoesNotContainInput(t *testing.T) {
+	t.Parallel()
 	input := "talos-test-workers-abc123"
 	h := hashRequestID(input)
 	assert.NotContains(t, h, input)

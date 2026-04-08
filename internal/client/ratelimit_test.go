@@ -13,6 +13,8 @@ import (
 )
 
 func TestRateLimit_ConcurrentCalls(t *testing.T) {
+	t.Parallel()
+
 	const maxConcurrent = 3
 
 	var (
@@ -32,7 +34,7 @@ func TestRateLimit_ConcurrentCalls(t *testing.T) {
 				}
 			}
 
-			time.Sleep(50 * time.Millisecond) // Simulate API work
+			time.Sleep(20 * time.Millisecond) // Simulate API work
 			active.Add(-1)
 
 			return map[string]any{"ok": true}, nil
@@ -60,9 +62,15 @@ func TestRateLimit_ConcurrentCalls(t *testing.T) {
 }
 
 func TestRateLimit_ContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	// Channel-based synchronization instead of time.Sleep
+	acquired := make(chan struct{})
+
 	// Create a client with only 1 slot
 	c := newClient(&MockTransport{
 		Handler: func(method string, _ json.RawMessage) (any, error) {
+			close(acquired)                    // Signal that we've acquired the slot
 			time.Sleep(500 * time.Millisecond) // Hold the slot
 			return nil, nil
 		},
@@ -73,7 +81,8 @@ func TestRateLimit_ContextCancellation(t *testing.T) {
 		c.call(context.Background(), "test.hold", nil, nil) //nolint:errcheck
 	}()
 
-	time.Sleep(10 * time.Millisecond) // Let it acquire
+	// Wait until the first call has acquired the semaphore slot
+	<-acquired
 
 	// Try another call with a short timeout — should fail with context error
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

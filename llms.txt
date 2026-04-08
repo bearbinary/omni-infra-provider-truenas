@@ -33,7 +33,7 @@ All via environment variables:
 - TRUENAS_HOST: TrueNAS hostname (WebSocket only)
 - TRUENAS_API_KEY: TrueNAS API key (WebSocket only)
 - DEFAULT_POOL: ZFS pool for zvols (default: "default")
-- DEFAULT_NIC_ATTACH: Network interface for VM NICs
+- DEFAULT_NETWORK_INTERFACE: Network interface for VM NICs
 - DEFAULT_BOOT_METHOD: UEFI or BIOS (default: UEFI)
 - CONCURRENCY: Max parallel workers (default: 4)
 
@@ -43,7 +43,7 @@ All via environment variables:
 - memory (int, required): Memory in MiB, min 1024
 - disk_size (int, required): Root disk in GiB, min 10
 - pool (string): ZFS pool override
-- nic_attach (string): Network interface override
+- network_interface (string): Network interface override
 - boot_method (string): UEFI or BIOS
 - architecture (string): amd64 or arm64
 - extensions (list): Additional Talos system extensions
