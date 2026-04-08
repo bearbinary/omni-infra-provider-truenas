@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [v0.11.1] — Multi-NIC, Graceful Shutdown, Observability & Hardening
+## [v0.12.0] — Multi-NIC, Graceful Shutdown, Observability & Hardening
 
 ### Features
 - Add multiple NIC support with per-NIC VLAN tagging via `additional_nics` in MachineClass config
@@ -21,14 +21,18 @@ All notable changes to this project are documented here.
 
 ### Security & Hardening
 - Pin Docker base images to SHA256 digest to prevent supply chain tag mutation
+- Switch Docker runtime from Alpine to distroless/static-debian12 (no shell, smaller attack surface)
+- Inject version into Docker image via build arg (was always "dev")
+- Add OCI LABEL metadata (title, vendor, source, license)
 - Add `SecretString` type that redacts API keys from logs and fmt output
 - Default `TRUENAS_INSECURE_SKIP_VERIFY` to `false` (was `true`)
 - Add security comments to TrueNAS app template and Kubernetes secret manifest
 - Replace placeholder API key in `.env.test.example` with non-secret value
-- Add betterleaks secret scanning: pre-push git hook, CI job, baseline config
+- Add betterleaks secret scanning: pre-push git hook, CI job with pinned version + checksum
 
 ### Quality
-- Fix all 21 golangci-lint v2 issues (errcheck, gocritic, gofmt, staticcheck, unused)
+- Replace `go vet + gofmt` in CI with golangci-lint v2.11.4 via official action
+- Fix all golangci-lint v2 issues (errcheck, gocritic, gofmt, staticcheck, unused)
 - Update `.golangci.yml` for v2 (`gofmt` moved to formatters, `gosimple` merged into `staticcheck`)
 - Tune log levels (routine operations Info→Debug, NVRAM failures Warn→Error)
 - Add `make scan` and `make setup-hooks` targets
@@ -40,6 +44,16 @@ All notable changes to this project are documented here.
 - Add 7 GitHub topics (homelab, self-hosted, bare-metal, etc.)
 - Backfill CHANGELOG.md with all releases from v0.1.0 through v0.10.0
 - Restructure release workflow for immutable releases (single atomic upload, CHANGELOG.md-sourced notes)
+
+## [v0.11.1] — Pool Validation, MAC Address Logging, Networking Guide
+
+- Add `validatePool()` with clear errors for missing pools and dataset-path-as-pool mistakes
+- Log VM NIC MAC address after creation for DHCP reservation setup
+- Add comprehensive networking guide (`docs/networking.md`): bridge setup, DHCP reservations (UniFi, pfSense, OPNsense, Mikrotik), MetalLB, VIP, VLAN isolation
+- Add CNI selection guide (`docs/cni.md`): Flannel, Cilium, Calico with Talos-specific setup
+- Add integration test CI feasibility analysis (`docs/integration-test-ci.md`)
+- Update troubleshooting guide with "stuck on Provisioning" debug steps
+- 196 tests
 
 ## [v0.10.0] — ZFS Encryption, Zvol Tagging & Supply Chain Hardening
 
@@ -151,6 +165,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.12.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.12.0
 [v0.11.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.11.1
 [v0.10.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.10.0
 [v0.9.4]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.9.4
