@@ -203,40 +203,7 @@ func (c *Client) DatasetExists(ctx context.Context, path string) (bool, error) {
 	return len(datasets) > 0, nil
 }
 
-// ListManagedRequestIDs returns the set of request IDs for all zvols tagged with org.omni:managed=true.
-// This is used by cleanup to determine which VMs have backing storage (and are therefore not orphans).
-func (c *Client) ListManagedRequestIDs(ctx context.Context) (map[string]bool, error) {
-	// Query all datasets that have the org.omni:managed user property
-	var datasets []struct {
-		ID             string `json:"id"`
-		UserProperties map[string]struct {
-			Value string `json:"value"`
-		} `json:"user_properties"`
-	}
 
-	if err := c.call(ctx, "pool.dataset.query", []any{
-		[]any{},
-		map[string]any{"extra": map[string]any{"retrieve_user_props": true}},
-	}, &datasets); err != nil {
-		return nil, fmt.Errorf("pool.dataset.query failed: %w", err)
-	}
-
-	result := make(map[string]bool)
-
-	for _, ds := range datasets {
-		managed, ok := ds.UserProperties["org.omni:managed"]
-		if !ok || managed.Value != "true" {
-			continue
-		}
-
-		reqID, ok := ds.UserProperties["org.omni:request-id"]
-		if ok && reqID.Value != "" {
-			result[reqID.Value] = true
-		}
-	}
-
-	return result, nil
-}
 
 // ManagedZvol represents a zvol tagged with org.omni:managed=true.
 type ManagedZvol struct {

@@ -81,8 +81,16 @@ func (cl *Cleaner) runOnce(ctx context.Context) {
 	cl.logger.Debug("cleanup cycle starting")
 
 	cl.cleanupISOs(ctx)
-	cl.cleanupOrphanVMs(ctx)
-	cl.cleanupOrphanZvols(ctx)
+
+	// Query managed zvols once for both orphan VM and orphan zvol cleanup.
+	// This avoids duplicate pool.dataset.query calls with retrieve_user_props.
+	managedZvols, err := cl.client.ListManagedZvols(ctx)
+	if err != nil {
+		cl.logger.Warn("failed to list managed zvols — skipping orphan cleanup", zap.Error(err))
+	} else {
+		cl.cleanupOrphanVMs(ctx, managedZvols)
+		cl.cleanupOrphanZvols(ctx, managedZvols)
+	}
 
 	cl.logger.Debug("cleanup cycle complete", zap.Duration("elapsed", time.Since(start)))
 }
@@ -167,7 +175,7 @@ func (cl *Cleaner) cleanupISOs(ctx context.Context) {
 // A VM is considered an orphan only when its zvol has been deleted (by Deprovision) but
 // the VM itself was not — indicating a partial cleanup. This avoids any dependency on
 // in-memory state, which is lost on restart.
-func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
+func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context, managedZvols []client.ManagedZvol) {
 	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanVMs")
 	defer span.End()
 
@@ -178,13 +186,10 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 		return
 	}
 
-	// Build a set of request IDs that have a managed zvol on TrueNAS.
-	// A VM is only orphaned if its zvol has been deleted (by Deprovision).
-	managedRequestIDs, err := cl.client.ListManagedRequestIDs(ctx)
-	if err != nil {
-		cl.logger.Warn("failed to list managed zvols — skipping orphan VM cleanup", zap.Error(err))
-
-		return
+	// Build a set of request IDs from managed zvols for fast lookup
+	managedRequestIDs := make(map[string]bool, len(managedZvols))
+	for _, z := range managedZvols {
+		managedRequestIDs[z.RequestID] = true
 	}
 
 	for _, vm := range vms {
@@ -226,17 +231,9 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 // across all dataset paths (handles dataset_prefix variations).
 // A zvol is considered an orphan only when its VM has been deleted (by Deprovision) but
 // the zvol itself was not — indicating a partial cleanup.
-func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
+func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context, managedZvols []client.ManagedZvol) {
 	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanZvols")
 	defer span.End()
-
-	// Query all managed zvols (regardless of path) via user properties
-	managedZvols, err := cl.client.ListManagedZvols(ctx)
-	if err != nil {
-		cl.logger.Warn("failed to list managed zvols for orphan cleanup", zap.Error(err))
-
-		return
-	}
 
 	if len(managedZvols) == 0 {
 		return
