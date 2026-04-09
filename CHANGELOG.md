@@ -25,6 +25,7 @@ All notable changes to this project are documented here.
 - Add unknown field detection in MachineClass config — warns when unrecognized fields are present (typos, removed fields)
 - Add `dataset_prefix` support for organizing VM storage under nested ZFS datasets
 - Add `GetDatasetUserProperty()` client method for reading ZFS user properties
+- Add pre-upgrade ZFS snapshot and CDROM swap logic for Talos version upgrades — **note: currently non-functional** because the Omni SDK does not re-run provision steps after a machine reaches `PROVISIONED` stage ([siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646))
 
 ### Observability
 - Add 17 new OTEL metrics: per-step provision/deprovision durations, error categorization, ISO cache hits/misses, cleanup counters, WebSocket reconnects, rate limit queue depth, graceful shutdown outcomes
@@ -61,6 +62,9 @@ All notable changes to this project are documented here.
 - Add E2E CI workflow (`.github/workflows/e2e.yaml`)
 - Tune log levels (routine operations Info→Debug, NVRAM failures Warn→Error)
 - Add `make scan` and `make setup-hooks` targets
+
+### Upstream Discussions
+- Opened discussion on pressure-based autoscaling patterns with infrastructure providers ([siderolabs/omni#2647](https://github.com/siderolabs/omni/discussions/2647))
 
 ### Documentation & SEO
 - Add MkDocs Material docs site with GitHub Pages deployment
