@@ -2,6 +2,8 @@
 package provisioner
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -40,6 +42,29 @@ func NewProvisioner(c *client.Client, cfg ProviderConfig) *Provisioner {
 		activeImageIDs: make(map[string]bool),
 		activeVMNames:  make(map[string]bool),
 	}
+}
+
+// SeedActiveVMs queries TrueNAS for all omni_ prefixed VMs and pre-populates
+// the active VM tracking map. This must be called before the cleanup loop starts
+// to prevent the cleanup from treating all VMs as orphans after a provider restart.
+// Without this, PROVISIONED machines (which don't re-run provision steps) would
+// never be tracked and would be deleted on the first cleanup cycle.
+func (p *Provisioner) SeedActiveVMs(ctx context.Context) error {
+	vms, err := p.client.ListVMs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list VMs for seeding: %w", err)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, vm := range vms {
+		if len(vm.Name) > 5 && vm.Name[:5] == "omni_" {
+			p.activeVMNames[vm.Name] = true
+		}
+	}
+
+	return nil
 }
 
 // TrackImageID records an image ID as actively in use.

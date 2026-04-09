@@ -170,6 +170,18 @@ func run() error {
 		return err
 	}
 
+	// Pre-seed active VM tracking from TrueNAS so cleanup doesn't treat
+	// existing VMs as orphans after a provider restart. PROVISIONED machines
+	// don't re-run provision steps, so TrackVMName is never called for them.
+	if err := prov.SeedActiveVMs(ctx); err != nil {
+		logger.Warn("failed to seed active VMs — orphan cleanup will be conservative", zap.Error(err))
+	} else {
+		activeCount := len(prov.ActiveVMNames())
+		if activeCount > 0 {
+			logger.Info("seeded active VM tracking from TrueNAS", zap.Int("vms", activeCount))
+		}
+	}
+
 	// Start background cleanup for stale ISOs and orphan VMs/zvols
 	cleaner := cleanup.New(tnClient, cleanup.Config{
 		Pool: defaultPool,
