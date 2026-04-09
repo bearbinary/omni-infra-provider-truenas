@@ -5,14 +5,14 @@ Tracked improvements for future releases.
 ## Completed
 
 - **ISO Cleanup** — Periodic cleanup of stale ISOs (v0.4.0)
-- **Orphan Cleanup** — Removes orphan VMs/zvols not tracked by Omni (v0.4.0)
+- **Orphan Cleanup** — Removes orphan VMs/zvols not tracked by Omni (v0.4.0, rewritten in v0.12.0 to use TrueNAS state queries instead of in-memory tracking)
 - **Error Reporting** — User-friendly error messages for Omni UI (v0.4.0)
 - **Rate Limiting** — Semaphore-based API call limiter (v0.5.0)
 - **Resource Pre-checks** — Pool free space check before zvol creation (v0.5.0)
 - **Disk Resize** — Online zvol grow when MachineClass disk_size increases (v0.6.0)
 - **Backup/Snapshot Support** — Auto-snapshot before Talos upgrades with retention policy (v0.6.0)
 - **Comprehensive QA** — 147 tests: e2e, contract, chaos, stress, telemetry integration (v0.7.0)
-- **Talos Upgrade Orchestration** — Version detection, pre-upgrade snapshot, CDROM swap to new ISO (v0.8.0)
+- **Talos Upgrade Orchestration** — Version detection, pre-upgrade snapshot, CDROM swap to new ISO (v0.8.0, **non-functional** — SDK doesn't re-run steps after PROVISIONED, see [siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646))
 - **NVRAM Firmware Recovery** — Auto-detect ERROR state VMs, reset NVRAM, restart (v0.8.0)
 - **Host Health Monitoring** — OTEL gauges for CPU, memory, pool space/health, disks, running VMs (v0.9.0)
 - **Automatic Pool Selection** — Select healthy pool with most free space when not explicit (v0.9.0)
@@ -30,20 +30,26 @@ Tracked improvements for future releases.
 - **Networking Guide** — Complete docs for UniFi, pfSense, OPNsense, Mikrotik, MetalLB, VIP, DHCP reservations ([docs/networking.md](networking.md)) (v0.11.0)
 - **Control Plane VIP** — Documented as Omni config patch in [networking guide](networking.md) (v0.11.0)
 - **Static IP / DHCP Reservations** — Documented router-side DHCP reservation workflow for all platforms (v0.11.0)
-- **Multiple NIC Support + VLAN Tagging** — Additional NICs with per-NIC VLAN tagging via `additional_nics` in MachineClass config (v0.11.0)
+- **Multiple NIC Support** — Additional NICs via `additional_nics` in MachineClass config (v0.11.0, VLAN attr removed in v0.12.0 — TrueNAS 25.10 rejects VM-level tagging)
 - **Memory Overcommit Pre-Check** — Blocks VMs requesting >80% of host RAM (v0.12.0)
-- **Machine UUID / Infra ID** — Sets `MachineUUID` and `MachineInfraID` for Omni correlation (v0.12.0)
+- **Machine UUID / Infra ID** — Provider-generated SMBIOS UUID v7 passed to `vm.create` for Omni correlation. Fixes ghost "Provisioned/Waiting" entries (v0.12.0)
 - **TrueNAS Version Check** — Fails at startup on SCALE < 25.04 with clear error (v0.12.0)
 - **Graceful VM Shutdown** — ACPI signal with configurable timeout before force-stop (v0.12.0)
-- **Advertised Subnets Config Patch** — Generates Talos config patches for multi-NIC etcd/kubelet pinning (v0.12.0)
+- **Advertised Subnets Config Patch** — Generates Talos config patches for multi-NIC etcd/kubelet pinning. Auto-detects primary NIC subnet when not explicitly set (v0.12.0)
 - **HTTP Health Endpoint** — `/healthz` and `/readyz` on port 8081 for proper K8s probes (v0.12.0)
 - **Dataset Prefix** — Custom ZFS dataset path for cluster isolation (`dataset_prefix` in MachineClass) (v0.12.0)
 - **Unknown Field Warnings** — Logs warning when MachineClass config has unrecognized fields (v0.12.0)
 - **`nic_attach` → `network_interface` rename** — Clearer field naming throughout (v0.12.0)
+- **Per-Zvol Encryption Passphrases** — Each encrypted zvol gets a unique passphrase stored as ZFS user property, replaces global `ENCRYPTION_PASSPHRASE` env var (v0.12.0)
+- **Orphan Cleanup Rewrite** — Replaced in-memory VM tracking with TrueNAS state queries (`org.omni:managed` properties). Safe across restarts, handles dataset prefixes (v0.12.0)
+- **Multi-Homing Guide** — Traefik with internal + DMZ subnets, MetalLB, firewall rules ([docs/multihoming.md](multihoming.md)) (v0.12.0)
 
 ## Upstream Issues
 
 - **Provision errors not visible in Omni UI** — SDK clears error on every retry, users only see "Provisioning" forever. Filed: [siderolabs/omni#2629](https://github.com/siderolabs/omni/issues/2629)
+- **Teardown stuck when machine never joined Omni** — SDK's `reconcileTearingDown` never calls `Deprovision` if machine state was destroyed before the check. Filed: [siderolabs/omni#2642](https://github.com/siderolabs/omni/issues/2642)
+- **Provision steps not re-run on Talos upgrade** — SDK returns early for `PROVISIONED` machines, so upgrade hooks (snapshot, CDROM swap) never fire. Filed: [siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646)
+- **Pressure-based autoscaling patterns** — Discussion on how infra providers should handle autoscaling. [siderolabs/omni#2647](https://github.com/siderolabs/omni/discussions/2647)
 
 ---
 
@@ -114,19 +120,6 @@ Implementation:
 - Generate a Talos machine config patch for the corresponding interface to set the MTU at the OS level
 - Validate: MTU must match the physical network (bridge/VLAN must also be configured for jumbo frames)
 
-### Multihoming / Dual-Stack Support
-When VMs have multiple NICs or both IPv4 and IPv6 addresses, Talos needs explicit configuration to control which addresses etcd and kubelet use for communication. Without this, services may select different addresses across restarts, destabilizing the cluster. See [Talos Multihoming docs](https://docs.siderolabs.com/talos/v1.12/networking/multihoming).
-
-This pairs with Multiple NIC Support (above) — once a VM has multiple interfaces, the provider needs to generate the right Talos config patches so cluster communication stays on the correct network.
-
-Implementation:
-- Add `advertised_subnets` (list of CIDRs) to `Data` struct and `schema.json` for controlling etcd and kubelet address selection
-- Generate Talos machine config patches setting `cluster.etcd.advertisedSubnets` and `machine.kubelet.nodeIP.validSubnets` to the specified subnets
-- Default: when a single NIC is used, no patch is needed (current behavior)
-- When `additional_nics` is configured, require or strongly recommend setting `advertised_subnets` to pin cluster traffic to the primary NIC's subnet
-- For dual-stack (IPv4 + IPv6): accept both IPv4 and IPv6 CIDRs in the list, Talos handles the rest
-- Validate that the advertised subnets match at least one NIC's network
-
 ---
 
 ---
@@ -135,15 +128,6 @@ Implementation:
 
 ### Integration Test CI
 Run integration tests against a real TrueNAS instance in CI (GitHub Actions self-hosted runner or cloud instance). See [feasibility & cost analysis](integration-test-ci.md).
-
-### Dry-Run / Validate Mode
-A `--dry-run` or `--validate` flag that connects to TrueNAS, runs all startup checks (pool, NIC, version, connectivity), and exits without connecting to Omni. Useful for verifying configuration during initial setup and in CI pipelines.
-
-Implementation:
-- Add `--validate` flag or `VALIDATE_ONLY=true` env var
-- Run `runStartupChecks()` plus the new version check
-- Print a summary of detected config (transport, pool free space, NIC choices, TrueNAS version)
-- Exit 0 on success, exit 1 with clear error on failure
 
 ### Snapshot Rollback Documentation
 The client has `RollbackSnapshot()` and pre-upgrade snapshots are created automatically, but there's no documented workflow for users to trigger a rollback after a failed Talos upgrade. Document the manual process (TrueNAS UI or `midclt`) and consider exposing an automated rollback path.
