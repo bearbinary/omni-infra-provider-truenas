@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -31,9 +32,35 @@ const errUnmarshalProviderData = "failed to unmarshal provider data: %w"
 // hashRequestID returns a truncated SHA-256 hash of the request ID for use in
 // trace attributes. This avoids exposing raw request IDs (which map to VM names,
 // zvol paths, and SideroLink tokens) in OTEL telemetry data.
+// generateUUID returns a new random UUID v4 string (e.g. "550e8400-e29b-41d4-a716-446655440000").
+func generateUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
 func hashRequestID(requestID string) string {
 	h := sha256.Sum256([]byte(requestID))
 	return hex.EncodeToString(h[:8]) // 16 hex chars — enough for correlation, not reversible
+}
+
+// passphraseProperty is the ZFS user property where auto-generated encryption passphrases are stored.
+const passphraseProperty = "org.omni:passphrase"
+
+// generatePassphrase creates a cryptographically random 32-byte passphrase encoded as hex.
+func generatePassphrase() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random passphrase: %w", err)
+	}
+
+	return hex.EncodeToString(b), nil
 }
 
 // Default extensions included in every TrueNAS VM.
@@ -274,6 +301,17 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		return fmt.Errorf(errUnmarshalProviderData, err)
 	}
 
+	// Check for unrecognized fields in MachineClass config
+	var rawData map[string]any
+	if err := pctx.UnmarshalProviderData(&rawData); err == nil {
+		if unknown := UnknownFields(rawData); len(unknown) > 0 {
+			logger.Warn("MachineClass config contains unrecognized fields — these will be ignored",
+				zap.Strings("unknown_fields", unknown),
+				zap.String("hint", "check field names against the provider schema"),
+			)
+		}
+	}
+
 	data.ApplyDefaults(p.config)
 
 	// Validate all user-provided names before using them in paths or API calls
@@ -339,20 +377,38 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	if data.Encrypted {
-		if p.config.EncryptionPassphrase == "" {
-			return fmt.Errorf("encrypted zvol requested but ENCRYPTION_PASSPHRASE is not set")
+		// Auto-generate a unique passphrase per zvol. The passphrase is stored as a
+		// ZFS user property (org.omni:passphrase) so the provider can retrieve it
+		// for unlock after TrueNAS reboots. This protects data at rest against
+		// physical disk theft while keeping key management invisible to the user.
+		passphrase, genErr := generatePassphrase()
+		if genErr != nil {
+			return genErr
 		}
 
-		if _, err := p.client.CreateEncryptedZvol(ctx, zvolPath, data.DiskSize, p.config.EncryptionPassphrase, omniProps); err != nil {
+		omniProps = append(omniProps, client.UserProperty{Key: passphraseProperty, Value: passphrase})
+
+		if _, err := p.client.CreateEncryptedZvol(ctx, zvolPath, data.DiskSize, passphrase, omniProps); err != nil {
 			if !isAlreadyExists(err) {
 				return fmt.Errorf("failed to create encrypted zvol: %w", err)
 			}
 
-			// Encrypted zvol exists — unlock if locked
+			// Encrypted zvol already exists — retrieve stored passphrase for unlock
+			stored, propErr := p.client.GetDatasetUserProperty(ctx, zvolPath, passphraseProperty)
+			if propErr != nil {
+				return fmt.Errorf("failed to read stored passphrase from zvol %q: %w", zvolPath, propErr)
+			}
+
+			if stored == "" {
+				return fmt.Errorf("encrypted zvol %q exists but has no stored passphrase — the zvol may have been created manually or by an older provider version", zvolPath)
+			}
+
+			passphrase = stored
+
 			if locked, lockErr := p.client.IsDatasetLocked(ctx, zvolPath); lockErr == nil && locked {
 				logger.Debug("unlocking encrypted zvol", zap.String("path", zvolPath))
 
-				if unlockErr := p.client.UnlockDataset(ctx, zvolPath, p.config.EncryptionPassphrase); unlockErr != nil {
+				if unlockErr := p.client.UnlockDataset(ctx, zvolPath, passphrase); unlockErr != nil {
 					return fmt.Errorf("failed to unlock encrypted zvol %q: %w", zvolPath, unlockErr)
 				}
 			}
@@ -377,10 +433,20 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	state.ZvolPath = zvolPath
 
+	// Generate a stable UUID for the VM's SMBIOS identity.
+	// This UUID is set on the bhyve VM so that when Talos boots, it reads
+	// the same UUID via DMI and uses it to register with Omni — ensuring
+	// the provisioned record and the joined machine are correlated.
+	machineUUID, err := generateUUID()
+	if err != nil {
+		return fmt.Errorf("failed to generate machine UUID: %w", err)
+	}
+
 	// Create the VM
 	vm, err := p.client.CreateVM(ctx, client.CreateVMRequest{
 		Name:        vmName,
 		Description: "Managed by Omni infra provider",
+		UUID:        machineUUID,
 		VCPUs:       data.CPUs,
 		Memory:      data.Memory,
 		CPUMode:     "HOST-PASSTHROUGH",
@@ -392,12 +458,12 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	state.VmId = int32(vm.ID)
+	state.Uuid = machineUUID
 
 	// Set machine identifiers for Omni correlation
 	vmIDStr := fmt.Sprintf("%d", vm.ID)
 	pctx.SetMachineInfraID(vmIDStr)
-	// Use the request ID as the machine UUID — it's unique per machine and stable across restarts
-	pctx.SetMachineUUID(pctx.GetRequestID())
+	pctx.SetMachineUUID(machineUUID)
 
 	logger.Info("created VM", zap.String("name", vmName), zap.Int("id", vm.ID))
 	p.TrackVMName(vmName)
@@ -461,8 +527,25 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		)
 	}
 
-	// Warn if multiple NICs without advertised_subnets
-	if len(data.AdditionalNICs) > 0 && data.AdvertisedSubnets == "" {
+	// Apply advertised_subnets config patch if set
+	if data.AdvertisedSubnets != "" {
+		patchData, patchErr := buildAdvertisedSubnetsPatch(data.AdvertisedSubnets)
+		if patchErr != nil {
+			return fmt.Errorf("failed to build advertised_subnets config patch: %w", patchErr)
+		}
+
+		if patchData != nil {
+			if cpErr := pctx.CreateConfigPatch(ctx, "advertised-subnets", patchData); cpErr != nil {
+				return fmt.Errorf("failed to apply advertised_subnets config patch: %w", cpErr)
+			}
+
+			logger.Info("applied advertised_subnets config patch",
+				zap.String("subnets", data.AdvertisedSubnets),
+				zap.String("vm_name", vmName),
+			)
+		}
+	} else if len(data.AdditionalNICs) > 0 {
+		// Warn if multiple NICs without advertised_subnets
 		logger.Warn("multiple NICs configured without advertised_subnets — etcd/kubelet may pick the wrong interface. "+
 			"Set advertised_subnets to pin cluster traffic to the primary NIC's subnet.",
 			zap.String("vm_name", vmName),
@@ -483,11 +566,15 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	return provision.NewRetryInterval(15 * time.Second)
 }
 
-// stepRemoveCDROM detaches the ISO CDROM once Talos has installed to disk.
-// Waits for the machine to be allocated in Omni (meaning Talos installed, rebooted, and rejoined).
-func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
+// stepHealthCheck runs on every reconcile after the VM is created.
+// Verifies the VM still exists on TrueNAS — if it was deleted externally
+// (manual deletion, TrueNAS restart, etc.), resets state so Omni can re-provision.
+// The CDROM is intentionally left attached — Talos boots from disk by default
+// once installed, and removing the CDROM requires stopping the VM which kills
+// Talos before it finishes installing. The CDROM is cleaned up on deprovision.
+func (p *Provisioner) stepHealthCheck(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
 	stepStart := time.Now()
-	ctx, span := provTracer.Start(ctx, "provision.removeCDROM",
+	ctx, span := provTracer.Start(ctx, "provision.healthCheck",
 		trace.WithAttributes(attribute.String("request_id_hash", hashRequestID(pctx.GetRequestID()))),
 	)
 	defer func() {
@@ -498,37 +585,64 @@ func (p *Provisioner) stepRemoveCDROM(ctx context.Context, logger *zap.Logger, p
 		} else {
 			span.SetStatus(codes.Ok, "")
 		}
-		recordStepDuration(ctx, "removeCDROM", stepStart)
+		recordStepDuration(ctx, "healthCheck", stepStart)
 		span.End()
 	}()
 
 	state := pctx.State.TypedSpec().Value
 
-	// Already removed
-	if state.CdromDeviceId == 0 {
-		return nil
+	// Verify the VM still exists on TrueNAS. If it was deleted externally
+	// (manual deletion, TrueNAS restart, etc.), reset state so Omni can re-provision.
+	if state.VmId != 0 {
+		if err := p.verifyVMExists(ctx, logger, state); err != nil {
+			return err
+		}
+
+		// verifyVMExists may have reset VmId if VM is gone
+		if state.VmId == 0 {
+			return provision.NewRetryInterval(5 * time.Second)
+		}
 	}
 
-	// Wait until Omni has allocated this machine (ID is set when the machine
-	// connects via SideroLink, gets config, installs to disk, reboots, and rejoins).
-	if pctx.MachineRequestStatus.TypedSpec().Value.Id == "" {
-		logger.Debug("waiting for machine to be allocated before removing CDROM")
-
-		return provision.NewRetryInterval(30 * time.Second)
-	}
-
-	logger.Debug("removing CDROM device",
-		zap.Int32("device_id", state.CdromDeviceId),
+	// The CDROM is intentionally left attached. Talos boots from disk by default
+	// once installed (disk has higher boot priority). Removing the CDROM requires
+	// stopping the VM, which kills Talos before it has finished installing to disk.
+	// The CDROM stays attached but unused — it will be cleaned up on deprovision.
+	//
+	// If the CDROM was already removed (by an older provider version), that's fine.
+	logger.Debug("VM provisioned and healthy",
 		zap.Int32("vm_id", state.VmId),
 	)
 
-	if err := p.client.DeleteDevice(ctx, int(state.CdromDeviceId)); err != nil {
-		return fmt.Errorf("failed to remove CDROM: %w", err)
+	return nil
+}
+
+// verifyVMExists checks that a provisioned VM still exists on TrueNAS.
+// If the VM was deleted externally (manual deletion, TrueNAS restart, cleanup),
+// resets the machine state so the SDK can re-provision or teardown cleanly.
+// This prevents the "stuck in limbo" state where Omni thinks the VM exists
+// but TrueNAS has already deleted it.
+func (p *Provisioner) verifyVMExists(ctx context.Context, logger *zap.Logger, state *specs.MachineSpec) error {
+	_, err := p.client.GetVM(ctx, int(state.VmId))
+	if err == nil {
+		return nil // VM exists, all good
 	}
 
-	state.CdromDeviceId = 0
+	if !isNotFound(err) {
+		// Transient error — don't reset state, just retry
+		return fmt.Errorf("failed to verify VM %d exists: %w", state.VmId, err)
+	}
 
-	logger.Info("CDROM removed — VM will boot directly from disk on next restart")
+	// VM is gone from TrueNAS — reset state so provisioning restarts from scratch
+	logger.Warn("VM no longer exists on TrueNAS — resetting state for re-provision",
+		zap.Int32("vm_id", state.VmId),
+		zap.String("zvol_path", state.ZvolPath),
+	)
+
+	state.VmId = 0
+	state.CdromDeviceId = 0
+	// Keep ZvolPath — the zvol may still exist even if the VM was deleted.
+	// stepCreateVM will handle the "already exists" case on the zvol.
 
 	return nil
 }
@@ -590,11 +704,13 @@ func (p *Provisioner) validatePool(ctx context.Context, pool string) error {
 		// Check if it looks like a dataset path (contains "/")
 		if strings.Contains(pool, "/") {
 			return fmt.Errorf("pool %q not found — this looks like a dataset path, not a pool name. "+
-				"Use just the pool name (e.g., 'tank' not 'tank/my-dataset')", pool)
+				"Set pool to just the top-level pool (e.g., 'default') and use dataset_prefix for the rest "+
+				"(e.g., pool='default', dataset_prefix='%s')", pool, pool[strings.Index(pool, "/")+1:])
 		}
 
-		return fmt.Errorf("pool %q not found on TrueNAS — check that the pool exists and the name is correct. "+
-			"A pool is a top-level ZFS storage container (e.g., 'tank', 'default'), not a dataset", pool)
+		return fmt.Errorf("pool %q not found on TrueNAS — this must be a top-level ZFS pool name (e.g., 'default', 'tank'), "+
+			"not a dataset. If your VMs should live under a dataset like '%s/mydata', set pool='%s' and dataset_prefix='mydata'. "+
+			"Run 'zpool list' on TrueNAS to see available pools", pool, pool, pool)
 	}
 
 	return nil
@@ -802,8 +918,13 @@ func (p *Provisioner) checkExistingVM(ctx context.Context, logger *zap.Logger, s
 			return p.handleExistingVM(ctx, logger, vm, vmName)
 		}
 
-		// VM was deleted externally, reset
+		// VM was deleted externally — reset state to trigger re-creation
+		logger.Warn("VM was deleted externally from TrueNAS — will recreate",
+			zap.Int32("old_vm_id", state.VmId),
+		)
+
 		state.VmId = 0
+		state.CdromDeviceId = 0
 	}
 
 	// Check by name (idempotency)

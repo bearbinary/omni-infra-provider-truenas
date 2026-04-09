@@ -30,33 +30,33 @@
       "title": "ZFS Pool",
       "maxLength": 253,
       "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-      "description": "ZFS pool name for VM storage"
+      "description": "Top-level ZFS pool name (e.g., 'default', 'tank'). This must be a pool, not a dataset path — use dataset_prefix for nested datasets. Run 'zpool list' on TrueNAS to see available pools."
     },
     "dataset_prefix": {
       "type": "string",
       "title": "Dataset Prefix",
       "maxLength": 253,
       "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9._-]$",
-      "description": "Optional ZFS dataset path under the pool. Zvols are created at <pool>/<prefix>/omni-vms/<id>. Example: 'previewk8/k8' places zvols at default/previewk8/k8/omni-vms/..."
+      "description": "Optional dataset path under the pool for organizing VM storage. Example: if your layout is default/previewk8, set pool='default' and dataset_prefix='previewk8'. VMs are created at <pool>/<prefix>/omni-vms/."
     },
     "network_interface": {
       "type": "string",
       "title": "Network Interface",
       "maxLength": 253,
       "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-      "description": "Host network interface for the VM — can be a bridge (br100), VLAN (vlan666), or physical interface (enp5s0). Defaults to provider DEFAULT_NETWORK_INTERFACE."
-    },
-    "encrypted": {
-      "type": "boolean",
-      "title": "Encrypted Disk",
-      "default": false,
-      "description": "Enable ZFS native encryption (AES-256-GCM) on the VM disk. Requires ENCRYPTION_PASSPHRASE env var on the provider."
+      "description": "Host network interface for the VM NIC. Can be a bridge (e.g., br0, br100), VLAN interface (e.g., vlan100), or physical interface (e.g., enp5s0). Run 'midclt call vm.device.nic_attach_choices' on TrueNAS to see available options."
     },
     "advertised_subnets": {
       "type": "string",
       "title": "Advertised Subnets",
       "maxLength": 1024,
       "description": "Pin etcd/kubelet to specific subnets when multiple NICs are present. Comma-separated CIDRs (e.g., 192.168.100.0/24). Required for stable multi-NIC clusters."
+    },
+    "encrypted": {
+      "type": "boolean",
+      "title": "Encrypted Disk",
+      "default": false,
+      "description": "Enable ZFS native encryption (AES-256-GCM) on the VM disk. A unique passphrase is auto-generated per zvol and stored as a ZFS user property for automatic unlock."
     },
     "boot_method": {
       "type": "string",

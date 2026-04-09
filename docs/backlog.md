@@ -31,6 +31,15 @@ Tracked improvements for future releases.
 - **Control Plane VIP** — Documented as Omni config patch in [networking guide](networking.md) (v0.11.0)
 - **Static IP / DHCP Reservations** — Documented router-side DHCP reservation workflow for all platforms (v0.11.0)
 - **Multiple NIC Support + VLAN Tagging** — Additional NICs with per-NIC VLAN tagging via `additional_nics` in MachineClass config (v0.11.0)
+- **Memory Overcommit Pre-Check** — Blocks VMs requesting >80% of host RAM (v0.12.0)
+- **Machine UUID / Infra ID** — Sets `MachineUUID` and `MachineInfraID` for Omni correlation (v0.12.0)
+- **TrueNAS Version Check** — Fails at startup on SCALE < 25.04 with clear error (v0.12.0)
+- **Graceful VM Shutdown** — ACPI signal with configurable timeout before force-stop (v0.12.0)
+- **Advertised Subnets Config Patch** — Generates Talos config patches for multi-NIC etcd/kubelet pinning (v0.12.0)
+- **HTTP Health Endpoint** — `/healthz` and `/readyz` on port 8081 for proper K8s probes (v0.12.0)
+- **Dataset Prefix** — Custom ZFS dataset path for cluster isolation (`dataset_prefix` in MachineClass) (v0.12.0)
+- **Unknown Field Warnings** — Logs warning when MachineClass config has unrecognized fields (v0.12.0)
+- **`nic_attach` → `network_interface` rename** — Clearer field naming throughout (v0.12.0)
 
 ## Upstream Issues
 
@@ -49,48 +58,6 @@ Add `seccompProfile: RuntimeDefault` to the pod security context. Best practice 
 ---
 
 ## Reliability
-
-### Memory Overcommit Pre-Check
-The provider checks pool free space before zvol creation but doesn't check available host RAM before VM creation. If you request 5 VMs at 8 GiB each on a 32 GiB host, the 5th fails with a cryptic TrueNAS error. Add a pre-check similar to the pool space check.
-
-Implementation:
-- Call `SystemMemoryAvailable(ctx)` (already exists in the client) before `CreateVM()`
-- Compare against requested `data.Memory` plus a safety margin for ZFS ARC
-- Fail with: `"host has X MiB free memory but VM needs Y MiB — reduce memory or deprovision other VMs"`
-- Optionally factor in ZFS ARC minimum (recommend reserving 50% of RAM for ZFS on TrueNAS)
-
-### Machine UUID / Infra ID
-The provider doesn't call `pctx.SetMachineUUID()` or `pctx.SetMachineInfraID()`. Other providers (Oxide, Proxmox) set both. Without `SetMachineInfraID`, the kubelet `providerID` isn't set, which means the Kubernetes cloud-controller-manager can't correlate nodes to infrastructure. This matters for node lifecycle management and is a functional gap vs. other providers.
-
-Implementation:
-- Call `pctx.SetMachineUUID(vmUUID)` after VM creation (derive from VM ID or request ID)
-- Call `pctx.SetMachineInfraID(vmID)` with the TrueNAS VM ID
-- Optionally create a kubelet providerID config patch via `pctx.CreateConfigPatch()` (as Oxide does)
-
-### TrueNAS Version Check at Startup
-Verify TrueNAS SCALE version is 25.04+ during startup checks. Call `system.version` and fail with a clear error if the version is too old, instead of letting users hit cryptic JSON-RPC errors because they're on Electric Eel (24.10) with REST-only.
-
-Implementation:
-- Add `SystemVersion(ctx) (string, error)` to the client (call `system.version`)
-- Parse the version string in `runStartupChecks()`
-- Fail with: `"TrueNAS SCALE 25.04+ (Fangtooth) required, found 24.10 (Electric Eel). This provider uses JSON-RPC 2.0 which is not available on older versions."`
-
-### Graceful VM Shutdown on Deprovision
-Add a graceful shutdown (ACPI signal) with a timeout before force-stopping VMs during deprovision. Current behavior is immediate force-stop (`StopVM(force=true)`). While Talos handles hard stops well, a graceful-then-force pattern gives workloads a chance to drain and is safer for any persistent writes in progress.
-
-Implementation:
-- Call `StopVM(ctx, id, false)` first (ACPI shutdown signal)
-- Poll VM state with a 30s timeout waiting for STOPPED
-- If timeout expires, fall back to `StopVM(ctx, id, true)` (force)
-- Make timeout configurable via `GRACEFUL_SHUTDOWN_TIMEOUT` env var (default: 30s, set to 0 to force-stop immediately like today)
-
-### Advertised Subnets Config Patch
-The `advertised_subnets` field exists in schema.json and the Data struct, but doesn't generate the actual Talos config patch. Currently it only logs a warning when multiple NICs are configured without it. Wire up `pctx.CreateConfigPatch()` to set `cluster.etcd.advertisedSubnets` and `machine.kubelet.nodeIP.validSubnets` so multi-NIC clusters actually pin traffic to the correct interface.
-
-Implementation:
-- After VM creation in `stepCreateVM`, if `advertised_subnets` is set, call `pctx.CreateConfigPatch()` with the etcd and kubelet subnet config
-- Parse comma-separated CIDRs into the Talos config patch format
-- Validate CIDRs at the `Data.Validate()` level
 
 ---
 

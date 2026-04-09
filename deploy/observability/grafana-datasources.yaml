@@ -4,6 +4,7 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
+    uid: prometheus
     url: http://prometheus:9090
     isDefault: true
     jsonData:
@@ -20,6 +21,14 @@ datasources:
       tracesToLogsV2:
         datasourceUid: loki
         filterByTraceID: true
+        filterBySpanID: false
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        customQuery: true
+        query: '{service_name="omni-infra-provider-truenas"} | json'
+        tags:
+          - key: "service.name"
+            value: "service_name"
       tracesToMetrics:
         datasourceUid: prometheus
       tracesToProfiles:

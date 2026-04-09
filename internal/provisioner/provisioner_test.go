@@ -100,7 +100,7 @@ func TestProvisionSteps_ReturnsCorrectSteps(t *testing.T) {
 		"createSchematic",
 		"uploadISO",
 		"createVM",
-		"removeCDROM",
+		"healthCheck",
 	}
 
 	for i, step := range steps {

@@ -16,7 +16,6 @@ type ProviderConfig struct {
 	DefaultPool             string
 	DefaultNetworkInterface string // Bridge, VLAN, or physical interface for VM NICs
 	DefaultBootMethod       string
-	EncryptionPassphrase    string        // Passphrase for ZFS encrypted zvols (required when encrypted=true)
 	GracefulShutdownTimeout time.Duration // How long to wait for ACPI shutdown before force (default: 30s, 0=force immediately)
 	PollInterval            time.Duration // How often to poll VM state during graceful shutdown (default: 2s)
 }
@@ -99,6 +98,6 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 		provision.NewStep("createSchematic", p.stepCreateSchematic),
 		provision.NewStep("uploadISO", p.stepUploadISO),
 		provision.NewStep("createVM", p.stepCreateVM),
-		provision.NewStep("removeCDROM", p.stepRemoveCDROM),
+		provision.NewStep("healthCheck", p.stepHealthCheck),
 	}
 }

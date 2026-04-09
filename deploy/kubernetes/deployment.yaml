@@ -34,14 +34,23 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+          ports:
+            - containerPort: 8081
+              name: health
           livenessProbe:
-            exec:
-              command:
-                - /bin/sh
-                - -c
-                - "pgrep omni-infra-provider-truenas"
+            httpGet:
+              path: /healthz
+              port: health
             initialDelaySeconds: 10
             periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534

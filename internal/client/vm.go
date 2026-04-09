@@ -36,6 +36,7 @@ type VMStatus struct {
 type CreateVMRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	UUID        string `json:"uuid,omitempty"` // SMBIOS UUID — must match what we tell Omni so Talos identity correlates
 	VCPUs       int    `json:"vcpus"`
 	Memory      int    `json:"memory"` // MiB
 	Bootloader  string `json:"bootloader"`

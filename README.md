@@ -172,7 +172,7 @@ All configuration is via environment variables. A `.env` file is loaded automati
 |---|---|---|
 | `TRUENAS_HOST` | — | TrueNAS hostname (WebSocket transport only) |
 | `TRUENAS_API_KEY` | — | TrueNAS API key (WebSocket transport only) |
-| `TRUENAS_INSECURE_SKIP_VERIFY` | `true` | Skip TLS verification for self-signed certs |
+| `TRUENAS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for self-signed certs |
 | `TRUENAS_SOCKET_PATH` | `/var/run/middleware/middlewared.sock` | Override Unix socket path |
 
 > Not required when running on TrueNAS with the Unix socket mounted.
@@ -187,6 +187,8 @@ All configuration is via environment variables. A `.env` file is loaded automati
 | `CONCURRENCY` | `4` | Max parallel provision/deprovision workers |
 | `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `TRUENAS_MAX_CONCURRENT_CALLS` | `8` | Max concurrent JSON-RPC calls to TrueNAS |
+| `GRACEFUL_SHUTDOWN_TIMEOUT` | `30` | Seconds to wait for ACPI shutdown before force-stop on deprovision |
+| `HEALTH_LISTEN_ADDR` | `:8081` | Address for the HTTP health endpoint (`/healthz`, `/readyz`) |
 
 ### Provider Identity (Optional)
 
@@ -326,11 +328,50 @@ These fields go in the MachineClass `configpatch` (CLI) or the provider config f
 | `cpus` | int | Yes | `2` | Virtual CPUs (min: 1) |
 | `memory` | int | Yes | `4096` | Memory in MiB (min: 1024) |
 | `disk_size` | int | Yes | `40` | Root disk in GiB (min: 10) |
-| `pool` | string | No | `DEFAULT_POOL` | ZFS pool for zvols and ISOs |
-| `network_interface` | string | No | `DEFAULT_NETWORK_INTERFACE` | Bridge, VLAN, or physical interface |
-| `boot_method` | string | No | `UEFI` | `UEFI` or `BIOS` |
-| `architecture` | string | No | `amd64` | `amd64` or `arm64` |
+| `pool` | string | Yes | — | ZFS **pool** name (top-level only — not a dataset path, see below) |
+| `network_interface` | string | Yes | — | Bridge, VLAN, or physical interface for VM NIC |
+| `boot_method` | string | Yes | `UEFI` | `UEFI` or `BIOS` |
+| `architecture` | string | Yes | `amd64` | `amd64` or `arm64` |
+| `dataset_prefix` | string | No | — | Dataset path under pool for isolation (see below) |
+| `advertised_subnets` | string | No | — | Comma-separated CIDRs to pin etcd/kubelet (required for multi-NIC) |
+| `encrypted` | bool | No | `false` | Enable ZFS AES-256-GCM encryption (passphrase auto-generated per zvol) |
 | `extensions` | list | No | — | Additional Talos extensions (merged with defaults) |
+| `additional_nics` | list | No | — | Extra NICs for network segmentation (see schema for format) |
+
+#### Understanding `pool` vs `dataset_prefix`
+
+ZFS has a hierarchy: **pools** contain **datasets**, which contain **zvols** (virtual disks). The provider needs to know both where your storage lives:
+
+- **`pool`** — The **top-level ZFS pool name** only (e.g., `default`, `tank`, `fast-nvme`). This is NOT a dataset path. Run `zpool list` or check TrueNAS UI under **Storage** to see your pool names.
+- **`dataset_prefix`** — An optional **dataset path within the pool** where the provider should create VM storage. Use this when you want VMs organized under an existing dataset hierarchy.
+
+The provider creates zvols at `<pool>/<dataset_prefix>/omni-vms/<vm-id>` and caches ISOs at `<pool>/<dataset_prefix>/talos-iso/`.
+
+**Example:** If your ZFS layout looks like this:
+
+```
+default                    ← pool
+  └── previewk8            ← dataset (created by you)
+        └── previewcluster ← zvol (existing VM disk)
+```
+
+The correct MachineClass config is:
+
+```yaml
+pool: "default"              # The pool name — NOT "previewk8" or "default/previewk8"
+dataset_prefix: "previewk8"  # The dataset path under the pool
+```
+
+This creates VMs at `default/previewk8/omni-vms/...` — right alongside your existing `previewcluster` zvol.
+
+**Common mistake:** Setting `pool: "previewk8"` or `pool: "default/previewk8"` — both will fail with "pool not found" because `previewk8` is a dataset inside the `default` pool, not a pool itself.
+
+| Your ZFS layout | `pool` | `dataset_prefix` | VMs created at |
+|---|---|---|---|
+| `tank` (flat) | `tank` | _(empty)_ | `tank/omni-vms/...` |
+| `default/myproject` | `default` | `myproject` | `default/myproject/omni-vms/...` |
+| `default/prod/k8s` | `default` | `prod/k8s` | `default/prod/k8s/omni-vms/...` |
+| `fast-nvme` (separate pool) | `fast-nvme` | _(empty)_ | `fast-nvme/omni-vms/...` |
 
 ### Recommended MachineClasses
 

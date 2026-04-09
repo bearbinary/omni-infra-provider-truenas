@@ -25,6 +25,7 @@ import (
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/cleanup"
 	truenasclient "github.com/bearbinary/omni-infra-provider-truenas/internal/client"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/health"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/monitor"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/provisioner"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
@@ -150,7 +151,6 @@ func run() error {
 		DefaultPool:             defaultPool,
 		DefaultNetworkInterface: defaultNetworkInterface,
 		DefaultBootMethod:       defaultBootMethod,
-		EncryptionPassphrase:    os.Getenv("ENCRYPTION_PASSPHRASE"),
 		GracefulShutdownTimeout: time.Duration(envInt("GRACEFUL_SHUTDOWN_TIMEOUT", 30)) * time.Second,
 	})
 
@@ -181,6 +181,16 @@ func run() error {
 	hostMonitor := monitor.New(tnClient, monitor.Config{}, logger)
 
 	go hostMonitor.Run(ctx)
+
+	// Start HTTP health endpoint for Kubernetes probes
+	healthAddr := envString("HEALTH_LISTEN_ADDR", ":8081")
+	healthSrv := health.NewServer(newHealthCheck(tnClient, defaultPool, defaultNetworkInterface), logger)
+
+	go func() {
+		if err := healthSrv.Run(ctx, healthAddr); err != nil {
+			logger.Error("health server failed", zap.Error(err))
+		}
+	}()
 
 	logger.Info("starting TrueNAS infra provider",
 		zap.String("provider_id", meta.ProviderID),
@@ -246,16 +256,6 @@ func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenas
 		zap.String("pool", pool),
 		zap.String("network_interface", networkInterface),
 	)
-
-	// Warn about encryption passphrase over insecure transport
-	if os.Getenv("ENCRYPTION_PASSPHRASE") != "" && tnClient.TransportName() == "websocket" {
-		if envBool("TRUENAS_INSECURE_SKIP_VERIFY", false) {
-			logger.Warn("ENCRYPTION_PASSPHRASE is set with TRUENAS_INSECURE_SKIP_VERIFY=true — " +
-				"the passphrase will be sent over a TLS connection without certificate verification. " +
-				"A MITM attacker could intercept the passphrase. Set TRUENAS_INSECURE_SKIP_VERIFY=false " +
-				"or use the Unix socket transport for maximum security.")
-		}
-	}
 
 	return nil
 }

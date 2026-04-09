@@ -51,7 +51,7 @@ The interface must have:
 - Connectivity to the internet (VMs need outbound access to reach Omni via SideroLink/WireGuard on port 443)
 - DHCP available on the network (Talos uses DHCP by default)
 
-To list available choices: `midclt call vm.device.network_interface_choices` via SSH.
+To list available choices: `midclt call vm.device.nic_attach_choices` via SSH.
 
 ### 6. TrueNAS API Key (Remote Deployments Only)
 
@@ -262,7 +262,7 @@ These are included in every VM automatically — users do NOT need to add them:
 | `OMNI_SERVICE_ACCOUNT_KEY` | Yes | — | Omni infra provider service account key |
 | `TRUENAS_HOST` | Remote only | — | TrueNAS hostname or IP (WebSocket transport) |
 | `TRUENAS_API_KEY` | Remote only | — | TrueNAS API key (WebSocket transport) |
-| `TRUENAS_INSECURE_SKIP_VERIFY` | No | `true` | Skip TLS verification for self-signed certs |
+| `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification for self-signed certs |
 | `TRUENAS_SOCKET_PATH` | No | `/var/run/middleware/middlewared.sock` | Override Unix socket path |
 | `PROVIDER_ID` | No | `truenas` | Provider ID registered with Omni |
 | `PROVIDER_NAME` | No | `TrueNAS` | Display name in Omni UI |
@@ -287,7 +287,7 @@ These are included in every VM automatically — users do NOT need to add them:
 |---|---|---|
 | `TrueNAS API unreachable` | Can't connect to TrueNAS | **Socket:** Check volume mount. **WebSocket:** Check `TRUENAS_HOST` is reachable and `TRUENAS_API_KEY` is valid. |
 | `pool "X" not found` | Pool name wrong or doesn't exist | Check pool name with `midclt call pool.query`. Names are case-sensitive. |
-| `network interface target "X" not found` | Interface doesn't exist | Check with `midclt call vm.device.network_interface_choices`. May need to create a bridge first. |
+| `network interface target "X" not found` | Interface doesn't exist | Check with `midclt call vm.device.nic_attach_choices`. May need to create a bridge first. |
 | `OMNI_ENDPOINT is required` | Missing env var | Set the `OMNI_ENDPOINT` environment variable. |
 
 ### VMs Created But Don't Join Omni

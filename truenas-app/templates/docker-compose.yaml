@@ -40,3 +40,4 @@ services:
       DEFAULT_BOOT_METHOD: "{{ values.defaultBootMethod | default('UEFI') }}"
       CONCURRENCY: "{{ values.concurrency | default(4) }}"
       LOG_LEVEL: "{{ values.logLevel | default('info') }}"
+      GRACEFUL_SHUTDOWN_TIMEOUT: "{{ values.gracefulShutdownTimeout | default(30) }}"

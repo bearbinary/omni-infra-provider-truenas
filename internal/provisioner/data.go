@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -84,6 +85,38 @@ func (d *Data) BasePath() string {
 	}
 
 	return d.Pool
+}
+
+// knownFields returns the set of known YAML field names from the Data struct tags.
+func knownFields() map[string]bool {
+	fields := make(map[string]bool)
+	t := reflect.TypeOf(Data{})
+
+	for i := range t.NumField() {
+		tag := t.Field(i).Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+
+		name := strings.Split(tag, ",")[0]
+		fields[name] = true
+	}
+
+	return fields
+}
+
+// UnknownFields returns field names present in rawData that are not recognized by the Data struct.
+func UnknownFields(rawData map[string]any) []string {
+	known := knownFields()
+	var unknown []string
+
+	for key := range rawData {
+		if !known[key] {
+			unknown = append(unknown, key)
+		}
+	}
+
+	return unknown
 }
 
 // safeNameRe matches ZFS-safe identifiers: alphanumeric, hyphens, underscores, dots.

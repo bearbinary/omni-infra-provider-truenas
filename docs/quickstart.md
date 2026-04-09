@@ -71,7 +71,7 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 |---|---|---|
 | `TRUENAS_HOST` | — | TrueNAS hostname (WebSocket transport only) |
 | `TRUENAS_API_KEY` | — | TrueNAS API key (WebSocket transport only) |
-| `TRUENAS_INSECURE_SKIP_VERIFY` | `true` | Skip TLS verification for self-signed certs |
+| `TRUENAS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for self-signed certs |
 | `TRUENAS_SOCKET_PATH` | `/var/run/middleware/middlewared.sock` | Override Unix socket path |
 
 !!! note

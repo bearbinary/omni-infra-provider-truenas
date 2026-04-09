@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,13 +55,27 @@ func TestPoolSelector_ExplicitPool(t *testing.T) {
 }
 
 func TestPoolSelector_AutoSelect_MostFreeSpace(t *testing.T) {
-	c := client.NewMockClient(func(method string, _ json.RawMessage) (any, error) {
-		if method == "pool.query" {
-			return []client.PoolInfo{
-				{Name: "small", Healthy: true, Free: 100 * 1024 * 1024 * 1024},
-				{Name: "large", Healthy: true, Free: 500 * 1024 * 1024 * 1024},
-				{Name: "degraded", Healthy: false, Free: 900 * 1024 * 1024 * 1024},
+	c := client.NewMockClient(func(method string, params json.RawMessage) (any, error) {
+		switch method {
+		case "pool.query":
+			return []map[string]any{
+				{"id": 1, "name": "small", "healthy": true, "status": "ONLINE", "size": 200 * 1024 * 1024 * 1024},
+				{"id": 2, "name": "large", "healthy": true, "status": "ONLINE", "size": 1000 * 1024 * 1024 * 1024},
+				{"id": 3, "name": "degraded", "healthy": false, "status": "DEGRADED", "size": 2000 * 1024 * 1024 * 1024},
 			}, nil
+		case "pool.dataset.query":
+			// Return usable space based on which pool is being queried
+			raw := string(params)
+			if strings.Contains(raw, "small") {
+				return map[string]any{"available": map[string]any{"parsed": 100 * 1024 * 1024 * 1024}, "used": map[string]any{"parsed": 100 * 1024 * 1024 * 1024}}, nil
+			}
+			if strings.Contains(raw, "large") {
+				return map[string]any{"available": map[string]any{"parsed": 500 * 1024 * 1024 * 1024}, "used": map[string]any{"parsed": 500 * 1024 * 1024 * 1024}}, nil
+			}
+			if strings.Contains(raw, "degraded") {
+				return map[string]any{"available": map[string]any{"parsed": 900 * 1024 * 1024 * 1024}, "used": map[string]any{"parsed": 1100 * 1024 * 1024 * 1024}}, nil
+			}
+			return map[string]any{"available": map[string]any{"parsed": 0}, "used": map[string]any{"parsed": 0}}, nil
 		}
 
 		return nil, nil
@@ -74,11 +89,14 @@ func TestPoolSelector_AutoSelect_MostFreeSpace(t *testing.T) {
 }
 
 func TestPoolSelector_NoHealthyPools(t *testing.T) {
-	c := client.NewMockClient(func(method string, _ json.RawMessage) (any, error) {
-		if method == "pool.query" {
-			return []client.PoolInfo{
-				{Name: "faulted", Healthy: false, Free: 100},
+	c := client.NewMockClient(func(method string, params json.RawMessage) (any, error) {
+		switch method {
+		case "pool.query":
+			return []map[string]any{
+				{"id": 1, "name": "faulted", "healthy": false, "status": "FAULTED", "size": 100},
 			}, nil
+		case "pool.dataset.query":
+			return map[string]any{"available": map[string]any{"parsed": 100}, "used": map[string]any{"parsed": 0}}, nil
 		}
 
 		return nil, nil
@@ -113,9 +131,15 @@ func TestCollectHostInfo(t *testing.T) {
 
 func TestCollectPoolInfo(t *testing.T) {
 	c := client.NewMockClient(func(method string, _ json.RawMessage) (any, error) {
-		if method == "pool.query" {
-			return []client.PoolInfo{
-				{Name: "tank", Healthy: true, Free: 500 * 1024 * 1024 * 1024, Used: 200 * 1024 * 1024 * 1024},
+		switch method {
+		case "pool.query":
+			return []map[string]any{
+				{"id": 1, "name": "tank", "healthy": true, "status": "ONLINE", "size": 700 * 1024 * 1024 * 1024},
+			}, nil
+		case "pool.dataset.query":
+			return map[string]any{
+				"available": map[string]any{"parsed": 500 * 1024 * 1024 * 1024},
+				"used":      map[string]any{"parsed": 200 * 1024 * 1024 * 1024},
 			}, nil
 		}
 

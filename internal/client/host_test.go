@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,13 +30,21 @@ func TestGetHostInfo_Success(t *testing.T) {
 }
 
 func TestListPools_Success(t *testing.T) {
-	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "pool.query", method)
-
-		return []map[string]any{
-			{"id": 1, "name": "tank", "healthy": true, "status": "ONLINE", "size": int64(1000), "free": int64(500), "allocated": int64(500)},
-			{"id": 2, "name": "fast", "healthy": true, "status": "ONLINE", "size": int64(2000), "free": int64(1500), "allocated": int64(500)},
-		}, nil
+	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
+		switch method {
+		case "pool.query":
+			return []map[string]any{
+				{"id": 1, "name": "tank", "healthy": true, "status": "ONLINE", "size": int64(1000)},
+				{"id": 2, "name": "fast", "healthy": true, "status": "ONLINE", "size": int64(2000)},
+			}, nil
+		case "pool.dataset.query":
+			raw := string(params)
+			if strings.Contains(raw, "tank") {
+				return map[string]any{"available": map[string]any{"parsed": int64(500)}, "used": map[string]any{"parsed": int64(500)}}, nil
+			}
+			return map[string]any{"available": map[string]any{"parsed": int64(1500)}, "used": map[string]any{"parsed": int64(500)}}, nil
+		}
+		return nil, nil
 	})
 
 	pools, err := c.ListPools(context.Background())
@@ -43,6 +52,8 @@ func TestListPools_Success(t *testing.T) {
 	assert.Len(t, pools, 2)
 	assert.Equal(t, "tank", pools[0].Name)
 	assert.True(t, pools[0].Healthy)
+	assert.Equal(t, int64(500), pools[0].Free)
+	assert.Equal(t, int64(1500), pools[1].Free)
 }
 
 func TestListDisks_Success(t *testing.T) {

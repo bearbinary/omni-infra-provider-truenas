@@ -31,4 +31,4 @@ Only two fields are required:
 - **Omni Endpoint** — Your Omni instance URL (e.g., `https://omni.example.com`)
 - **Omni Service Account Key** — From `omnictl serviceaccount create --role=InfraProvider`
 
-Everything else has sensible defaults (pool: `default`, boot: `UEFI`). You must set a NIC attach target (bridge, VLAN, or physical interface) for VM networking.
+Everything else has sensible defaults (pool: `default`, boot: `UEFI`). You must set a network interface (bridge, VLAN, or physical interface) for VM networking.

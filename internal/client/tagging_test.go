@@ -12,9 +12,16 @@ import (
 func TestOmniManagedProperties(t *testing.T) {
 	props := OmniManagedProperties("test-request-123")
 
-	assert.Equal(t, "true", props["org.omni:managed"])
-	assert.Equal(t, "truenas", props["org.omni:provider"])
-	assert.Equal(t, "test-request-123", props["org.omni:request-id"])
+	assert.Len(t, props, 3)
+
+	propMap := make(map[string]string)
+	for _, p := range props {
+		propMap[p.Key] = p.Value
+	}
+
+	assert.Equal(t, "true", propMap["org.omni:managed"])
+	assert.Equal(t, "truenas", propMap["org.omni:provider"])
+	assert.Equal(t, "test-request-123", propMap["org.omni:request-id"])
 }
 
 func TestCreateZvol_WithProperties(t *testing.T) {
@@ -41,7 +48,6 @@ func TestCreateZvol_WithoutProperties(t *testing.T) {
 		return Dataset{ID: "tank/test", Type: "VOLUME"}, nil
 	})
 
-	// No properties — should still work (backward compatible)
 	_, err := c.CreateZvol(context.Background(), "tank/test", 10)
 	require.NoError(t, err)
 }

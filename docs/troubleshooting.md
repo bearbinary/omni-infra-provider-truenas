@@ -26,8 +26,9 @@ The provider cannot connect to TrueNAS on startup.
 
 The configured `DEFAULT_POOL` or MachineClass `pool` doesn't exist.
 
-- **Common mistake**: Using a dataset name (e.g., `tank/my-vms`) instead of a pool name (e.g., `tank`). Pools are top-level ZFS containers. Datasets live inside pools. The provider creates its own datasets (`<pool>/omni-vms/`, `<pool>/talos-iso/`) — just give it the pool name.
-- List available pools: `midclt call pool.query | jq '.[].name'` (on TrueNAS)
+- **Common mistake**: Using a dataset path (e.g., `tank/my-vms` or `default/previewk8`) instead of the pool name (e.g., `tank` or `default`). The `pool` field must be a **top-level ZFS pool**, not a dataset.
+- If you want VMs under an existing dataset, use `dataset_prefix`. For example, if your layout is `default/previewk8`, set `pool: "default"` and `dataset_prefix: "previewk8"`.
+- List available pools: `zpool list` or `midclt call pool.query | jq '.[].name'` (on TrueNAS)
 - Update `DEFAULT_POOL` or the MachineClass `pool` field to match an existing pool name
 - Pool names are case-sensitive
 
@@ -35,7 +36,7 @@ The configured `DEFAULT_POOL` or MachineClass `pool` doesn't exist.
 
 The configured `DEFAULT_NETWORK_INTERFACE` interface doesn't exist.
 
-- List available choices: `midclt call vm.device.network_interface_choices` (on TrueNAS)
+- List available choices: `midclt call vm.device.nic_attach_choices` (on TrueNAS)
 - Common values: `br0`, `br100`, `vlan100`, `enp5s0`
 - Bridge interfaces must be created manually in TrueNAS UI under **Network > Interfaces** before use
 

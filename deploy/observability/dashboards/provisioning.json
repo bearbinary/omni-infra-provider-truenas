@@ -55,7 +55,7 @@
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"createSchematic\",job=~\"$job\"}[5m]))", "legendFormat": "createSchematic" },
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"uploadISO\",job=~\"$job\"}[5m]))", "legendFormat": "uploadISO" },
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"createVM\",job=~\"$job\"}[5m]))", "legendFormat": "createVM" },
-        { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"removeCDROM\",job=~\"$job\"}[5m]))", "legendFormat": "removeCDROM" }
+        { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"healthCheck\",job=~\"$job\"}[5m]))", "legendFormat": "healthCheck" }
       ],
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } } },
       "datasource": { "type": "prometheus", "uid": "prometheus" }

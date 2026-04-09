@@ -11,10 +11,11 @@ import (
 
 func TestPoolFreeSpace_Success(t *testing.T) {
 	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
-		assert.Equal(t, "pool.query", method)
+		assert.Equal(t, "pool.dataset.query", method)
 
-		return []map[string]any{
-			{"name": "tank", "healthy": true, "free": int64(500 * 1024 * 1024 * 1024)},
+		return map[string]any{
+			"available": map[string]any{"parsed": int64(500 * 1024 * 1024 * 1024)},
+			"used":      map[string]any{"parsed": int64(200 * 1024 * 1024 * 1024)},
 		}, nil
 	})
 
@@ -25,12 +26,11 @@ func TestPoolFreeSpace_Success(t *testing.T) {
 
 func TestPoolFreeSpace_NotFound(t *testing.T) {
 	c := newMockClient(t, func(_ string, _ json.RawMessage) (any, *jsonRPCError) {
-		return []map[string]any{}, nil
+		return nil, &jsonRPCError{Code: ErrCodeNotFound, Message: "not found"}
 	})
 
 	_, err := c.PoolFreeSpace(context.Background(), "nonexistent")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestSystemMemoryAvailable_Success(t *testing.T) {

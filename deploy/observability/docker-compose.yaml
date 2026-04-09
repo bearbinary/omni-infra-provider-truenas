@@ -58,6 +58,8 @@ services:
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_INSTALL_PLUGINS: "grafana-lokiexplore-app 1.0.37,grafana-pyroscope-app 1.17.0"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
     volumes:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro

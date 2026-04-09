@@ -25,6 +25,49 @@ For TrueNAS app deployments, update the image tag in the app configuration.
 
 ## Version Notes
 
+### v0.12.0
+
+**Breaking changes:**
+
+- **`nic_attach` renamed to `network_interface`** in MachineClass config and `additional_nics` items. Update all MachineClass configs in Omni.
+- **`DEFAULT_NIC_ATTACH` renamed to `DEFAULT_NETWORK_INTERFACE`** — update your `.env`, ConfigMap, or Docker Compose.
+- **`TRUENAS_INSECURE_SKIP_VERIFY` now defaults to `false`** — if your TrueNAS uses a self-signed certificate, you must explicitly set `TRUENAS_INSECURE_SKIP_VERIFY=true`. Previously this defaulted to `true`.
+- **`pool`, `network_interface`, `boot_method`, `architecture` are now required** in MachineClass config. Previously they fell back to provider defaults — now the schema enforces them.
+
+**New features:**
+
+- `dataset_prefix` — optional ZFS dataset path under the pool for isolating clusters (e.g., `dataset_prefix: prod/k8s`)
+- `advertised_subnets` — now generates Talos config patches (was previously just a warning). Required for multi-NIC clusters.
+- HTTP `/healthz` and `/readyz` endpoints on port 8081 for proper Kubernetes health probes
+- Unknown MachineClass field warnings — logs when config contains unrecognized fields
+- Multiple NIC support with per-NIC VLAN tagging
+- Graceful VM shutdown with configurable timeout (`GRACEFUL_SHUTDOWN_TIMEOUT`)
+- 4 Grafana dashboards (overview, provisioning, API, cleanup) with Loki and Pyroscope integration
+- Full LGTM+P observability stack (Loki, Grafana, Tempo, Prometheus, Pyroscope)
+
+**Migration steps:**
+
+1. Rename `nic_attach` → `network_interface` in all MachineClass configs
+2. Rename `DEFAULT_NIC_ATTACH` → `DEFAULT_NETWORK_INTERFACE` in env vars
+3. If using self-signed TrueNAS certs, add `TRUENAS_INSECURE_SKIP_VERIFY=true`
+4. Add `pool`, `network_interface`, `boot_method`, `architecture` to any MachineClass configs that relied on provider defaults
+
+### v0.11.0
+
+No breaking changes. Adds pool validation, MAC address logging, networking guide. Safe to upgrade from v0.10.0.
+
+### v0.10.0
+
+New optional env var: `ENCRYPTION_PASSPHRASE` (required only when using `encrypted: true` in MachineClass). Existing deployments are unaffected.
+
+### v0.9.0
+
+No breaking changes. Adds host health monitoring, Grafana dashboard, Prometheus alerts, and automatic pool selection.
+
+### v0.8.0
+
+No breaking changes. Adds Talos upgrade orchestration with automatic pre-upgrade snapshots and NVRAM firmware recovery. Existing VMs are unaffected.
+
 ### v0.7.0
 
 No breaking changes. QA overhaul with 147 tests and full E2E coverage. Safe to upgrade from any prior version.

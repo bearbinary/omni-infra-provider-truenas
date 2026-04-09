@@ -1,0 +1,47 @@
+name: E2E Tests
+
+# Runs end-to-end tests against a real TrueNAS instance on a schedule.
+# Requires repository secrets: TRUENAS_TEST_HOST, TRUENAS_TEST_API_KEY, TRUENAS_TEST_POOL, TRUENAS_TEST_NETWORK_INTERFACE
+
+on:
+  schedule:
+    # Run every day at 3am UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run E2E tests
+        env:
+          TRUENAS_TEST_HOST: ${{ secrets.TRUENAS_TEST_HOST }}
+          TRUENAS_TEST_API_KEY: ${{ secrets.TRUENAS_TEST_API_KEY }}
+          TRUENAS_TEST_POOL: ${{ secrets.TRUENAS_TEST_POOL }}
+          TRUENAS_TEST_NETWORK_INTERFACE: ${{ secrets.TRUENAS_TEST_NETWORK_INTERFACE }}
+        run: |
+          if [ -z "$TRUENAS_TEST_HOST" ]; then
+            echo "::warning::TRUENAS_TEST_HOST not configured — skipping E2E tests"
+            echo "Configure repository secrets to enable: TRUENAS_TEST_HOST, TRUENAS_TEST_API_KEY, TRUENAS_TEST_POOL, TRUENAS_TEST_NETWORK_INTERFACE"
+            exit 0
+          fi
+          make test-e2e
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: _out/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

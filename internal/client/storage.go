@@ -7,28 +7,36 @@ import (
 	"strings"
 )
 
+// UserProperty is a key-value pair for ZFS user properties.
+// TrueNAS 25.10+ expects user_properties as a list of objects, not a map.
+type UserProperty struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 // CreateDatasetRequest is the payload for creating a dataset or zvol.
 type CreateDatasetRequest struct {
 	Name              string             `json:"name"`                         // Full path, e.g. "tank/talos-iso" or "tank/omni-vms/vm-1"
 	Type              string             `json:"type"`                         // "FILESYSTEM" or "VOLUME"
 	Volsize           int64              `json:"volsize,omitempty"`            // Required for VOLUME type, in bytes
-	Encryption        bool               `json:"encryption,omitempty"`         // Enable ZFS native encryption
-	EncryptionOptions *EncryptionOptions `json:"encryption_options,omitempty"` // Encryption configuration
-	UserProperties    map[string]string  `json:"user_properties,omitempty"`    // Custom ZFS user properties
+	Encryption         bool               `json:"encryption,omitempty"`          // Enable ZFS native encryption
+	InheritEncryption  *bool              `json:"inherit_encryption,omitempty"`  // Must be false when encryption is explicitly enabled
+	EncryptionOptions  *EncryptionOptions `json:"encryption_options,omitempty"`  // Encryption configuration
+	UserProperties    []UserProperty     `json:"user_properties,omitempty"`    // Custom ZFS user properties
 }
 
 // OmniManagedProperties returns user properties that tag a dataset as Omni-managed.
-func OmniManagedProperties(requestID string) map[string]string {
-	return map[string]string{
-		"org.omni:managed":    "true",
-		"org.omni:provider":   "truenas",
-		"org.omni:request-id": requestID,
+func OmniManagedProperties(requestID string) []UserProperty {
+	return []UserProperty{
+		{Key: "org.omni:managed", Value: "true"},
+		{Key: "org.omni:provider", Value: "truenas"},
+		{Key: "org.omni:request-id", Value: requestID},
 	}
 }
 
 // EncryptionOptions configures ZFS native encryption for a dataset or zvol.
 type EncryptionOptions struct {
-	Algorithm  string `json:"algorithm,omitempty"`  // e.g., "aes-256-gcm" (default)
+	Algorithm  string `json:"algorithm,omitempty"`  // e.g., "AES-256-GCM" (default)
 	Passphrase string `json:"passphrase,omitempty"` // Encryption passphrase
 }
 
@@ -54,7 +62,7 @@ func (c *Client) CreateDataset(ctx context.Context, req CreateDatasetRequest) (*
 
 // CreateZvol creates a zvol with the given name and size in GiB.
 // Optional user properties are set on the dataset (e.g., Omni managed tags).
-func (c *Client) CreateZvol(ctx context.Context, name string, sizeGiB int, props ...map[string]string) (*Dataset, error) {
+func (c *Client) CreateZvol(ctx context.Context, name string, sizeGiB int, props ...[]UserProperty) (*Dataset, error) {
 	req := CreateDatasetRequest{
 		Name:    name,
 		Type:    "VOLUME",
@@ -69,14 +77,15 @@ func (c *Client) CreateZvol(ctx context.Context, name string, sizeGiB int, props
 }
 
 // CreateEncryptedZvol creates an encrypted zvol with the given name, size, and passphrase.
-func (c *Client) CreateEncryptedZvol(ctx context.Context, name string, sizeGiB int, passphrase string, props ...map[string]string) (*Dataset, error) {
+func (c *Client) CreateEncryptedZvol(ctx context.Context, name string, sizeGiB int, passphrase string, props ...[]UserProperty) (*Dataset, error) {
 	req := CreateDatasetRequest{
 		Name:       name,
 		Type:       "VOLUME",
 		Volsize:    int64(sizeGiB) * 1024 * 1024 * 1024,
-		Encryption: true,
+		Encryption:        true,
+		InheritEncryption: boolPtr(false),
 		EncryptionOptions: &EncryptionOptions{
-			Algorithm:  "aes-256-gcm",
+			Algorithm:  "AES-256-GCM",
 			Passphrase: passphrase,
 		},
 	}
@@ -135,6 +144,32 @@ func (c *Client) IsDatasetLocked(ctx context.Context, path string) (bool, error)
 	}
 
 	return ds.Locked, nil
+}
+
+// GetDatasetUserProperty reads a single ZFS user property from a dataset.
+// Returns empty string if the property is not set.
+// JSON-RPC method: pool.dataset.query with filter
+func (c *Client) GetDatasetUserProperty(ctx context.Context, path, property string) (string, error) {
+	filter := []any{
+		[]any{[]any{"id", "=", path}},
+		map[string]any{"get": true},
+	}
+
+	var ds struct {
+		UserProperties map[string]struct {
+			Value string `json:"value"`
+		} `json:"user_properties"`
+	}
+
+	if err := c.call(ctx, "pool.dataset.query", filter, &ds); err != nil {
+		return "", fmt.Errorf("pool.dataset.query %q failed: %w", path, err)
+	}
+
+	if prop, ok := ds.UserProperties[property]; ok {
+		return prop.Value, nil
+	}
+
+	return "", nil
 }
 
 // EnsureDataset creates a FILESYSTEM dataset if it doesn't exist.
@@ -359,28 +394,16 @@ func (c *Client) RollbackSnapshot(ctx context.Context, snapshotID string) error 
 	return nil
 }
 
-// PoolFreeSpace returns the available space in bytes for a ZFS pool.
-// JSON-RPC method: pool.query with filter [["name", "=", pool]]
+// PoolFreeSpace returns the usable available space in bytes for a ZFS pool.
+// Queries the root dataset for accurate values that match the TrueNAS UI
+// (accounts for ZFS overhead, parity, and metadata).
 func (c *Client) PoolFreeSpace(ctx context.Context, pool string) (int64, error) {
-	filter := []any{
-		[]any{[]any{"name", "=", pool}},
+	ds, err := c.getRootDatasetSpace(ctx, pool)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query pool %q space: %w", pool, err)
 	}
 
-	var pools []struct {
-		Name    string `json:"name"`
-		Healthy bool   `json:"healthy"`
-		Free    int64  `json:"free"`
-	}
-
-	if err := c.call(ctx, "pool.query", filter, &pools); err != nil {
-		return 0, fmt.Errorf("pool.query failed: %w", err)
-	}
-
-	if len(pools) == 0 {
-		return 0, fmt.Errorf("pool %q not found", pool)
-	}
-
-	return pools[0].Free, nil
+	return ds.Available.Parsed, nil
 }
 
 // SystemMemoryAvailable returns the available system memory in bytes.
@@ -436,4 +459,8 @@ func (c *Client) NetworkInterfaceValid(ctx context.Context, networkInterface str
 	_, exists := choices[networkInterface]
 
 	return exists, nil
+}
+
+func boolPtr(b bool) *bool {
+	return &b
 }
