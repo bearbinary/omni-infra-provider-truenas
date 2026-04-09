@@ -307,6 +307,47 @@ func TestIntegration_VMLifecycle(t *testing.T) {
 	require.NoError(t, err, "deleting already-gone VM should not error")
 }
 
+// --- VM UUID (SMBIOS identity for Omni correlation) ---
+
+func TestIntegration_VMCreateWithUUID(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	vmName := "omniinttest" + uniqueName("uuid")
+	testUUID := "01970fba-1234-7000-8000-abcdef012345"
+
+	vm, err := c.CreateVM(ctx, CreateVMRequest{
+		Name:        vmName,
+		Description: "UUID integration test — safe to delete",
+		UUID:        testUUID,
+		VCPUs:       1,
+		Memory:      512,
+		Bootloader:  "UEFI",
+		Autostart:   false,
+	})
+	require.NoError(t, err, "vm.create should accept uuid field")
+	assert.Greater(t, vm.ID, 0)
+
+	t.Cleanup(func() {
+		c.StopVM(context.Background(), vm.ID, true) //nolint:errcheck
+		c.DeleteVM(context.Background(), vm.ID)     //nolint:errcheck
+	})
+
+	// Query the VM raw to verify UUID was persisted
+	var rawVM map[string]any
+	filter := []any{
+		[]any{[]any{"id", "=", vm.ID}},
+		map[string]any{"get": true},
+	}
+
+	err = c.call(ctx, "vm.query", filter, &rawVM)
+	require.NoError(t, err, "should query VM")
+
+	actualUUID, ok := rawVM["uuid"].(string)
+	require.True(t, ok, "VM should have uuid field in response")
+	assert.Equal(t, testUUID, actualUUID, "UUID should match what was passed to vm.create")
+}
+
 // --- Device Attachment (on Stopped VM) ---
 
 func TestIntegration_DeviceAttachment(t *testing.T) {
