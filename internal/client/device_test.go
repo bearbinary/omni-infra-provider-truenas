@@ -65,3 +65,22 @@ func TestAddDisk(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "DISK", dev.Attributes["dtype"])
 }
+
+func TestAddDiskWithOrder(t *testing.T) {
+	var capturedOrder float64
+
+	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
+		assert.Equal(t, methodDeviceCreate, method)
+
+		var req map[string]any
+		json.Unmarshal(params, &req) //nolint:errcheck
+		capturedOrder = req["order"].(float64)
+
+		return Device{ID: 5, VM: 42, Attributes: map[string]any{"dtype": "DISK"}}, nil
+	})
+
+	dev, err := c.AddDiskWithOrder(context.Background(), 42, "ssd/omni-vms/test-disk-1", 1002)
+	require.NoError(t, err)
+	assert.Equal(t, 5, dev.ID)
+	assert.Equal(t, float64(1002), capturedOrder)
+}

@@ -9,10 +9,18 @@ import (
 
 // Data is the provider custom machine config from the MachineClass.
 // Fields map to the schema.json that is reported to Omni.
+
 // AdditionalNIC describes an extra NIC to attach to the VM beyond the primary.
 type AdditionalNIC struct {
 	NetworkInterface string `yaml:"network_interface"` // Required: bridge, VLAN, or physical interface
 	Type             string `yaml:"type,omitempty"`    // VIRTIO (default) or E1000
+}
+
+// AdditionalDisk describes an extra disk to attach to the VM beyond the root disk.
+type AdditionalDisk struct {
+	Size      int    `yaml:"size"`                // Size in GiB (required)
+	Pool      string `yaml:"pool,omitempty"`      // Pool override (defaults to primary pool)
+	Encrypted bool   `yaml:"encrypted,omitempty"` // Per-disk encryption toggle
 }
 
 type Data struct {
@@ -32,6 +40,9 @@ type Data struct {
 	// Each segment must be a valid ZFS name (no slashes in individual segments).
 	// Example: "previewk8/k8" places zvols at default/previewk8/k8/omni-vms/...
 	DatasetPrefix string `yaml:"dataset_prefix,omitempty"`
+
+	// Multi-disk: attach additional data disks beyond the root disk
+	AdditionalDisks []AdditionalDisk `yaml:"additional_disks,omitempty"`
 
 	// Multi-NIC: attach additional NICs for network segmentation
 	AdditionalNICs []AdditionalNIC `yaml:"additional_nics,omitempty"`
@@ -155,6 +166,22 @@ func (d *Data) Validate() error {
 			}
 
 			if err := validateSafeName(fmt.Sprintf("dataset_prefix segment %d (%q)", i, seg), seg); err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(d.AdditionalDisks) > 16 {
+		return fmt.Errorf("additional_disks: maximum 16 additional disks allowed, got %d", len(d.AdditionalDisks))
+	}
+
+	for i, disk := range d.AdditionalDisks {
+		if disk.Size <= 0 {
+			return fmt.Errorf("additional_disks[%d]: size must be > 0", i)
+		}
+
+		if disk.Pool != "" {
+			if err := validateSafeName(fmt.Sprintf("additional_disks[%d].pool", i), disk.Pool); err != nil {
 				return err
 			}
 		}

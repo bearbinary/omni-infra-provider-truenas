@@ -58,7 +58,7 @@ type NICConfig struct {
 // nicAttach can be a bridge (e.g., "br100"), VLAN interface (e.g., "vlan666"),
 // or physical interface (e.g., "enp5s0").
 func (c *Client) AddNIC(ctx context.Context, vmID int, nicAttach string) (*Device, error) {
-	return c.AddNICWithConfig(ctx, vmID, NICConfig{NetworkInterface: nicAttach}, 1003)
+	return c.AddNICWithConfig(ctx, vmID, NICConfig{NetworkInterface: nicAttach}, 2001)
 }
 
 // AddNICWithConfig attaches a NIC device to a VM with full configuration options.
@@ -178,9 +178,14 @@ func (c *Client) ResetVMNVRAM(ctx context.Context, vmID int) error {
 
 // AddDisk attaches a DISK device to a VM pointing to a zvol path.
 func (c *Client) AddDisk(ctx context.Context, vmID int, zvolPath string) (*Device, error) {
+	return c.AddDiskWithOrder(ctx, vmID, zvolPath, 1001)
+}
+
+// AddDiskWithOrder attaches a DISK device to a VM with a specific boot order.
+func (c *Client) AddDiskWithOrder(ctx context.Context, vmID int, zvolPath string, order int) (*Device, error) {
 	return c.AddDevice(ctx, AddDeviceRequest{
 		VM:    vmID,
-		Order: 1001,
+		Order: order,
 		Attributes: map[string]any{
 			"dtype": "DISK",
 			"type":  "VIRTIO",

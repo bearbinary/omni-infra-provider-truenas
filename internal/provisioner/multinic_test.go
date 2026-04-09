@@ -198,4 +198,3 @@ func TestValidate_MaxNICs(t *testing.T) {
 	err := d.Validate()
 	require.NoError(t, err)
 }
-

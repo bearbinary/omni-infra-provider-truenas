@@ -12,5 +12,7 @@ message MachineSpec {
   int32 vm_id = 5;
   string zvol_path = 6;
   int32 cdrom_device_id = 7;
-  string last_upgrade_snapshot = 8;  // Snapshot ID from the most recent pre-upgrade snapshot
+  reserved 8;
+  reserved "last_upgrade_snapshot";
+  repeated string additional_zvol_paths = 9;  // Paths of additional data zvols for cleanup tracking
 }

@@ -89,6 +89,118 @@ func TestData_ApplyDefaults(t *testing.T) {
 	})
 }
 
+func TestValidate_AdditionalDisks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid additional disks", func(t *testing.T) {
+		d := Data{
+			Pool:             "tank",
+			NetworkInterface: "br0",
+			AdditionalDisks: []AdditionalDisk{
+				{Size: 100, Pool: "ssd"},
+				{Size: 200},
+				{Size: 50, Encrypted: true},
+			},
+		}
+		assert.NoError(t, d.Validate())
+	})
+
+	t.Run("zero size rejected", func(t *testing.T) {
+		d := Data{
+			Pool:             "tank",
+			NetworkInterface: "br0",
+			AdditionalDisks:  []AdditionalDisk{{Size: 0}},
+		}
+		err := d.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "size must be > 0")
+	})
+
+	t.Run("negative size rejected", func(t *testing.T) {
+		d := Data{
+			Pool:             "tank",
+			NetworkInterface: "br0",
+			AdditionalDisks:  []AdditionalDisk{{Size: -10}},
+		}
+		assert.Error(t, d.Validate())
+	})
+
+	t.Run("unsafe pool name rejected", func(t *testing.T) {
+		d := Data{
+			Pool:             "tank",
+			NetworkInterface: "br0",
+			AdditionalDisks:  []AdditionalDisk{{Size: 100, Pool: "../escape"}},
+		}
+		err := d.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unsafe characters")
+	})
+
+	t.Run("too many disks rejected", func(t *testing.T) {
+		disks := make([]AdditionalDisk, 17)
+		for i := range disks {
+			disks[i] = AdditionalDisk{Size: 10}
+		}
+
+		d := Data{
+			Pool:             "tank",
+			NetworkInterface: "br0",
+			AdditionalDisks:  disks,
+		}
+		err := d.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "maximum 16")
+	})
+
+	t.Run("empty additional disks valid", func(t *testing.T) {
+		d := Data{Pool: "tank", NetworkInterface: "br0"}
+		assert.NoError(t, d.Validate())
+	})
+}
+
+func TestData_AdditionalDisksPreserved(t *testing.T) {
+	t.Parallel()
+
+	cfg := ProviderConfig{DefaultPool: "tank", DefaultNetworkInterface: "br0"}
+
+	d := Data{
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100, Pool: "ssd"},
+			{Size: 500, Encrypted: true},
+		},
+	}
+	d.ApplyDefaults(cfg)
+
+	assert.Len(t, d.AdditionalDisks, 2)
+	assert.Equal(t, 100, d.AdditionalDisks[0].Size)
+	assert.Equal(t, "ssd", d.AdditionalDisks[0].Pool)
+	assert.Equal(t, 500, d.AdditionalDisks[1].Size)
+	assert.True(t, d.AdditionalDisks[1].Encrypted)
+}
+
+func TestData_AdditionalDisks_PoolDefaultsToEmpty(t *testing.T) {
+	t.Parallel()
+
+	// When pool is omitted, it should remain empty in the struct.
+	// The provisioner is responsible for defaulting to the primary pool at runtime.
+	d := Data{
+		Pool:            "tank",
+		AdditionalDisks: []AdditionalDisk{{Size: 50}},
+	}
+
+	assert.Empty(t, d.AdditionalDisks[0].Pool)
+}
+
+func TestData_EmptyAdditionalDisks(t *testing.T) {
+	t.Parallel()
+
+	cfg := ProviderConfig{DefaultPool: "tank"}
+	d := Data{}
+	d.ApplyDefaults(cfg)
+
+	assert.Nil(t, d.AdditionalDisks)
+}
+
 func TestExtensionMerge(t *testing.T) {
 	t.Parallel()
 	t.Run("defaults only", func(t *testing.T) {

@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/api/specs"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
@@ -70,60 +68,31 @@ func TestMaybeResizeZvol_ResizeFails_Fatal(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to resize zvol")
 }
 
-func TestSnapshotBeforeUpgrade_FailureNonFatal(t *testing.T) {
-	// Snapshot failure should NOT block the upgrade
+func TestCleanupAdditionalZvol_NotFound_Idempotent(t *testing.T) {
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "zfs.snapshot.create" {
-			return nil, errors.New("snapshot failed")
+		if method == "pool.dataset.delete" {
+			return nil, &client.APIError{Code: client.ErrCodeNotFound, Message: "not found"}
 		}
 
 		return nil, nil
 	})
 
-	logger, _ := zap.NewDevelopment()
-
-	// Should not panic or return error
-	p.snapshotBeforeUpgrade(context.Background(), logger, "tank/test", "v1.12.4", "v1.12.5")
+	// Additional zvol already gone — should not error
+	err := p.cleanupZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1")
+	assert.NoError(t, err, "deleting nonexistent additional zvol should be idempotent")
 }
 
-func TestEnforceSnapshotRetention_ListFails_NonFatal(t *testing.T) {
+func TestCleanupAdditionalZvol_DeleteFails_Fatal(t *testing.T) {
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "zfs.snapshot.query" {
-			return nil, errors.New("list failed")
+		if method == "pool.dataset.delete" {
+			return nil, errors.New("disk I/O error")
 		}
 
 		return nil, nil
 	})
 
-	// Should not panic
-	p.enforceSnapshotRetention(context.Background(), testLogger(), "tank/test", 3)
-}
-
-func TestEnforceSnapshotRetention_DeleteFails_NonFatal(t *testing.T) {
-	// Delete failure for individual snapshots should not stop retention
-	var deleteAttempts atomic.Int32
-	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "zfs.snapshot.query" {
-			return []client.Snapshot{
-				{ID: "tank/test@omni-snap-1", Name: "omni-snap-1"},
-				{ID: "tank/test@omni-snap-2", Name: "omni-snap-2"},
-				{ID: "tank/test@omni-snap-3", Name: "omni-snap-3"},
-				{ID: "tank/test@omni-snap-4", Name: "omni-snap-4"},
-			}, nil
-		}
-
-		if method == "zfs.snapshot.delete" {
-			deleteAttempts.Add(1)
-
-			return nil, errors.New("delete failed")
-		}
-
-		return nil, nil
-	})
-
-	p.enforceSnapshotRetention(context.Background(), testLogger(), "tank/test", 3)
-
-	assert.Equal(t, int32(1), deleteAttempts.Load(), "should attempt to delete 1 snapshot (4 - 3 = 1)")
+	err := p.cleanupZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1")
+	assert.Error(t, err, "real delete failure should be fatal")
 }
 
 func TestCleanupVM_StopFails_ContinuesDelete(t *testing.T) {

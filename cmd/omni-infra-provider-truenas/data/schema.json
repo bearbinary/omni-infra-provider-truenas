@@ -83,6 +83,37 @@
       },
       "description": "Additional Talos system extensions (e.g., siderolabs/iscsi-tools). qemu-guest-agent, nfs-utils, and util-linux-tools are always included."
     },
+    "additional_disks": {
+      "type": "array",
+      "title": "Additional Disks",
+      "maxItems": 16,
+      "description": "Extra data disks beyond the root disk. Each disk creates a separate zvol attached to the VM. Use for dedicated etcd disks (fast SSD pool), bulk data disks (HDD pool), or node-local storage (Longhorn).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "integer",
+            "title": "Disk Size (GiB)",
+            "minimum": 1,
+            "maximum": 1048576,
+            "description": "Disk size in GiB"
+          },
+          "pool": {
+            "type": "string",
+            "title": "ZFS Pool",
+            "maxLength": 253,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+            "description": "ZFS pool for this disk (defaults to the primary pool)"
+          },
+          "encrypted": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable ZFS native encryption on this disk"
+          }
+        },
+        "required": ["size"]
+      }
+    },
     "additional_nics": {
       "type": "array",
       "title": "Additional NICs",

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 )
 
 // UserProperty is a key-value pair for ZFS user properties.
@@ -20,9 +19,9 @@ type CreateDatasetRequest struct {
 	Name              string             `json:"name"`                         // Full path, e.g. "tank/talos-iso" or "tank/omni-vms/vm-1"
 	Type              string             `json:"type"`                         // "FILESYSTEM" or "VOLUME"
 	Volsize           int64              `json:"volsize,omitempty"`            // Required for VOLUME type, in bytes
-	Encryption         bool               `json:"encryption,omitempty"`          // Enable ZFS native encryption
-	InheritEncryption  *bool              `json:"inherit_encryption,omitempty"`  // Must be false when encryption is explicitly enabled
-	EncryptionOptions  *EncryptionOptions `json:"encryption_options,omitempty"`  // Encryption configuration
+	Encryption        bool               `json:"encryption,omitempty"`         // Enable ZFS native encryption
+	InheritEncryption *bool              `json:"inherit_encryption,omitempty"` // Must be false when encryption is explicitly enabled
+	EncryptionOptions *EncryptionOptions `json:"encryption_options,omitempty"` // Encryption configuration
 	UserProperties    []UserProperty     `json:"user_properties,omitempty"`    // Custom ZFS user properties
 }
 
@@ -80,9 +79,9 @@ func (c *Client) CreateZvol(ctx context.Context, name string, sizeGiB int, props
 // CreateEncryptedZvol creates an encrypted zvol with the given name, size, and passphrase.
 func (c *Client) CreateEncryptedZvol(ctx context.Context, name string, sizeGiB int, passphrase string, props ...[]UserProperty) (*Dataset, error) {
 	req := CreateDatasetRequest{
-		Name:       name,
-		Type:       "VOLUME",
-		Volsize:    int64(sizeGiB) * 1024 * 1024 * 1024,
+		Name:              name,
+		Type:              "VOLUME",
+		Volsize:           int64(sizeGiB) * 1024 * 1024 * 1024,
 		Encryption:        true,
 		InheritEncryption: boolPtr(false),
 		EncryptionOptions: &EncryptionOptions{
@@ -202,8 +201,6 @@ func (c *Client) DatasetExists(ctx context.Context, path string) (bool, error) {
 
 	return len(datasets) > 0, nil
 }
-
-
 
 // ManagedZvol represents a zvol tagged with org.omni:managed=true.
 type ManagedZvol struct {
@@ -382,78 +379,6 @@ func (c *Client) ResizeZvol(ctx context.Context, path string, newSizeGiB int) er
 
 	if err := c.call(ctx, "pool.dataset.update", params, nil); err != nil {
 		return fmt.Errorf("pool.dataset.update %q (resize to %d GiB) failed: %w", path, newSizeGiB, err)
-	}
-
-	return nil
-}
-
-// --- ZFS Snapshots ---
-
-// Snapshot represents a ZFS snapshot.
-type Snapshot struct {
-	ID      string `json:"id"`      // Full path: pool/dataset@snapname
-	Name    string `json:"name"`    // Full name including dataset
-	Dataset string `json:"dataset"` // Parent dataset path
-}
-
-// CreateSnapshot creates a ZFS snapshot of a dataset or zvol.
-// JSON-RPC method: zfs.snapshot.create
-func (c *Client) CreateSnapshot(ctx context.Context, dataset, name string) error {
-	params := map[string]any{
-		"dataset": dataset,
-		"name":    name,
-	}
-
-	if err := c.call(ctx, "zfs.snapshot.create", params, nil); err != nil {
-		return fmt.Errorf("zfs.snapshot.create %q@%s failed: %w", dataset, name, err)
-	}
-
-	return nil
-}
-
-// ListSnapshots returns all snapshots for a dataset.
-// JSON-RPC method: zfs.snapshot.query
-func (c *Client) ListSnapshots(ctx context.Context, dataset string) ([]Snapshot, error) {
-	var allSnaps []Snapshot
-
-	if err := c.call(ctx, "zfs.snapshot.query", nil, &allSnaps); err != nil {
-		return nil, fmt.Errorf("zfs.snapshot.query failed: %w", err)
-	}
-
-	// Filter client-side — TrueNAS snapshot query filtering varies between versions
-	prefix := dataset + "@"
-	var snaps []Snapshot
-
-	for _, s := range allSnaps {
-		if strings.HasPrefix(s.ID, prefix) {
-			snaps = append(snaps, s)
-		}
-	}
-
-	return snaps, nil
-}
-
-// DeleteSnapshot deletes a ZFS snapshot.
-// JSON-RPC method: zfs.snapshot.delete
-func (c *Client) DeleteSnapshot(ctx context.Context, snapshotID string) error {
-	if err := c.call(ctx, "zfs.snapshot.delete", []any{snapshotID}, nil); err != nil {
-		if IsNotFound(err) {
-			return nil
-		}
-
-		return fmt.Errorf("zfs.snapshot.delete %q failed: %w", snapshotID, err)
-	}
-
-	return nil
-}
-
-// RollbackSnapshot rolls back a dataset to a snapshot.
-// JSON-RPC method: zfs.snapshot.rollback
-func (c *Client) RollbackSnapshot(ctx context.Context, snapshotID string) error {
-	params := []any{snapshotID, map[string]any{"force": true}}
-
-	if err := c.call(ctx, "zfs.snapshot.rollback", params, nil); err != nil {
-		return fmt.Errorf("zfs.snapshot.rollback %q failed: %w", snapshotID, err)
 	}
 
 	return nil

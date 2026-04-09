@@ -233,64 +233,178 @@ func TestMaybeResizeZvol_SkipsWhenShrinking(t *testing.T) {
 	assert.False(t, resized, "should not shrink zvol")
 }
 
-// --- Snapshot Retention Tests ---
+// --- Additional Disk Tests ---
 
-func TestEnforceSnapshotRetention_DeletesOldest(t *testing.T) {
-	var deleted []string
-	p := testProvisioner(func(method string, params json.RawMessage) (any, error) {
-		if method == "zfs.snapshot.query" {
-			return []client.Snapshot{
-				{ID: "tank/test@omni-snap-1", Name: "omni-snap-1"},
-				{ID: "tank/test@omni-snap-2", Name: "omni-snap-2"},
-				{ID: "tank/test@omni-snap-3", Name: "omni-snap-3"},
-				{ID: "tank/test@omni-snap-4", Name: "omni-snap-4"},
-				{ID: "tank/test@omni-snap-5", Name: "omni-snap-5"},
-			}, nil
-		}
+func TestAdditionalDisk_PoolDefaultsToPrimary(t *testing.T) {
+	d := Data{
+		Pool: "tank",
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100}, // No pool specified
+		},
+	}
 
-		if method == "zfs.snapshot.delete" {
-			var args []string
-			json.Unmarshal(params, &args) //nolint:errcheck
-			deleted = append(deleted, args[0])
+	disk := d.AdditionalDisks[0]
+	diskPool := disk.Pool
+	if diskPool == "" {
+		diskPool = d.Pool
+	}
 
-			return true, nil
-		}
-
-		return nil, nil
-	})
-
-	p.enforceSnapshotRetention(context.Background(), testLogger(), "tank/test", 3)
-
-	assert.Len(t, deleted, 2, "should delete 2 oldest snapshots")
-	assert.Contains(t, deleted, "tank/test@omni-snap-1")
-	assert.Contains(t, deleted, "tank/test@omni-snap-2")
+	assert.Equal(t, "tank", diskPool)
 }
 
-func TestEnforceSnapshotRetention_SkipsNonOmniSnapshots(t *testing.T) {
-	var deleted []string
+func TestAdditionalDisk_PoolOverride(t *testing.T) {
+	d := Data{
+		Pool: "tank",
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100, Pool: "ssd"},
+		},
+	}
+
+	disk := d.AdditionalDisks[0]
+	diskPool := disk.Pool
+	if diskPool == "" {
+		diskPool = d.Pool
+	}
+
+	assert.Equal(t, "ssd", diskPool)
+}
+
+func TestAdditionalDisk_ZvolPathWithPrefix(t *testing.T) {
+	d := Data{
+		Pool:          "tank",
+		DatasetPrefix: "prod/k8s",
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100, Pool: "ssd"},
+		},
+	}
+
+	disk := d.AdditionalDisks[0]
+	diskPool := disk.Pool
+	if diskPool == "" {
+		diskPool = d.Pool
+	}
+
+	diskBasePath := diskPool
+	if d.DatasetPrefix != "" {
+		diskBasePath = diskPool + "/" + d.DatasetPrefix
+	}
+
+	requestID := "test-req-123"
+	zvolPath := diskBasePath + "/omni-vms/" + requestID + "-disk-1"
+
+	assert.Equal(t, "ssd/prod/k8s/omni-vms/test-req-123-disk-1", zvolPath)
+}
+
+func TestAdditionalDisk_ZvolPathWithoutPrefix(t *testing.T) {
+	d := Data{
+		Pool: "tank",
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100, Pool: "ssd"},
+		},
+	}
+
+	disk := d.AdditionalDisks[0]
+	diskPool := disk.Pool
+	if diskPool == "" {
+		diskPool = d.Pool
+	}
+
+	diskBasePath := diskPool
+	if d.DatasetPrefix != "" {
+		diskBasePath = diskPool + "/" + d.DatasetPrefix
+	}
+
+	requestID := "test-req-456"
+	zvolPath := diskBasePath + "/omni-vms/" + requestID + "-disk-1"
+
+	assert.Equal(t, "ssd/omni-vms/test-req-456-disk-1", zvolPath)
+}
+
+func TestPoolSpaceCheck_AggregatesMultipleDisksOnSamePool(t *testing.T) {
+	d := Data{
+		Pool:     "tank",
+		DiskSize: 40,
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100},             // Same pool as root
+			{Size: 200},             // Same pool as root
+			{Size: 50, Pool: "ssd"}, // Different pool
+		},
+	}
+
+	poolRequired := map[string]int{d.Pool: d.DiskSize}
+	for _, disk := range d.AdditionalDisks {
+		diskPool := disk.Pool
+		if diskPool == "" {
+			diskPool = d.Pool
+		}
+
+		poolRequired[diskPool] += disk.Size
+	}
+
+	assert.Equal(t, 340, poolRequired["tank"], "root (40) + two additional (100+200) on same pool")
+	assert.Equal(t, 50, poolRequired["ssd"], "one additional disk on ssd")
+}
+
+// --- Additional Disk Resize Tests ---
+
+func TestAdditionalDisk_ResizeOnReProvision(t *testing.T) {
+	var resizedPath string
+	var resizedSize int64
+
 	p := testProvisioner(func(method string, params json.RawMessage) (any, error) {
-		if method == "zfs.snapshot.query" {
-			return []client.Snapshot{
-				{ID: "tank/test@manual-backup", Name: "manual-backup"},
-				{ID: "tank/test@omni-snap-1", Name: "omni-snap-1"},
-				{ID: "tank/test@omni-snap-2", Name: "omni-snap-2"},
+		if method == "pool.dataset.query" {
+			// Current size is 50 GiB
+			return map[string]any{
+				"volsize": map[string]any{"parsed": int64(50 * 1024 * 1024 * 1024)},
 			}, nil
 		}
 
-		if method == "zfs.snapshot.delete" {
-			var args []string
+		if method == "pool.dataset.update" {
+			var args []json.RawMessage
 			json.Unmarshal(params, &args) //nolint:errcheck
-			deleted = append(deleted, args[0])
 
-			return true, nil
+			json.Unmarshal(args[0], &resizedPath) //nolint:errcheck
+
+			var opts map[string]any
+			json.Unmarshal(args[1], &opts) //nolint:errcheck
+			resizedSize = int64(opts["volsize"].(float64))
+
+			return nil, nil
 		}
 
 		return nil, nil
 	})
 
-	p.enforceSnapshotRetention(context.Background(), testLogger(), "tank/test", 3)
+	// Simulate re-provision: disk exists at 50 GiB, config says 100 GiB
+	err := p.maybeResizeZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1", 100)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100*1024*1024*1024), resizedSize)
+}
 
-	assert.Empty(t, deleted, "should not delete anything — only 2 omni snapshots, under limit of 3")
+func TestAdditionalDisk_NoShrinkOnReProvision(t *testing.T) {
+	resized := false
+
+	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
+		if method == "pool.dataset.query" {
+			// Current size is 100 GiB
+			return map[string]any{
+				"volsize": map[string]any{"parsed": int64(100 * 1024 * 1024 * 1024)},
+			}, nil
+		}
+
+		if method == "pool.dataset.update" {
+			resized = true
+
+			return nil, nil
+		}
+
+		return nil, nil
+	})
+
+	// Config says 50 GiB but disk is already 100 GiB — should not shrink
+	err := p.maybeResizeZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1", 50)
+	require.NoError(t, err)
+	assert.False(t, resized, "should not shrink additional disk")
 }
 
 func TestHandleExistingVM_Stopped_StartFails(t *testing.T) {

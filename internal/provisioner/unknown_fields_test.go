@@ -15,7 +15,7 @@ func TestKnownFields_ContainsAllStructFields(t *testing.T) {
 	expectedFields := []string{
 		"pool", "network_interface", "boot_method", "architecture",
 		"extensions", "encrypted", "cpus", "memory", "disk_size",
-		"dataset_prefix", "additional_nics", "advertised_subnets",
+		"dataset_prefix", "additional_disks", "additional_nics", "advertised_subnets",
 	}
 
 	for _, f := range expectedFields {
@@ -27,9 +27,9 @@ func TestUnknownFields_NoUnknown(t *testing.T) {
 	t.Parallel()
 
 	rawData := map[string]any{
-		"pool":     "default",
-		"cpus":     2,
-		"memory":   4096,
+		"pool":      "default",
+		"cpus":      2,
+		"memory":    4096,
 		"disk_size": 40,
 	}
 
@@ -63,17 +63,18 @@ func TestUnknownFields_AllKnown(t *testing.T) {
 	t.Parallel()
 
 	rawData := map[string]any{
-		"pool":              "default",
-		"network_interface": "br100",
-		"boot_method":       "UEFI",
-		"architecture":      "amd64",
-		"extensions":        []string{},
-		"encrypted":         false,
-		"cpus":              4,
-		"memory":            8192,
-		"disk_size":         100,
-		"dataset_prefix":    "prod/k8s",
-		"additional_nics":   []any{},
+		"pool":               "default",
+		"network_interface":  "br100",
+		"boot_method":        "UEFI",
+		"architecture":       "amd64",
+		"extensions":         []string{},
+		"encrypted":          false,
+		"cpus":               4,
+		"memory":             8192,
+		"disk_size":          100,
+		"dataset_prefix":     "prod/k8s",
+		"additional_disks":   []any{},
+		"additional_nics":    []any{},
 		"advertised_subnets": "192.168.1.0/24",
 	}
 

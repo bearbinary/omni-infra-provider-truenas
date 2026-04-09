@@ -160,35 +160,3 @@ func TestValidatePool_Sequence(t *testing.T) {
 
 	assert.True(t, rec.hasCall("pool.query"))
 }
-
-// --- Snapshot retention sequence ---
-
-func TestSnapshotRetention_Sequence(t *testing.T) {
-	t.Parallel()
-
-	var deletedSnaps []string
-	p := NewProvisioner(client.NewMockClient(func(method string, params json.RawMessage) (any, error) {
-		switch method {
-		case "zfs.snapshot.query":
-			return []client.Snapshot{
-				{ID: "tank/test@omni-pre-1", Name: "omni-pre-1"},
-				{ID: "tank/test@omni-pre-2", Name: "omni-pre-2"},
-				{ID: "tank/test@omni-pre-3", Name: "omni-pre-3"},
-				{ID: "tank/test@omni-pre-4", Name: "omni-pre-4"},
-				{ID: "tank/test@user-manual", Name: "user-manual"}, // Not omni-managed
-			}, nil
-		case "zfs.snapshot.delete":
-			var args []string
-			json.Unmarshal(params, &args) //nolint:errcheck
-			deletedSnaps = append(deletedSnaps, args[0])
-			return true, nil
-		}
-		return nil, nil
-	}), ProviderConfig{DefaultPool: "tank"})
-
-	p.enforceSnapshotRetention(context.Background(), zap.NewNop(), "tank/test", 3)
-
-	// Should delete oldest omni snapshot, keep newest 3, leave user snapshot alone
-	assert.Len(t, deletedSnaps, 1)
-	assert.Equal(t, "tank/test@omni-pre-1", deletedSnaps[0])
-}

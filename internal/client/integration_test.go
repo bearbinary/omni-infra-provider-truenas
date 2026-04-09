@@ -449,97 +449,6 @@ func TestIntegration_ZvolResize(t *testing.T) {
 	assert.Equal(t, int64(2*1024*1024*1024), size, "resized size should be 2 GiB")
 }
 
-// --- ZFS Snapshots ---
-
-func TestIntegration_SnapshotLifecycle(t *testing.T) {
-	settleTime(t)
-	c := testClient(t)
-	ctx := context.Background()
-	pool := testPool(t)
-
-	parentDS := pool + "/omni-integration-test-snap"
-	err := c.EnsureDataset(ctx, parentDS)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
-	})
-
-	zvolName := parentDS + "/" + uniqueName("zvol")
-
-	_, err = c.CreateZvol(ctx, zvolName, 1)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		// Delete snapshots first, then zvol
-		snaps, _ := c.ListSnapshots(context.Background(), zvolName)
-		for _, s := range snaps {
-			c.DeleteSnapshot(context.Background(), s.ID) //nolint:errcheck
-		}
-		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
-	})
-
-	// Create snapshot
-	snapName := "omni-test-" + uniqueName("snap")
-	err = c.CreateSnapshot(ctx, zvolName, snapName)
-	require.NoError(t, err, "should create snapshot")
-
-	// List snapshots — ours should be there
-	snaps, err := c.ListSnapshots(ctx, zvolName)
-	require.NoError(t, err)
-
-	var found bool
-	for _, s := range snaps {
-		if strings.HasSuffix(s.ID, "@"+snapName) {
-			found = true
-
-			break
-		}
-	}
-
-	assert.True(t, found, "created snapshot should appear in list")
-
-	// Create a second snapshot
-	snap2Name := "omni-test-" + uniqueName("snap2")
-	err = c.CreateSnapshot(ctx, zvolName, snap2Name)
-	require.NoError(t, err)
-
-	// List again — should have 2
-	snaps, err = c.ListSnapshots(ctx, zvolName)
-	require.NoError(t, err)
-
-	omniCount := 0
-	for _, s := range snaps {
-		if strings.Contains(s.ID, "@omni-test-") {
-			omniCount++
-		}
-	}
-
-	assert.Equal(t, 2, omniCount, "should have 2 omni snapshots")
-
-	// Delete first snapshot
-	snapID := zvolName + "@" + snapName
-	err = c.DeleteSnapshot(ctx, snapID)
-	require.NoError(t, err, "should delete snapshot")
-
-	// Delete again — idempotent
-	err = c.DeleteSnapshot(ctx, snapID)
-	require.NoError(t, err, "deleting already-gone snapshot should not error")
-
-	// List — should have 1
-	snaps, err = c.ListSnapshots(ctx, zvolName)
-	require.NoError(t, err)
-
-	omniCount = 0
-	for _, s := range snaps {
-		if strings.Contains(s.ID, "@omni-test-") {
-			omniCount++
-		}
-	}
-
-	assert.Equal(t, 1, omniCount, "should have 1 omni snapshot after deletion")
-}
-
 // --- Error Path Tests ---
 
 func TestIntegration_CreateZvol_PoolFull(t *testing.T) {
@@ -572,14 +481,6 @@ func TestIntegration_ResizeZvol_NotFound(t *testing.T) {
 
 	err := c.ResizeZvol(ctx, "default/nonexistent-zvol-xyz", 10)
 	assert.Error(t, err, "resizing a nonexistent zvol should fail")
-}
-
-func TestIntegration_SnapshotNonexistent(t *testing.T) {
-	c := testClient(t)
-	ctx := context.Background()
-
-	err := c.CreateSnapshot(ctx, "default/nonexistent-dataset-xyz", "test-snap")
-	assert.Error(t, err, "snapshotting a nonexistent dataset should fail")
 }
 
 func TestIntegration_PoolFreeSpace(t *testing.T) {
@@ -724,60 +625,6 @@ func TestIntegration_DeviceDelete(t *testing.T) {
 	// Delete again — idempotent
 	err = c.DeleteDevice(ctx, dev.ID)
 	require.NoError(t, err, "double delete device should not error")
-}
-
-// --- Snapshot Rollback ---
-
-func TestIntegration_SnapshotRollback(t *testing.T) {
-	settleTime(t)
-	c := testClient(t)
-	ctx := context.Background()
-	pool := testPool(t)
-
-	parentDS := pool + "/omni-integration-test-rollback"
-	err := c.EnsureDataset(ctx, parentDS)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
-	})
-
-	zvolName := parentDS + "/" + uniqueName("zvol")
-
-	// Create 1 GiB zvol
-	_, err = c.CreateZvol(ctx, zvolName, 1)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		snaps, _ := c.ListSnapshots(context.Background(), zvolName)
-		for _, s := range snaps {
-			c.DeleteSnapshot(context.Background(), s.ID) //nolint:errcheck
-		}
-		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
-	})
-
-	// Snapshot at 1 GiB
-	snapName := "omni-rollback-test"
-	err = c.CreateSnapshot(ctx, zvolName, snapName)
-	require.NoError(t, err)
-
-	// Resize to 2 GiB
-	err = c.ResizeZvol(ctx, zvolName, 2)
-	require.NoError(t, err)
-
-	size, err := c.GetZvolSize(ctx, zvolName)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2*1024*1024*1024), size, "should be 2 GiB after resize")
-
-	// Rollback to snapshot
-	snapID := zvolName + "@" + snapName
-	err = c.RollbackSnapshot(ctx, snapID)
-	require.NoError(t, err, "should rollback to snapshot")
-
-	// Verify size reverted to 1 GiB
-	size, err = c.GetZvolSize(ctx, zvolName)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1*1024*1024*1024), size, "should be 1 GiB after rollback")
 }
 
 // --- WebSocket Reconnect Against Real TrueNAS ---

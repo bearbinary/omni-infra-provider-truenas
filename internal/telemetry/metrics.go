@@ -28,12 +28,10 @@ func WithPool(pool string) metric.MeasurementOption {
 
 // Pre-defined metric instruments for the provider.
 var (
-	VMsProvisioned      metric.Int64Counter
-	VMsDeprovisioned    metric.Int64Counter
-	VMsErrored          metric.Int64Counter
-	ZvolsResized        metric.Int64Counter
-	SnapshotsCreated    metric.Int64Counter
-	SnapshotsRolledBack metric.Int64Counter
+	VMsProvisioned   metric.Int64Counter
+	VMsDeprovisioned metric.Int64Counter
+	VMsErrored       metric.Int64Counter
+	ZvolsResized     metric.Int64Counter
 
 	// Host health gauges
 	HostCPUCores      metric.Int64Gauge
@@ -97,12 +95,6 @@ func initMetrics() {
 	)
 	ZvolsResized, _ = meter.Int64Counter("truenas.zvols.resized",
 		metric.WithDescription("Total zvols resized"),
-	)
-	SnapshotsCreated, _ = meter.Int64Counter("truenas.snapshots.created",
-		metric.WithDescription("Total ZFS snapshots created"),
-	)
-	SnapshotsRolledBack, _ = meter.Int64Counter("truenas.snapshots.rolled_back",
-		metric.WithDescription("Total ZFS snapshot rollbacks"),
 	)
 	ProvisionDuration, _ = meter.Float64Histogram("truenas.provision.duration",
 		metric.WithDescription("Duration of full VM provision in seconds"),

@@ -114,10 +114,6 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 			zap.String("to", pctx.GetTalosVersion()),
 		)
 
-		// Auto-snapshot the zvol before upgrade
-		snapID := p.snapshotBeforeUpgrade(ctx, logger, state.ZvolPath, state.TalosVersion, pctx.GetTalosVersion())
-		state.LastUpgradeSnapshot = snapID
-
 		// Swap the CDROM to the new ISO (if still attached)
 		if state.VmId != 0 && state.CdromDeviceId != 0 {
 			p.swapCDROMForUpgrade(ctx, logger, state, pctx)
@@ -312,21 +308,34 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		return fmt.Errorf("invalid MachineClass config: %w", err)
 	}
 
-	// Pre-check: verify pool has enough free space for the zvol
-	requiredBytes := int64(data.DiskSize) * 1024 * 1024 * 1024
-	freeBytes, err := p.client.PoolFreeSpace(ctx, data.Pool)
+	// Pre-check: verify pools have enough free space for all zvols
+	// Aggregate disk requirements per pool
+	poolRequiredGiB := map[string]int{data.Pool: data.DiskSize}
+	for _, disk := range data.AdditionalDisks {
+		diskPool := disk.Pool
+		if diskPool == "" {
+			diskPool = data.Pool
+		}
 
-	if err == nil {
-		logger.Debug("pool space check",
-			zap.String("pool", data.Pool),
-			zap.Int64("free_gib", freeBytes/(1024*1024*1024)),
-			zap.Int("required_gib", data.DiskSize),
-		)
+		poolRequiredGiB[diskPool] += disk.Size
 	}
 
-	if err == nil && freeBytes < requiredBytes {
-		return fmt.Errorf("pool %q has %d GiB free but VM needs %d GiB — free up space or use a different pool",
-			data.Pool, freeBytes/(1024*1024*1024), data.DiskSize)
+	for pool, requiredGiB := range poolRequiredGiB {
+		requiredBytes := int64(requiredGiB) * 1024 * 1024 * 1024
+		freeBytes, poolErr := p.client.PoolFreeSpace(ctx, pool)
+
+		if poolErr == nil {
+			logger.Debug("pool space check",
+				zap.String("pool", pool),
+				zap.Int64("free_gib", freeBytes/(1024*1024*1024)),
+				zap.Int("required_gib", requiredGiB),
+			)
+		}
+
+		if poolErr == nil && freeBytes < requiredBytes {
+			return fmt.Errorf("pool %q has %d GiB free but needs %d GiB — free up space or use a different pool",
+				pool, freeBytes/(1024*1024*1024), requiredGiB)
+		}
 	}
 
 	// Pre-check: verify VM memory doesn't exceed safe threshold of total host RAM.
@@ -468,9 +477,97 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	state.CdromDeviceId = int32(cdrom.ID)
 
-	// Attach disk
+	// Attach root disk
 	if _, err := p.client.AddDisk(ctx, vm.ID, zvolPath); err != nil {
-		return fmt.Errorf("failed to attach disk: %w", err)
+		return fmt.Errorf("failed to attach root disk: %w", err)
+	}
+
+	// Create and attach additional data disks
+	for i, disk := range data.AdditionalDisks {
+		diskPool := disk.Pool
+		if diskPool == "" {
+			diskPool = data.Pool
+		}
+
+		diskBasePath := diskPool
+		if data.DatasetPrefix != "" {
+			diskBasePath = diskPool + "/" + data.DatasetPrefix
+		}
+
+		additionalZvolPath := fmt.Sprintf("%s/omni-vms/%s-disk-%d", diskBasePath, requestID, i+1)
+
+		// Ensure parent dataset hierarchy exists on the target pool
+		if data.DatasetPrefix != "" && diskPool != data.Pool {
+			if err := p.client.EnsureDataset(ctx, diskBasePath); err != nil {
+				return fmt.Errorf("failed to ensure dataset prefix on pool %q for additional disk %d: %w", diskPool, i, err)
+			}
+		}
+
+		if err := p.client.EnsureDataset(ctx, diskBasePath+"/omni-vms"); err != nil {
+			return fmt.Errorf("failed to ensure omni-vms dataset on pool %q for additional disk %d: %w", diskPool, i, err)
+		}
+
+		if disk.Encrypted {
+			passphrase, genErr := generatePassphrase()
+			if genErr != nil {
+				return genErr
+			}
+
+			diskProps := client.OmniManagedProperties(requestID)
+			diskProps = append(diskProps, client.UserProperty{Key: passphraseProperty, Value: passphrase})
+
+			if _, err := p.client.CreateEncryptedZvol(ctx, additionalZvolPath, disk.Size, passphrase, diskProps); err != nil {
+				if !isAlreadyExists(err) {
+					return fmt.Errorf("failed to create encrypted additional disk %d: %w", i, err)
+				}
+
+				// Encrypted zvol already exists — retrieve stored passphrase and unlock if needed
+				stored, propErr := p.client.GetDatasetUserProperty(ctx, additionalZvolPath, passphraseProperty)
+				if propErr != nil {
+					return fmt.Errorf("failed to read stored passphrase from additional disk %d (%q): %w", i, additionalZvolPath, propErr)
+				}
+
+				if stored == "" {
+					return fmt.Errorf("encrypted additional disk %d (%q) exists but has no stored passphrase", i, additionalZvolPath)
+				}
+
+				if locked, lockErr := p.client.IsDatasetLocked(ctx, additionalZvolPath); lockErr == nil && locked {
+					logger.Debug("unlocking encrypted additional disk", zap.Int("index", i), zap.String("path", additionalZvolPath))
+
+					if unlockErr := p.client.UnlockDataset(ctx, additionalZvolPath, stored); unlockErr != nil {
+						return fmt.Errorf("failed to unlock encrypted additional disk %d (%q): %w", i, additionalZvolPath, unlockErr)
+					}
+				}
+
+				if resizeErr := p.maybeResizeZvol(ctx, logger, additionalZvolPath, disk.Size); resizeErr != nil {
+					return resizeErr
+				}
+			}
+		} else {
+			if _, err := p.client.CreateZvol(ctx, additionalZvolPath, disk.Size, client.OmniManagedProperties(requestID)); err != nil {
+				if !isAlreadyExists(err) {
+					return fmt.Errorf("failed to create additional disk %d: %w", i, err)
+				}
+
+				if resizeErr := p.maybeResizeZvol(ctx, logger, additionalZvolPath, disk.Size); resizeErr != nil {
+					return resizeErr
+				}
+			}
+		}
+
+		if _, err := p.client.AddDiskWithOrder(ctx, vm.ID, additionalZvolPath, 1002+i); err != nil {
+			return fmt.Errorf("failed to attach additional disk %d: %w", i, err)
+		}
+
+		state.AdditionalZvolPaths = append(state.AdditionalZvolPaths, additionalZvolPath)
+
+		logger.Info("attached additional disk",
+			zap.Int("index", i),
+			zap.String("pool", diskPool),
+			zap.Int("size_gib", disk.Size),
+			zap.Bool("encrypted", disk.Encrypted),
+			zap.String("path", additionalZvolPath),
+		)
 	}
 
 	// Attach primary NIC
@@ -496,7 +593,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			Type:             nic.Type,
 		}
 
-		dev, nicErr := p.client.AddNICWithConfig(ctx, vm.ID, nicCfg, 1004+i)
+		dev, nicErr := p.client.AddNICWithConfig(ctx, vm.ID, nicCfg, 2002+i)
 		if nicErr != nil {
 			return fmt.Errorf("failed to attach additional NIC %d (%s): %w", i, nic.NetworkInterface, nicErr)
 		}
@@ -534,12 +631,14 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	} else if len(data.AdditionalNICs) > 0 {
 		// Auto-detect the primary NIC's subnet and pin etcd/kubelet to it
 		subnet, subnetErr := p.client.InterfaceSubnet(ctx, data.NetworkInterface)
-		if subnetErr != nil {
+
+		switch {
+		case subnetErr != nil:
 			logger.Warn("could not auto-detect primary NIC subnet — set advertised_subnets manually",
 				zap.String("network_interface", data.NetworkInterface),
 				zap.Error(subnetErr),
 			)
-		} else if subnet != "" {
+		case subnet != "":
 			patchData, patchErr := buildAdvertisedSubnetsPatch(subnet)
 			if patchErr == nil && patchData != nil {
 				if cpErr := pctx.CreateConfigPatch(ctx, "advertised-subnets", patchData); cpErr != nil {
@@ -552,7 +651,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 					zap.String("vm_name", vmName),
 				)
 			}
-		} else {
+		default:
 			logger.Warn("primary NIC has no IPv4 address — set advertised_subnets manually to pin etcd/kubelet",
 				zap.String("network_interface", data.NetworkInterface),
 				zap.String("vm_name", vmName),
@@ -758,47 +857,6 @@ func (p *Provisioner) maybeResizeZvol(ctx context.Context, logger *zap.Logger, z
 	return nil
 }
 
-// snapshotBeforeUpgrade creates a ZFS snapshot before a Talos version upgrade.
-// Returns the full snapshot ID (dataset@snapname) or empty string on failure.
-func (p *Provisioner) snapshotBeforeUpgrade(ctx context.Context, logger *zap.Logger, zvolPath, oldVersion, newVersion string) string {
-	ctx, span := provTracer.Start(ctx, "provision.snapshotBeforeUpgrade",
-		trace.WithAttributes(
-			attribute.String("zvol", zvolPath),
-			attribute.String("from_version", oldVersion),
-			attribute.String("to_version", newVersion),
-		),
-	)
-	defer span.End()
-
-	snapName := fmt.Sprintf("omni-pre-upgrade-%s-%d", newVersion, time.Now().Unix())
-	snapID := zvolPath + "@" + snapName
-
-	logger.Debug("creating pre-upgrade snapshot",
-		zap.String("zvol", zvolPath),
-		zap.String("from_version", oldVersion),
-		zap.String("to_version", newVersion),
-		zap.String("snapshot", snapName),
-	)
-
-	if err := p.client.CreateSnapshot(ctx, zvolPath, snapName); err != nil {
-		logger.Warn("failed to create pre-upgrade snapshot — continuing without snapshot",
-			zap.String("zvol", zvolPath),
-			zap.Error(err),
-		)
-
-		return ""
-	}
-
-	if telemetry.SnapshotsCreated != nil {
-		telemetry.SnapshotsCreated.Add(ctx, 1)
-	}
-
-	// Enforce retention: keep only the last 3 snapshots
-	p.enforceSnapshotRetention(ctx, logger, zvolPath, 3)
-
-	return snapID
-}
-
 // swapCDROMForUpgrade updates the CDROM device to point to the new ISO.
 // This ensures that if the VM reboots from CDROM (before CDROM removal), it gets the correct Talos version.
 func (p *Provisioner) swapCDROMForUpgrade(ctx context.Context, logger *zap.Logger, state *specs.MachineSpec, pctx provision.Context[*resources.Machine]) {
@@ -830,52 +888,6 @@ func (p *Provisioner) swapCDROMForUpgrade(ctx context.Context, logger *zap.Logge
 	state.CdromDeviceId = int32(dev.ID)
 
 	logger.Debug("CDROM swapped to new ISO", zap.Int("device_id", dev.ID))
-}
-
-// enforceSnapshotRetention keeps only the last N snapshots for a dataset.
-func (p *Provisioner) enforceSnapshotRetention(ctx context.Context, logger *zap.Logger, dataset string, keep int) {
-	ctx, span := provTracer.Start(ctx, "provision.enforceSnapshotRetention",
-		trace.WithAttributes(
-			attribute.String("dataset", dataset),
-			attribute.Int("keep", keep),
-		),
-	)
-	defer span.End()
-
-	snaps, err := p.client.ListSnapshots(ctx, dataset)
-	if err != nil {
-		logger.Warn("failed to list snapshots for retention", zap.String("dataset", dataset), zap.Error(err))
-
-		return
-	}
-
-	// Only manage omni- prefixed snapshots
-	var omniSnaps []client.Snapshot
-	for _, s := range snaps {
-		// Extract snap name from ID (format: dataset@snapname)
-		snapName := s.ID
-		if idx := strings.LastIndex(s.ID, "@"); idx >= 0 {
-			snapName = s.ID[idx+1:]
-		}
-
-		if strings.HasPrefix(snapName, "omni-") {
-			omniSnaps = append(omniSnaps, s)
-		}
-	}
-
-	if len(omniSnaps) <= keep {
-		return
-	}
-
-	// Delete oldest snapshots (list is typically in creation order)
-	toDelete := omniSnaps[:len(omniSnaps)-keep]
-	for _, s := range toDelete {
-		logger.Debug("deleting old snapshot", zap.String("snapshot", s.ID))
-
-		if err := p.client.DeleteSnapshot(ctx, s.ID); err != nil {
-			logger.Warn("failed to delete old snapshot", zap.String("snapshot", s.ID), zap.Error(err))
-		}
-	}
 }
 
 // resetNVRAMIfNeeded checks if a VM's NVRAM needs resetting (e.g., after OVMF firmware update).

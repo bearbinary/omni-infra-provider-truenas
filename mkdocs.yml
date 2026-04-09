@@ -85,6 +85,7 @@ nav:
   - Architecture: architecture.md
   - Operations:
       - Upgrading: upgrading.md
+      - Backup & Recovery: backup.md
       - Troubleshooting: troubleshooting.md
       - Testing: testing.md
   - Reference:

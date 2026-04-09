@@ -11,42 +11,6 @@ import (
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 )
 
-func TestSnapshotBeforeUpgrade_ReturnsSnapID(t *testing.T) {
-	snapshotCreated := false
-	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "zfs.snapshot.create" {
-			snapshotCreated = true
-
-			return nil, nil
-		}
-
-		if method == "zfs.snapshot.query" {
-			return []client.Snapshot{}, nil
-		}
-
-		return nil, nil
-	})
-
-	snapID := p.snapshotBeforeUpgrade(context.Background(), testLogger(), "tank/test", "v1.12.4", "v1.12.5")
-
-	assert.True(t, snapshotCreated)
-	assert.Contains(t, snapID, "tank/test@omni-pre-upgrade-v1.12.5-")
-}
-
-func TestSnapshotBeforeUpgrade_ReturnsEmptyOnFailure(t *testing.T) {
-	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "zfs.snapshot.create" {
-			return nil, &client.APIError{Code: 99, Message: "snapshot failed"}
-		}
-
-		return nil, nil
-	})
-
-	snapID := p.snapshotBeforeUpgrade(context.Background(), testLogger(), "tank/test", "v1.12.4", "v1.12.5")
-
-	assert.Empty(t, snapID, "should return empty on failure")
-}
-
 func TestResetNVRAMIfNeeded_ErrorState(t *testing.T) {
 	nvramReset := false
 	vmStarted := false

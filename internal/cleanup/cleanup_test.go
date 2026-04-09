@@ -614,8 +614,8 @@ func TestRunOnce_MixedScenario_CorrectCleanup(t *testing.T) {
 				{ID: 1, Name: "omni_active_cp"},
 				{ID: 2, Name: "omni_active_worker"},
 				{ID: 3, Name: "omni_orphan_vm"},   // No zvol → orphan
-				{ID: 4, Name: "plex_server"},       // Not omni_ → ignore
-				{ID: 5, Name: "omni_deep_active"},  // Has zvol at deep path → keep
+				{ID: 4, Name: "plex_server"},      // Not omni_ → ignore
+				{ID: 5, Name: "omni_deep_active"}, // Has zvol at deep path → keep
 			}, nil
 		case "vm.stop":
 			return nil, nil

@@ -22,6 +22,8 @@ These options use TrueNAS as the storage backend. Your data is managed by TrueNA
 
 ### NFS with nfs-subdir-external-provisioner
 
+> **Maintenance warning:** This project has not had a release since v4.0.2 (2022). Issues are being auto-closed by a stale bot. It is under `kubernetes-sigs` but effectively unmaintained. It works for simple setups, but consider democratic-csi (below) for active maintenance and better TrueNAS integration. If democratic-csi is also unavailable, manual NFS PVs are a zero-dependency fallback (see below).
+
 The simplest path to persistent storage. TrueNAS shares an NFS export, and the [nfs-subdir-external-provisioner](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner) dynamically creates subdirectories for each PersistentVolume.
 
 **Pros:**
@@ -34,6 +36,7 @@ The simplest path to persistent storage. TrueNAS shares an NFS export, and the [
 - File-level storage (not block) — slower for database workloads
 - NFS locking and contention can be a bottleneck under heavy concurrent writes
 - No dynamic dataset creation on TrueNAS (all PVs share one export)
+- Effectively unmaintained — last release 2022
 
 **Talos extensions required:** None
 
@@ -51,6 +54,8 @@ The simplest path to persistent storage. TrueNAS shares an NFS export, and the [
 
 ### democratic-csi (NFS or iSCSI)
 
+> **Maintenance note:** democratic-csi is actively maintained (commits through 2026) but is a single-maintainer project. It is the de facto standard CSI driver for TrueNAS in the homelab and self-hosted community (~1k GitHub stars). If democratic-csi becomes unmaintained, the fallback is manual NFS or iSCSI PVs (see below).
+
 [democratic-csi](https://github.com/democratic-csi/democratic-csi) is purpose-built for TrueNAS. It dynamically creates ZFS datasets (NFS) or zvols (iSCSI) on TrueNAS for each PersistentVolume, giving you per-PV isolation and ZFS-level snapshot support.
 
 **Pros:**
@@ -58,9 +63,11 @@ The simplest path to persistent storage. TrueNAS shares an NFS export, and the [
 - Supports NFS, iSCSI, and SMB protocols
 - ZFS snapshots exposed as Kubernetes VolumeSnapshots
 - Purpose-built for FreeNAS/TrueNAS
+- Actively maintained
 
 **Cons:**
 - More complex setup than simple NFS
+- Single-maintainer project — bus factor of 1
 - Two driver modes with different trade-offs (see below)
 
 **Driver modes:**
@@ -98,6 +105,40 @@ machine:
 ```
 
 You can use iSCSI manually (create targets on TrueNAS, configure initiators on each node) or let democratic-csi handle it dynamically.
+
+### Manual NFS PVs (Fallback)
+
+If neither nfs-subdir-external-provisioner nor democratic-csi is viable, you can create PVs manually against TrueNAS NFS shares with zero external dependencies. No dynamic provisioning — you create each PV/PVC pair by hand.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: my-app-data
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteOnce
+  nfs:
+    server: <truenas-ip>
+    path: /mnt/pool/k8s-nfs/my-app-data
+  persistentVolumeReclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-app-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  volumeName: my-app-data
+```
+
+Create the directory on TrueNAS first (`/mnt/pool/k8s-nfs/my-app-data`), then apply the manifests. This approach has no moving parts beyond TrueNAS NFS itself and works regardless of which CSI drivers are available or maintained.
 
 ---
 
@@ -149,22 +190,17 @@ These options run storage software inside the Kubernetes cluster itself. They re
 
 **When to consider:** Large clusters (10+ nodes) where you need enterprise storage features, multi-tenancy, or S3-compatible object storage.
 
-### Mayastor (OpenEBS)
+### Mayastor (OpenEBS) — Not Recommended
 
-[Mayastor](https://github.com/openebs/Mayastor) is a Rust-based storage engine using NVMe-oF for ultra-low latency.
+[Mayastor](https://github.com/openebs/Mayastor) is a Rust-based storage engine using NVMe-oF for ultra-low latency. It is designed for bare-metal NVMe stacks, not virtualized environments like TrueNAS.
 
-**Pros:**
-- Highest performance of the distributed options
-- Modern architecture (NVMe over Fabrics)
+**Why not recommended:** Mayastor expects direct access to NVMe devices. In a TrueNAS VM environment, your "disks" are virtual zvols — Mayastor adds NVMe-oF overhead on top of virtual block devices that are already managed by ZFS. The performance advantage it's designed for (kernel-bypass NVMe) doesn't apply here.
 
 **Cons:**
+- Designed for bare-metal NVMe, not virtual disks
 - Complex setup — requires Huge Pages, Pod Security patches, node labels
 - Requires disabling `nvme_tcp` module check (built into Talos kernel)
-- Newer project, smaller community than Longhorn or Ceph
-
-**Talos extensions required:** None, but requires kernel module and Huge Pages configuration.
-
-**When to consider:** Performance-critical workloads where latency matters more than simplicity.
+- Smaller community than Longhorn or Ceph
 
 ---
 
@@ -172,12 +208,15 @@ These options run storage software inside the Kubernetes cluster itself. They re
 
 | Use Case | Recommended | Why |
 |---|---|---|
-| Getting started / homelab | NFS (`nfs-subdir-external-provisioner`) | Zero extensions, minimal config, TrueNAS does the heavy lifting |
-| Stateful apps / databases | iSCSI via `democratic-csi` | Block storage performance with dynamic provisioning |
-| Replicated / HA storage | Longhorn (not recommended) | Works but inefficient — adds redundant replication on top of ZFS |
-| Enterprise / large scale | Rook/Ceph (not recommended) | Works but overkill — double write amplification on virtual disks |
+| NAS-backed storage | `democratic-csi` | Dynamic provisioning, per-PV ZFS datasets, VolumeSnapshots, actively maintained |
+| Node-local replicated storage | Longhorn | Simple to operate, built-in replication and S3 backup, active CNCF project |
+| Distributed block/file/object | Rook/Ceph (not recommended) | Shards and replicates data across disks — redundant with ZFS RAID-Z. Fine to experiment with, but adds complexity for no benefit in this environment |
 
-For most users running Kubernetes on TrueNAS, **start with NFS**. It's the fastest path to working persistent storage and leverages the TrueNAS storage you already have. Move to iSCSI or democratic-csi when you need better performance or per-PV isolation. Node-local options like Longhorn and Ceph are possible but not recommended — they treat virtual disks as physical drives, duplicating work that TrueNAS ZFS is already doing.
+**democratic-csi** is the best option when you want TrueNAS to manage your data — each PV gets its own ZFS dataset or zvol with full ZFS benefits (snapshots, replication, scrubbing). Use NFS mode for general workloads, iSCSI mode for databases.
+
+**Longhorn** is the best option when you want storage replicated across cluster nodes independent of the NAS. It adds write amplification on top of ZFS (virtual disks on virtual disks), but gives you node-level redundancy and doesn't depend on a single-maintainer CSI driver. Requires multi-disk VM support (see [backlog](backlog.md)).
+
+If neither works for your situation, manual NFS PVs (see above) are a zero-dependency fallback.
 
 ---
 

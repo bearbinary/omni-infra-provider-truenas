@@ -25,6 +25,10 @@ For TrueNAS app deployments, update the image tag in the app configuration.
 
 ## Version Notes
 
+### v0.13.0
+
+No breaking changes. Adds multi-disk VM support via `additional_disks` in MachineClass config. Removes ZFS snapshot/rollback code — Talos nodes are immutable, so the correct recovery for a failed VM is replacement (Omni reprovisions automatically), not zvol rollback. Adds a backup guide covering control plane backup via Omni and workload/PVC backup via Velero. See [Backup & Recovery](backup.md).
+
 ### v0.12.0
 
 **Breaking changes:**
@@ -66,7 +70,7 @@ No breaking changes. Adds host health monitoring, Grafana dashboard, Prometheus 
 
 ### v0.8.0
 
-No breaking changes. Adds Talos upgrade orchestration with automatic pre-upgrade snapshots and NVRAM firmware recovery. Existing VMs are unaffected.
+No breaking changes. Adds NVRAM firmware recovery for failed VM boots. Existing VMs are unaffected.
 
 ### v0.7.0
 
@@ -74,7 +78,7 @@ No breaking changes. QA overhaul with 147 tests and full E2E coverage. Safe to u
 
 ### v0.6.0
 
-No breaking changes. Adds disk resize support and ZFS snapshot capabilities. These are new features — existing VMs are unaffected.
+No breaking changes. Adds disk resize support. Existing VMs are unaffected.
 
 ### v0.5.0
 
@@ -119,3 +123,4 @@ kubectl set image deployment/omni-infra-provider-truenas \
 ```
 
 The provider is stateless — rolling back the binary is sufficient. VM state lives on TrueNAS and Omni, not in the provider.
+

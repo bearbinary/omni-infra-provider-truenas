@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [v0.13.0] — Backup Guide, Snapshot Removal
+
+### Features
+- **Additional disk support (multi-disk VMs)** — Attach extra data disks beyond the root disk via `additional_disks` in MachineClass config. Each disk can target a different ZFS pool and independently toggle encryption. Enables dedicated etcd disks on fast SSD pools, bulk data disks on HDD pools, and is a prerequisite for node-local distributed storage (Longhorn). Max 16 additional disks per VM. Paths tracked in protobuf state for automatic cleanup on deprovision.
+
+### Removed
+- **Remove ZFS snapshot/rollback code** — Talos nodes are immutable; the correct recovery path is to replace a failed VM (Omni reprovisions automatically), not to roll back a zvol. Removed: `CreateSnapshot`, `ListSnapshots`, `DeleteSnapshot`, `RollbackSnapshot` client methods, `snapshotBeforeUpgrade` and `enforceSnapshotRetention` provisioner logic, `last_upgrade_snapshot` protobuf field, snapshot telemetry counters, and all related tests. The `Snapshot` type and pre-upgrade snapshot workflow introduced in v0.6.0–v0.8.0 are fully removed.
+
+### Documentation
+- Add backup & disaster recovery guide (`docs/backup.md`) — control plane backup via Omni, workload/PVC backup via Velero to remote S3
+- Add maintenance/trust caveats to storage guide for nfs-subdir-external-provisioner and democratic-csi
+- Add manual NFS PVs fallback section to storage guide
+- Remove snapshot rollback documentation from upgrading guide
+
 ## [v0.12.0] — VM Identity Fix, Per-Zvol Encryption, Health Endpoint & Hardening
 
 ### Bug Fixes
@@ -29,7 +43,7 @@ All notable changes to this project are documented here.
 - Add unknown field detection in MachineClass config — warns when unrecognized fields are present (typos, removed fields)
 - Add `dataset_prefix` support for organizing VM storage under nested ZFS datasets
 - Add `GetDatasetUserProperty()` client method for reading ZFS user properties
-- Add pre-upgrade ZFS snapshot and CDROM swap logic for Talos version upgrades — **note: currently non-functional** because the Omni SDK does not re-run provision steps after a machine reaches `PROVISIONED` stage ([siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646))
+- Add CDROM swap logic for Talos version upgrades — **note: currently non-functional** because the Omni SDK does not re-run provision steps after a machine reaches `PROVISIONED` stage ([siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646))
 
 ### Observability
 - Add 17 new OTEL metrics: per-step provision/deprovision durations, error categorization, ISO cache hits/misses, cleanup counters, WebSocket reconnects, rate limit queue depth, graceful shutdown outcomes
@@ -141,17 +155,13 @@ All notable changes to this project are documented here.
 - Comprehensive QA overhaul with 147 tests and full E2E coverage
 - Full provision/deprovision E2E against real TrueNAS hardware
 - WebSocket auto-reconnect verified against real connection
-- ZFS snapshot rollback verified end-to-end
 - 8 TrueNAS API contract tests
 - Chaos, failure injection, and load/stress tests
-- Fix: `zfs.snapshot.rollback` required positional params, not a dict
-- Fix: snapshot `Name` field contains full path, not just snap name
 - Fix: `filesystem.stat` returns `realpath` not `name`
 
-## [v0.6.0] — Disk Resize & Snapshots
+## [v0.6.0] — Disk Resize
 
 - Add disk resize support
-- Add ZFS snapshot creation and snapshot retention policies
 - Add tests for extension merge (defaults only, custom additions, duplicates)
 
 ## [v0.5.0] — Rate Limiting & Pre-checks

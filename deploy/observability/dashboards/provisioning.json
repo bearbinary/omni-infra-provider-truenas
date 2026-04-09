@@ -98,13 +98,11 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
-      "title": "Zvols / Snapshots",
+      "title": "Zvol Resizes",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 19 },
       "targets": [
-        { "expr": "truenas_zvols_resized_total{job=~\"$job\"}", "legendFormat": "Zvol Resizes" },
-        { "expr": "truenas_snapshots_created_total{job=~\"$job\"}", "legendFormat": "Snapshots" },
-        { "expr": "truenas_snapshots_rolled_back_total{job=~\"$job\"}", "legendFormat": "Rollbacks" }
+        { "expr": "truenas_zvols_resized_total{job=~\"$job\"}", "legendFormat": "Zvol Resizes" }
       ],
       "options": { "colorMode": "value", "graphMode": "none", "textMode": "auto" },
       "datasource": { "type": "prometheus", "uid": "prometheus" }

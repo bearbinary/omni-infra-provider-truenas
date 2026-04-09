@@ -165,7 +165,7 @@
       "datasource": { "type": "tempo", "uid": "tempo" }
     },
     {
-      "title": "Recent Deprovision & Snapshot Traces",
+      "title": "Recent Deprovision Traces",
       "type": "table",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
       "targets": [
@@ -174,7 +174,7 @@
           "queryType": "traceqlSearch",
           "filters": [
             { "id": "service-name", "tag": "service.name", "operator": "=", "value": ["omni-infra-provider-truenas"], "scope": "resource" },
-            { "id": "span-name", "tag": "name", "operator": "=~", "value": ["deprovision|provision.snapshot.*|provision.enforceSnapshot.*"], "scope": "span" }
+            { "id": "span-name", "tag": "name", "operator": "=~", "value": ["deprovision"], "scope": "span" }
           ],
           "limit": 20
         }
@@ -186,7 +186,7 @@
       "type": "logs",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
       "targets": [
-        { "expr": "{service_name=\"omni-infra-provider-truenas\"} | json | msg=~\".*(cleanup|orphan|deprovision|shutdown|snapshot).*\"", "refId": "A" }
+        { "expr": "{service_name=\"omni-infra-provider-truenas\"} | json | msg=~\".*(cleanup|orphan|deprovision|shutdown).*\"", "refId": "A" }
       ],
       "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true, "dedupStrategy": "none" },
       "datasource": { "type": "loki", "uid": "loki" }

@@ -199,12 +199,3 @@ func TestContract_VMDeviceUpdate(t *testing.T) {
 	require.NoError(t, err, "vm.device.update should exist and be callable")
 }
 
-func TestContract_ZFSSnapshotQuery(t *testing.T) {
-	c := testClient(t)
-	ctx := context.Background()
-
-	var snaps []map[string]any
-	err := c.call(ctx, "zfs.snapshot.query", nil, &snaps)
-	require.NoError(t, err, "zfs.snapshot.query should exist and be callable")
-	// May be empty — that's fine, we just need the method to exist
-}

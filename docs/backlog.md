@@ -10,9 +10,7 @@ Tracked improvements for future releases.
 - **Rate Limiting** — Semaphore-based API call limiter (v0.5.0)
 - **Resource Pre-checks** — Pool free space check before zvol creation (v0.5.0)
 - **Disk Resize** — Online zvol grow when MachineClass disk_size increases (v0.6.0)
-- **Backup/Snapshot Support** — Auto-snapshot before Talos upgrades with retention policy (v0.6.0)
 - **Comprehensive QA** — 147 tests: e2e, contract, chaos, stress, telemetry integration (v0.7.0)
-- **Talos Upgrade Orchestration** — Version detection, pre-upgrade snapshot, CDROM swap to new ISO (v0.8.0, **non-functional** — SDK doesn't re-run steps after PROVISIONED, see [siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646))
 - **NVRAM Firmware Recovery** — Auto-detect ERROR state VMs, reset NVRAM, restart (v0.8.0)
 - **Host Health Monitoring** — OTEL gauges for CPU, memory, pool space/health, disks, running VMs (v0.9.0)
 - **Automatic Pool Selection** — Select healthy pool with most free space when not explicit (v0.9.0)
@@ -43,41 +41,31 @@ Tracked improvements for future releases.
 - **Per-Zvol Encryption Passphrases** — Each encrypted zvol gets a unique passphrase stored as ZFS user property, replaces global `ENCRYPTION_PASSPHRASE` env var (v0.12.0)
 - **Orphan Cleanup Rewrite** — Replaced in-memory VM tracking with TrueNAS state queries (`org.omni:managed` properties). Safe across restarts, handles dataset prefixes (v0.12.0)
 - **Multi-Homing Guide** — Traefik with internal + DMZ subnets, MetalLB, firewall rules ([docs/multihoming.md](multihoming.md)) (v0.12.0)
+- **Additional Disk Support** — Multi-disk VMs via `additional_disks` in MachineClass config. Per-disk pool and encryption. Prerequisite for Longhorn (v0.13.0)
+- **Backup Guide** — Control plane backup via Omni, workload/PVC backup via Velero ([docs/backup.md](backup.md)) (v0.13.0)
 
 ## Upstream Issues
 
 - **Provision errors not visible in Omni UI** — SDK clears error on every retry, users only see "Provisioning" forever. Filed: [siderolabs/omni#2629](https://github.com/siderolabs/omni/issues/2629)
 - **Teardown stuck when machine never joined Omni** — SDK's `reconcileTearingDown` never calls `Deprovision` if machine state was destroyed before the check. Filed: [siderolabs/omni#2642](https://github.com/siderolabs/omni/issues/2642)
-- **Provision steps not re-run on Talos upgrade** — SDK returns early for `PROVISIONED` machines, so upgrade hooks (snapshot, CDROM swap) never fire. Filed: [siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646)
+- **Provision steps not re-run on Talos upgrade** — SDK returns early for `PROVISIONED` machines, so upgrade hooks (CDROM swap) never fire. Filed: [siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646)
 - **Pressure-based autoscaling patterns** — Discussion on how infra providers should handle autoscaling. [siderolabs/omni#2647](https://github.com/siderolabs/omni/discussions/2647)
-
----
-
-## Security
-
-### Kubernetes NetworkPolicy
-Add a NetworkPolicy to the K8s deployment manifests restricting egress to only TrueNAS and Omni endpoints. All other egress should be denied by default.
-
-### seccompProfile in K8s Deployment
-Add `seccompProfile: RuntimeDefault` to the pod security context. Best practice for K8s 1.27+ and required by some Pod Security Standards.
-
----
-
-## Reliability
 
 ---
 
 ## Storage Integration
 
-### Additional Disk Support (Multi-Disk VMs)
-Attach additional zvols to a VM beyond the root disk. Enables dedicated etcd disks (fast SSD pool), bulk data disks (HDD pool), and is a prerequisite for node-local distributed storage (Longhorn, Ceph).
+### Disk Resize for Additional Disks
+Extend the existing `maybeResizeZvol` logic to additional disks. Currently only the root disk is resized when the MachineClass `disk_size` changes. Additional disks should also be resizable by updating their `size` in the `additional_disks` array.
 
-Implementation:
-- Add `additional_disks` array to `Data` struct and `schema.json`: `[{"size": 100, "pool": "ssd-pool", "encrypted": false}]`
-- Create additional zvols during `stepCreateVM`, tag with same Omni metadata
-- Attach via `AddDisk()` for each additional zvol
-- Clean up all additional zvols during `Deprovision()`
-- Store additional zvol paths in protobuf state for cleanup tracking
+### Additional Disk Integration Tests
+Add integration tests (against real TrueNAS) for the multi-disk feature:
+- Create VM with 2 additional disks on different pools, verify zvols exist and are attached
+- Deprovision VM with additional disks, verify all zvols cleaned up
+- Additional disk on non-existent pool fails with clear error
+- Encrypted additional disk creates, unlocks after restart, and is accessible by VM
+- Pool space pre-check rejects when aggregate disk space exceeds pool free space
+- Additional disk with dataset_prefix on different pool creates full hierarchy
 
 ### CSI Storage Auto-Configuration
 Auto-configure persistent storage for provisioned clusters via Omni config patches. See [Storage Guide](storage.md) for the full comparison of CSI options.
@@ -122,15 +110,10 @@ Implementation:
 
 ---
 
----
-
 ## CI/CD & Release
 
-### Integration Test CI
-Run integration tests against a real TrueNAS instance in CI (GitHub Actions self-hosted runner or cloud instance). See [feasibility & cost analysis](integration-test-ci.md).
-
-### Snapshot Rollback Documentation
-The client has `RollbackSnapshot()` and pre-upgrade snapshots are created automatically, but there's no documented workflow for users to trigger a rollback after a failed Talos upgrade. Document the manual process (TrueNAS UI or `midclt`) and consider exposing an automated rollback path.
+### Velero CSI Snapshots
+Extend the [backup guide](backup.md) with Velero CSI snapshot integration. Any CSI driver that implements the Kubernetes `VolumeSnapshot` API can use this — for TrueNAS-backed storage, that means democratic-csi. This would allow Velero to take ZFS-native snapshots of PVs via the CSI snapshot API instead of file-system-level copies, improving backup speed and consistency for large volumes.
 
 ### Helm Chart
 Helm chart for deploying the provider as a Kubernetes workload (connecting to TrueNAS remotely via WebSocket). Most homelab users run the provider directly on TrueNAS via Docker, but multi-cluster or enterprise setups may want to manage it as a K8s deployment.

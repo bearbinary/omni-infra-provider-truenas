@@ -43,6 +43,13 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 	// Use background context for zvol cleanup — must complete even if original ctx cancelled
 	cleanupCtx := context.Background()
 
+	// Clean up additional data disks first (order doesn't matter, but root disk last)
+	for _, zvolPath := range state.AdditionalZvolPaths {
+		if err := p.cleanupZvol(cleanupCtx, logger, zvolPath); err != nil {
+			return err
+		}
+	}
+
 	if err := p.cleanupZvol(cleanupCtx, logger, state.ZvolPath); err != nil {
 		return err
 	}

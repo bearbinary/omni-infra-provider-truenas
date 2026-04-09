@@ -20,9 +20,9 @@ import (
 // It handles connect, auth, and method calls. Can be configured to
 // drop connections after N calls for chaos testing.
 type fakeMiddleware struct {
-	callCount  atomic.Int32
-	dropAfter  int32 // Drop connection after this many calls (0 = never)
-	authKey    string
+	callCount atomic.Int32
+	dropAfter int32 // Drop connection after this many calls (0 = never)
+	authKey   string
 }
 
 func (fm *fakeMiddleware) handler(w http.ResponseWriter, r *http.Request) {

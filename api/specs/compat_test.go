@@ -17,7 +17,6 @@ func TestProtoCompat_V0State(t *testing.T) {
 	t.Parallel()
 
 	// Simulate a v0.x state: only the first 7 fields were set
-	// (before LastUpgradeSnapshot was added in v0.8.0)
 	oldState := &MachineSpec{
 		Uuid:          "test-uuid-123",
 		Schematic:     "schematic-abc",
@@ -26,7 +25,6 @@ func TestProtoCompat_V0State(t *testing.T) {
 		VmId:          42,
 		ZvolPath:      "default/omni-vms/test-request",
 		CdromDeviceId: 10,
-		// LastUpgradeSnapshot not set — didn't exist in v0.x
 	}
 
 	// Serialize (as if written by old provider)
@@ -47,8 +45,6 @@ func TestProtoCompat_V0State(t *testing.T) {
 	assert.Equal(t, "default/omni-vms/test-request", newState.ZvolPath)
 	assert.Equal(t, int32(10), newState.CdromDeviceId)
 
-	// New fields should be zero-valued (not cause an error)
-	assert.Empty(t, newState.LastUpgradeSnapshot)
 }
 
 // TestProtoCompat_NewState_ReadByOldCode simulates forward compatibility:
@@ -66,7 +62,7 @@ func TestProtoCompat_NewState_ReadByOldCode(t *testing.T) {
 		VmId:                99,
 		ZvolPath:            "tank/omni-vms/test-request-2",
 		CdromDeviceId:       20,
-		LastUpgradeSnapshot: "tank/omni-vms/test@omni-pre-upgrade-v1.13.0-12345",
+		AdditionalZvolPaths: []string{"ssd/omni-vms/test-request-2-disk-1", "hdd/omni-vms/test-request-2-disk-2"},
 	}
 
 	data, err := proto.Marshal(currentState)
@@ -79,7 +75,7 @@ func TestProtoCompat_NewState_ReadByOldCode(t *testing.T) {
 
 	assert.Equal(t, currentState.Uuid, restored.Uuid)
 	assert.Equal(t, currentState.VmId, restored.VmId)
-	assert.Equal(t, currentState.LastUpgradeSnapshot, restored.LastUpgradeSnapshot)
+	assert.Equal(t, currentState.AdditionalZvolPaths, restored.AdditionalZvolPaths)
 }
 
 // TestProtoCompat_EmptyState verifies a completely empty state works.
@@ -115,7 +111,7 @@ func TestProtoCompat_FieldNumbers(t *testing.T) {
 		"vm_id":                 5,
 		"zvol_path":             6,
 		"cdrom_device_id":       7,
-		"last_upgrade_snapshot": 8,
+		"additional_zvol_paths": 9,
 	}
 
 	for name, expectedNum := range expectedFields {

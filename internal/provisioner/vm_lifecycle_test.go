@@ -198,6 +198,48 @@ func TestDeprovision_ZvolEmpty_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDeprovision_AdditionalZvols_CleanedUp(t *testing.T) {
+	t.Parallel()
+
+	var deletedPaths []string
+
+	p := NewProvisioner(client.NewMockClient(func(method string, params json.RawMessage) (any, error) {
+		if method == "pool.dataset.delete" {
+			var args []string
+			json.Unmarshal(params, &args) //nolint:errcheck
+
+			if len(args) > 0 {
+				deletedPaths = append(deletedPaths, args[0])
+			}
+
+			return true, nil
+		}
+
+		return nil, nil
+	}), ProviderConfig{DefaultPool: "tank"})
+
+	logger := zap.NewNop()
+
+	// Simulate deprovision: additional zvols first, then root
+	additionalPaths := []string{
+		"ssd/omni-vms/test-request-disk-1",
+		"hdd/omni-vms/test-request-disk-2",
+	}
+
+	for _, path := range additionalPaths {
+		err := p.cleanupZvol(context.Background(), logger, path)
+		require.NoError(t, err)
+	}
+
+	err := p.cleanupZvol(context.Background(), logger, "tank/omni-vms/test-request")
+	require.NoError(t, err)
+
+	require.Len(t, deletedPaths, 3)
+	assert.Equal(t, "ssd/omni-vms/test-request-disk-1", deletedPaths[0])
+	assert.Equal(t, "hdd/omni-vms/test-request-disk-2", deletedPaths[1])
+	assert.Equal(t, "tank/omni-vms/test-request", deletedPaths[2])
+}
+
 // --- Full lifecycle: provision → VM deleted → re-provision ---
 
 func TestLifecycle_VMDeletedExternally_RecreatesOnNextReconcile(t *testing.T) {
