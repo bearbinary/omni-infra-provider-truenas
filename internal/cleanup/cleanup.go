@@ -221,19 +221,24 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 	}
 }
 
-// cleanupOrphanZvols finds zvols under <pool>/*/omni-vms/ whose corresponding VM no longer exists.
+// cleanupOrphanZvols finds Omni-managed zvols whose corresponding VM no longer exists.
+// Uses org.omni:managed and org.omni:request-id user properties to find managed zvols
+// across all dataset paths (handles dataset_prefix variations).
 // A zvol is considered an orphan only when its VM has been deleted (by Deprovision) but
 // the zvol itself was not — indicating a partial cleanup.
 func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
 	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanZvols")
 	defer span.End()
 
-	parentPath := cl.config.Pool + "/omni-vms"
-
-	datasets, err := cl.client.ListChildDatasets(ctx, parentPath)
+	// Query all managed zvols (regardless of path) via user properties
+	managedZvols, err := cl.client.ListManagedZvols(ctx)
 	if err != nil {
-		cl.logger.Warn("failed to list zvols for orphan cleanup", zap.Error(err))
+		cl.logger.Warn("failed to list managed zvols for orphan cleanup", zap.Error(err))
 
+		return
+	}
+
+	if len(managedZvols) == 0 {
 		return
 	}
 
@@ -250,26 +255,22 @@ func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
 		vmNames[vm.Name] = true
 	}
 
-	for _, ds := range datasets {
-		// Dataset ID is the full path (e.g., "default/omni-vms/talos-test-workers-abc")
-		// Extract the request ID (last segment)
-		parts := strings.Split(ds.ID, "/")
-		requestID := parts[len(parts)-1]
-
+	for _, zvol := range managedZvols {
 		// Check if the corresponding VM still exists
-		vmName := "omni_" + strings.ReplaceAll(requestID, "-", "_")
+		vmName := "omni_" + strings.ReplaceAll(zvol.RequestID, "-", "_")
 		if vmNames[vmName] {
 			continue
 		}
 
 		// VM is gone but zvol still exists — orphaned from a partial deprovision
 		cl.logger.Info("removing orphan zvol (VM deleted)",
-			zap.String("path", ds.ID),
+			zap.String("path", zvol.Path),
+			zap.String("request_id", zvol.RequestID),
 			zap.String("missing_vm", vmName),
 		)
 
-		if err := cl.client.DeleteDataset(ctx, ds.ID); err != nil {
-			cl.logger.Warn("failed to delete orphan zvol", zap.String("path", ds.ID), zap.Error(err))
+		if err := cl.client.DeleteDataset(ctx, zvol.Path); err != nil {
+			cl.logger.Warn("failed to delete orphan zvol", zap.String("path", zvol.Path), zap.Error(err))
 			span.RecordError(err)
 		} else if telemetry.CleanupOrphanZvols != nil {
 			telemetry.CleanupOrphanZvols.Add(ctx, 1)

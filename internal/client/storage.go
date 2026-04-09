@@ -238,6 +238,51 @@ func (c *Client) ListManagedRequestIDs(ctx context.Context) (map[string]bool, er
 	return result, nil
 }
 
+// ManagedZvol represents a zvol tagged with org.omni:managed=true.
+type ManagedZvol struct {
+	Path      string // Full dataset path (e.g., "default/previewk8/omni-vms/talos-worker-abc")
+	RequestID string // Value of org.omni:request-id property
+}
+
+// ListManagedZvols returns all zvols tagged with org.omni:managed=true and their request IDs.
+// Searches across all pools and dataset prefixes.
+func (c *Client) ListManagedZvols(ctx context.Context) ([]ManagedZvol, error) {
+	var datasets []struct {
+		ID             string `json:"id"`
+		UserProperties map[string]struct {
+			Value string `json:"value"`
+		} `json:"user_properties"`
+	}
+
+	if err := c.call(ctx, "pool.dataset.query", []any{
+		[]any{},
+		map[string]any{"extra": map[string]any{"retrieve_user_props": true}},
+	}, &datasets); err != nil {
+		return nil, fmt.Errorf("pool.dataset.query failed: %w", err)
+	}
+
+	var result []ManagedZvol
+
+	for _, ds := range datasets {
+		managed, ok := ds.UserProperties["org.omni:managed"]
+		if !ok || managed.Value != "true" {
+			continue
+		}
+
+		reqID, ok := ds.UserProperties["org.omni:request-id"]
+		if !ok || reqID.Value == "" {
+			continue
+		}
+
+		result = append(result, ManagedZvol{
+			Path:      ds.ID,
+			RequestID: reqID.Value,
+		})
+	}
+
+	return result, nil
+}
+
 // DeleteDataset deletes a dataset or zvol by path.
 // JSON-RPC method: pool.dataset.delete
 func (c *Client) DeleteDataset(ctx context.Context, path string) error {

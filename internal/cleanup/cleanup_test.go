@@ -308,16 +308,16 @@ func TestCleanupOrphanVMs_ProviderRestart_DoesNotDeleteActiveVMs(t *testing.T) {
 }
 
 // --- cleanupOrphanZvols tests ---
+// Orphan zvols are detected by checking if their corresponding VM exists.
+// ListManagedZvols queries all datasets with org.omni:managed=true user property.
 
 func TestCleanupOrphanZvols_DeletesOrphans(t *testing.T) {
 	var deleted []string
 	cl := testCleaner(func(method string, params json.RawMessage) (any, error) {
 		switch method {
 		case "pool.dataset.query":
-			return []client.Dataset{
-				{ID: "default/omni-vms/active-request-123"},
-				{ID: "default/omni-vms/orphan-request-456"},
-			}, nil
+			// Return managed zvols (with user properties)
+			return managedDatasetResponse("active-request-123", "orphan-request-456"), nil
 		case "vm.query":
 			// Only active-request-123 has a VM
 			return []client.VM{{ID: 1, Name: "omni_active_request_123"}}, nil
@@ -343,9 +343,7 @@ func TestCleanupOrphanZvols_AllHaveVMs_NoneDeleted(t *testing.T) {
 	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
 		switch method {
 		case "pool.dataset.query":
-			return []client.Dataset{
-				{ID: "default/omni-vms/req-1"},
-			}, nil
+			return managedDatasetResponse("req-1"), nil
 		case "vm.query":
 			return []client.VM{{ID: 1, Name: "omni_req_1"}}, nil
 		case "pool.dataset.delete":
@@ -357,6 +355,40 @@ func TestCleanupOrphanZvols_AllHaveVMs_NoneDeleted(t *testing.T) {
 
 	cl.cleanupOrphanZvols(context.Background())
 	assert.False(t, deleteCalled, "should not delete zvols that have corresponding VMs")
+}
+
+func TestCleanupOrphanZvols_DatasetPrefix_FindsZvols(t *testing.T) {
+	// Zvols under a dataset prefix (e.g., default/previewk8/omni-vms/) should also be found
+	var deleted []string
+	cl := testCleaner(func(method string, params json.RawMessage) (any, error) {
+		switch method {
+		case "pool.dataset.query":
+			return []map[string]any{
+				{
+					"id": "default/previewk8/omni-vms/deep-orphan",
+					"user_properties": map[string]any{
+						"org.omni:managed":    map[string]any{"value": "true"},
+						"org.omni:request-id": map[string]any{"value": "deep-orphan"},
+					},
+				},
+			}, nil
+		case "vm.query":
+			return []client.VM{}, nil // No VMs at all
+		case "pool.dataset.delete":
+			var args []json.RawMessage
+			_ = json.Unmarshal(params, &args)
+			var path string
+			_ = json.Unmarshal(args[0], &path)
+			deleted = append(deleted, path)
+			return nil, nil
+		}
+		return nil, nil
+	}, map[string]bool{})
+
+	cl.cleanupOrphanZvols(context.Background())
+
+	require.Len(t, deleted, 1)
+	assert.Equal(t, "default/previewk8/omni-vms/deep-orphan", deleted[0])
 }
 
 func TestCleanupOrphanZvols_HyphenToUnderscoreMapping(t *testing.T) {
