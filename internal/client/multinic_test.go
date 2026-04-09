@@ -79,48 +79,10 @@ func TestAddNIC_BackwardCompatible(t *testing.T) {
 	assert.Equal(t, 1, dev.ID)
 }
 
-func TestAddNICWithConfig_VLANTag(t *testing.T) {
-	var receivedParams json.RawMessage
-
-	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
-		receivedParams = params
-
-		return Device{ID: 4, VM: 42, Attributes: map[string]any{"dtype": "NIC"}}, nil
-	})
-
-	cfg := NICConfig{
-		NetworkInterface:    "enp5s0",
-		VLANTag:             100,
-		TrustGuestRxFilters: true,
-	}
-	_, err := c.AddNICWithConfig(context.Background(), 42, cfg, 1004)
-	require.NoError(t, err)
-
-	assert.Contains(t, string(receivedParams), `"vlan":100`, "VLAN tag should be sent to TrueNAS")
-	assert.Contains(t, string(receivedParams), `"trust_guest_rx_filters":true`)
-}
-
-func TestAddNICWithConfig_NoVLANTag(t *testing.T) {
-	var receivedParams json.RawMessage
-
-	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
-		receivedParams = params
-
-		return Device{ID: 5, VM: 42, Attributes: map[string]any{"dtype": "NIC"}}, nil
-	})
-
-	cfg := NICConfig{NetworkInterface: "br200"}
-	_, err := c.AddNICWithConfig(context.Background(), 42, cfg, 1004)
-	require.NoError(t, err)
-
-	assert.NotContains(t, string(receivedParams), `"vlan"`, "no VLAN tag when vlan_id=0")
-}
-
 func TestNICConfig_ZeroValueDefaults(t *testing.T) {
 	cfg := NICConfig{NetworkInterface: "br0"}
 
 	assert.Equal(t, "br0", cfg.NetworkInterface)
 	assert.Empty(t, cfg.Type, "type should default to empty (VIRTIO applied in AddNICWithConfig)")
-	assert.Equal(t, 0, cfg.VLANTag, "vlan_id should default to 0 (not set)")
 	assert.False(t, cfg.TrustGuestRxFilters)
 }

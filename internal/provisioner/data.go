@@ -13,7 +13,6 @@ import (
 type AdditionalNIC struct {
 	NetworkInterface string `yaml:"network_interface"` // Required: bridge, VLAN, or physical interface
 	Type             string `yaml:"type,omitempty"`    // VIRTIO (default) or E1000
-	VLANTag          int    `yaml:"vlan_id,omitempty"` // Optional: tag traffic with this VLAN ID at the VM level
 }
 
 type Data struct {
@@ -182,10 +181,6 @@ func (d *Data) Validate() error {
 		}
 
 		seen[nic.NetworkInterface] = true
-
-		if nic.VLANTag < 0 || nic.VLANTag > 4094 {
-			return fmt.Errorf("additional_nics[%d]: vlan_id must be between 1 and 4094, got %d", i, nic.VLANTag)
-		}
 
 		if nic.Type != "" && nic.Type != "VIRTIO" && nic.Type != "E1000" {
 			return fmt.Errorf("additional_nics[%d]: type must be VIRTIO or E1000, got %q", i, nic.Type)

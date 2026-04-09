@@ -102,12 +102,6 @@
             "enum": ["VIRTIO", "E1000"],
             "default": "VIRTIO",
             "description": "NIC type (VIRTIO recommended)"
-          },
-          "vlan_id": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 4094,
-            "description": "Optional: VLAN tag traffic at the VM level (trunk port)"
           }
         },
         "required": ["network_interface"]

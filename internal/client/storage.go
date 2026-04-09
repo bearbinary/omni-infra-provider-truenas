@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 )
 
@@ -459,6 +460,44 @@ func (c *Client) NetworkInterfaceValid(ctx context.Context, networkInterface str
 	_, exists := choices[networkInterface]
 
 	return exists, nil
+}
+
+// InterfaceSubnet returns the first IPv4 CIDR for a network interface (e.g., "192.168.100.0/24").
+// Returns empty string if the interface has no IPv4 address configured.
+// JSON-RPC method: interface.query
+func (c *Client) InterfaceSubnet(ctx context.Context, name string) (string, error) {
+	filter := []any{
+		[]any{[]any{"name", "=", name}},
+		map[string]any{"get": true},
+	}
+
+	var iface struct {
+		Aliases []struct {
+			Type    string `json:"type"`
+			Address string `json:"address"`
+			Netmask int    `json:"netmask"`
+		} `json:"aliases"`
+	}
+
+	if err := c.call(ctx, "interface.query", filter, &iface); err != nil {
+		return "", fmt.Errorf("interface.query %q failed: %w", name, err)
+	}
+
+	for _, alias := range iface.Aliases {
+		if alias.Type == "INET" {
+			ip := net.ParseIP(alias.Address)
+			if ip == nil {
+				continue
+			}
+
+			mask := net.CIDRMask(alias.Netmask, 32)
+			network := ip.Mask(mask)
+
+			return fmt.Sprintf("%s/%d", network, alias.Netmask), nil
+		}
+	}
+
+	return "", nil
 }
 
 func boolPtr(b bool) *bool {

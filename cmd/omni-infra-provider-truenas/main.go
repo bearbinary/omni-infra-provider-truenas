@@ -43,7 +43,7 @@ var icon []byte
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -53,7 +53,7 @@ func run() error {
 	// Silently ignored if .env doesn't exist (Docker/k8s set env vars directly).
 	//
 	// SECURITY: godotenv loads from the working directory. If an attacker can write
-	// a .env file (e.g., via volume mount misconfiguration), they could override
+	// an .env file (e.g., via volume mount misconfiguration), they could override
 	// TRUENAS_HOST, TRUENAS_API_KEY, or OMNI_ENDPOINT. Mitigations:
 	//   - Docker: read_only: true in the TrueNAS app template
 	//   - Kubernetes: readOnlyRootFilesystem: true in the deployment securityContext

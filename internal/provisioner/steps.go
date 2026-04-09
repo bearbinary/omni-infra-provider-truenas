@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/siderolabs/omni/client/pkg/constants"
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
 	"go.opentelemetry.io/otel"
@@ -32,17 +33,9 @@ const errUnmarshalProviderData = "failed to unmarshal provider data: %w"
 // hashRequestID returns a truncated SHA-256 hash of the request ID for use in
 // trace attributes. This avoids exposing raw request IDs (which map to VM names,
 // zvol paths, and SideroLink tokens) in OTEL telemetry data.
-// generateUUID returns a new random UUID v4 string (e.g. "550e8400-e29b-41d4-a716-446655440000").
-func generateUUID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
-
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+// generateUUID returns a new UUID v7 string.
+func generateUUID() string {
+	return uuid.Must(uuid.NewV7()).String()
 }
 
 func hashRequestID(requestID string) string {
@@ -437,10 +430,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	// This UUID is set on the bhyve VM so that when Talos boots, it reads
 	// the same UUID via DMI and uses it to register with Omni — ensuring
 	// the provisioned record and the joined machine are correlated.
-	machineUUID, err := generateUUID()
-	if err != nil {
-		return fmt.Errorf("failed to generate machine UUID: %w", err)
-	}
+	machineUUID := generateUUID()
 
 	// Create the VM
 	vm, err := p.client.CreateVM(ctx, client.CreateVMRequest{
@@ -502,10 +492,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	// Attach additional NICs
 	for i, nic := range data.AdditionalNICs {
 		nicCfg := client.NICConfig{
-			NetworkInterface:    nic.NetworkInterface,
-			Type:                nic.Type,
-			VLANTag:             nic.VLANTag,
-			TrustGuestRxFilters: nic.VLANTag > 0, // Enable for VLAN tagging at VM level
+			NetworkInterface: nic.NetworkInterface,
+			Type:             nic.Type,
 		}
 
 		dev, nicErr := p.client.AddNICWithConfig(ctx, vm.ID, nicCfg, 1004+i)
@@ -521,7 +509,6 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		logger.Debug("attached additional NIC",
 			zap.Int("index", i),
 			zap.String("network_interface", nic.NetworkInterface),
-			zap.Int("vlan_id", nic.VLANTag),
 			zap.String("mac", mac),
 			zap.String("vm_name", vmName),
 		)
@@ -545,12 +532,32 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			)
 		}
 	} else if len(data.AdditionalNICs) > 0 {
-		// Warn if multiple NICs without advertised_subnets
-		logger.Warn("multiple NICs configured without advertised_subnets — etcd/kubelet may pick the wrong interface. "+
-			"Set advertised_subnets to pin cluster traffic to the primary NIC's subnet.",
-			zap.String("vm_name", vmName),
-			zap.Int("total_nics", 1+len(data.AdditionalNICs)),
-		)
+		// Auto-detect the primary NIC's subnet and pin etcd/kubelet to it
+		subnet, subnetErr := p.client.InterfaceSubnet(ctx, data.NetworkInterface)
+		if subnetErr != nil {
+			logger.Warn("could not auto-detect primary NIC subnet — set advertised_subnets manually",
+				zap.String("network_interface", data.NetworkInterface),
+				zap.Error(subnetErr),
+			)
+		} else if subnet != "" {
+			patchData, patchErr := buildAdvertisedSubnetsPatch(subnet)
+			if patchErr == nil && patchData != nil {
+				if cpErr := pctx.CreateConfigPatch(ctx, "advertised-subnets", patchData); cpErr != nil {
+					return fmt.Errorf("failed to apply auto-detected advertised_subnets config patch: %w", cpErr)
+				}
+
+				logger.Info("auto-detected primary NIC subnet, applied advertised_subnets config patch",
+					zap.String("subnet", subnet),
+					zap.String("network_interface", data.NetworkInterface),
+					zap.String("vm_name", vmName),
+				)
+			}
+		} else {
+			logger.Warn("primary NIC has no IPv4 address — set advertised_subnets manually to pin etcd/kubelet",
+				zap.String("network_interface", data.NetworkInterface),
+				zap.String("vm_name", vmName),
+			)
+		}
 	}
 
 	// Start the VM

@@ -33,7 +33,7 @@ func TestValidate_MultipleAdditionalNICs(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
 			{NetworkInterface: "br200", Type: "VIRTIO"},
-			{NetworkInterface: "vlan300", VLANTag: 300},
+			{NetworkInterface: "vlan300"},
 			{NetworkInterface: "enp6s0", Type: "E1000"},
 		},
 	}
@@ -68,54 +68,6 @@ func TestValidate_MissingNetworkInterface_SecondNIC(t *testing.T) {
 	assert.Contains(t, err.Error(), "[1]")
 }
 
-func TestValidate_InvalidVLANTag_Zero(t *testing.T) {
-	// VLAN 0 is technically valid (native VLAN) but we treat 0 as "not set"
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", VLANTag: 0},
-		},
-	}
-
-	err := d.Validate()
-	require.NoError(t, err, "vlan_id=0 means not set, should be valid")
-}
-
-func TestValidate_InvalidVLANTag_Negative(t *testing.T) {
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", VLANTag: -1},
-		},
-	}
-
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "vlan_id must be between")
-}
-
-func TestValidate_InvalidVLANTag_TooHigh(t *testing.T) {
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", VLANTag: 4095},
-		},
-	}
-
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "vlan_id must be between")
-}
-
-func TestValidate_ValidVLANTag_Boundary(t *testing.T) {
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", VLANTag: 1},
-			{NetworkInterface: "br201", VLANTag: 4094},
-		},
-	}
-
-	err := d.Validate()
-	require.NoError(t, err, "VLAN 1 and 4094 are both valid")
-}
-
 func TestValidate_InvalidNICType(t *testing.T) {
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
@@ -148,7 +100,7 @@ func TestData_AdditionalNICsPreserved(t *testing.T) {
 
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", VLANTag: 100},
+			{NetworkInterface: "br200"},
 			{NetworkInterface: "enp6s0"},
 		},
 		AdvertisedSubnets: "192.168.100.0/24",
@@ -157,7 +109,6 @@ func TestData_AdditionalNICsPreserved(t *testing.T) {
 
 	assert.Len(t, d.AdditionalNICs, 2)
 	assert.Equal(t, "br200", d.AdditionalNICs[0].NetworkInterface)
-	assert.Equal(t, 100, d.AdditionalNICs[0].VLANTag)
 	assert.Equal(t, "enp6s0", d.AdditionalNICs[1].NetworkInterface)
 	assert.Equal(t, "192.168.100.0/24", d.AdvertisedSubnets)
 }
@@ -170,16 +121,6 @@ func TestData_EmptyAdditionalNICs(t *testing.T) {
 
 	assert.Nil(t, d.AdditionalNICs)
 	assert.Empty(t, d.AdvertisedSubnets)
-}
-
-// --- VLAN tag enables TrustGuestRxFilters ---
-
-func TestAdditionalNIC_VLANTagEnablesTrust(t *testing.T) {
-	nic := AdditionalNIC{NetworkInterface: "enp5s0", VLANTag: 100}
-
-	// The provisioner should set TrustGuestRxFilters when VLANTag > 0
-	assert.Greater(t, nic.VLANTag, 0, "VLAN tag should be set")
-	// The actual trust flag is set in stepCreateVM when building NICConfig
 }
 
 // --- Multihoming advertised_subnets ---
@@ -258,18 +199,3 @@ func TestValidate_MaxNICs(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestValidate_VLANTag_CommonValues(t *testing.T) {
-	// Test common VLAN IDs used in production
-	commonVLANs := []int{1, 10, 100, 200, 666, 1000, 2000, 4094}
-
-	for _, vlan := range commonVLANs {
-		d := Data{
-			AdditionalNICs: []AdditionalNIC{
-				{NetworkInterface: "enp5s0", VLANTag: vlan},
-			},
-		}
-
-		err := d.Validate()
-		assert.NoError(t, err, "VLAN %d should be valid", vlan)
-	}
-}

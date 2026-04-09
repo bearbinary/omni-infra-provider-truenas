@@ -171,15 +171,19 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanVMs")
 	defer span.End()
 
-	vms, err := cl.client.ListVMs(ctx)
-	if err != nil {
-		cl.logger.Warn("failed to list VMs for orphan cleanup", zap.Error(err))
+	activeNames := cl.activeVMNames()
+	if activeNames == nil || len(activeNames) == 0 {
+		// No VMs tracked yet — provider likely just restarted and no provision
+		// steps have run. Skip orphan cleanup to avoid deleting active VMs.
+		cl.logger.Debug("skipping orphan VM cleanup — no VMs tracked yet (provider may have just restarted)")
 
 		return
 	}
 
-	activeNames := cl.activeVMNames()
-	if activeNames == nil {
+	vms, err := cl.client.ListVMs(ctx)
+	if err != nil {
+		cl.logger.Warn("failed to list VMs for orphan cleanup", zap.Error(err))
+
 		return
 	}
 
@@ -215,17 +219,19 @@ func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
 	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanZvols")
 	defer span.End()
 
+	activeNames := cl.activeVMNames()
+	if activeNames == nil || len(activeNames) == 0 {
+		cl.logger.Debug("skipping orphan zvol cleanup — no VMs tracked yet")
+
+		return
+	}
+
 	parentPath := cl.config.Pool + "/omni-vms"
 
 	datasets, err := cl.client.ListChildDatasets(ctx, parentPath)
 	if err != nil {
 		cl.logger.Warn("failed to list zvols for orphan cleanup", zap.Error(err))
 
-		return
-	}
-
-	activeNames := cl.activeVMNames()
-	if activeNames == nil {
 		return
 	}
 

@@ -277,7 +277,7 @@ func TestCleanupOrphanVMs_StopFails_StillDeletes(t *testing.T) {
 			return nil, nil
 		}
 		return nil, nil
-	}, map[string]bool{}, map[string]bool{})
+	}, map[string]bool{}, map[string]bool{"omni_tracked_vm": true})
 
 	cl.cleanupOrphanVMs(context.Background())
 	assert.True(t, deleted, "should still delete VM even if stop fails")
@@ -393,6 +393,7 @@ func TestRunOnce_CallsAllCleanupFunctions(t *testing.T) {
 	cl.runOnce(context.Background())
 
 	assert.True(t, listFilesCalled.Load(), "should call ListFiles for ISO cleanup")
-	assert.True(t, listVMsCalled.Load(), "should call ListVMs for orphan VM cleanup")
-	assert.True(t, listDatasetsCalled.Load(), "should call ListChildDatasets for orphan zvol cleanup")
+	// With empty active VM names, orphan cleanup is skipped (safety: provider may have just restarted)
+	assert.False(t, listVMsCalled.Load(), "should skip ListVMs when no VMs tracked")
+	assert.False(t, listDatasetsCalled.Load(), "should skip ListChildDatasets when no VMs tracked")
 }

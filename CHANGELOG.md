@@ -12,10 +12,13 @@ All notable changes to this project are documented here.
 - Fix pool validation errors — suggest `dataset_prefix` when user passes a dataset path as pool name.
 - Fix `checkExistingVM` — reset `CdromDeviceId` alongside `VmId` when VM is deleted externally.
 - Keep CDROM attached after provisioning — removing it required stopping the VM, which killed Talos mid-install. CDROM is now cleaned up only on deprovision.
+- Remove `vlan` attribute from NIC device creation — TrueNAS 25.10 rejects VM-level VLAN tagging via `vm.device.create`. VLAN tagging is handled at the host level by attaching to VLAN interfaces (e.g., `vlan666`).
+- Switch UUID generation from hand-rolled v4 to `google/uuid` v7
 
 ### Features
-- Add multiple NIC support with per-NIC VLAN tagging via `additional_nics` in MachineClass config
+- Add multiple NIC support via `additional_nics` in MachineClass config
 - Add `advertised_subnets` config patch support — automatically generates and applies Talos machine config patches for etcd `advertisedSubnets` and kubelet `nodeIP.validSubnets` when set in MachineClass config
+- Auto-detect primary NIC subnet when `advertised_subnets` is not set but additional NICs are configured — queries TrueNAS `interface.query` for the primary NIC's IPv4 CIDR and applies the config patch automatically
 - Add per-zvol auto-generated encryption passphrases — replaces global `ENCRYPTION_PASSPHRASE` env var. Each encrypted zvol gets a unique cryptographically random passphrase stored as a ZFS user property (`org.omni:passphrase`), enabling auto-unlock after TrueNAS reboots without a shared secret.
 - Add graceful VM shutdown on deprovision (ACPI signal with configurable timeout before force-stop)
 - Add HTTP health endpoint (`/healthz`, `/readyz`) for Kubernetes liveness/readiness probes — verifies actual TrueNAS connectivity instead of just process liveness. Configurable via `HEALTH_LISTEN_ADDR` (default `:8081`)
@@ -67,6 +70,7 @@ All notable changes to this project are documented here.
 - Opened discussion on pressure-based autoscaling patterns with infrastructure providers ([siderolabs/omni#2647](https://github.com/siderolabs/omni/discussions/2647))
 
 ### Documentation & SEO
+- Add multi-homing guide (`docs/multihoming.md`): Traefik with internal + DMZ subnets, MetalLB DMZ pool, firewall rules, DHCP reservations, storage network variation
 - Add MkDocs Material docs site with GitHub Pages deployment
 - Add CITATION.cff, FAQ page, FUNDING.yml
 - Expand llms.txt and llms-full.txt with Q&A pairs for AI/answer engine optimization

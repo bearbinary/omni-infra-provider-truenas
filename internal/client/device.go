@@ -51,8 +51,7 @@ func (c *Client) AddCDROM(ctx context.Context, vmID int, isoPath string) (*Devic
 type NICConfig struct {
 	NetworkInterface    string `json:"network_interface" yaml:"network_interface"`                               // Bridge, VLAN, or physical interface
 	Type                string `json:"type,omitempty" yaml:"type,omitempty"`                                     // VIRTIO (default) or E1000
-	VLANTag             int    `json:"vlan_id,omitempty" yaml:"vlan_id,omitempty"`                               // Optional: tag traffic with this VLAN ID
-	TrustGuestRxFilters bool   `json:"trust_guest_rx_filters,omitempty" yaml:"trust_guest_rx_filters,omitempty"` // Required for VLAN tagging
+	TrustGuestRxFilters bool   `json:"trust_guest_rx_filters,omitempty" yaml:"trust_guest_rx_filters,omitempty"` // Enable for promiscuous mode (required for nested VLAN tagging)
 }
 
 // AddNIC attaches a NIC device to a VM.
@@ -73,10 +72,6 @@ func (c *Client) AddNICWithConfig(ctx context.Context, vmID int, cfg NICConfig, 
 		"dtype":      "NIC",
 		"type":       nicType,
 		"nic_attach": cfg.NetworkInterface,
-	}
-
-	if cfg.VLANTag > 0 {
-		attrs["vlan"] = cfg.VLANTag
 	}
 
 	if cfg.TrustGuestRxFilters {
