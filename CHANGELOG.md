@@ -12,8 +12,9 @@ All notable changes to this project are documented here.
 - Fix pool validation errors — suggest `dataset_prefix` when user passes a dataset path as pool name.
 - Fix `checkExistingVM` — reset `CdromDeviceId` alongside `VmId` when VM is deleted externally.
 - Keep CDROM attached after provisioning — removing it required stopping the VM, which killed Talos mid-install. CDROM is now cleaned up only on deprovision.
-- Remove `vlan` attribute from NIC device creation — TrueNAS 25.10 rejects VM-level VLAN tagging via `vm.device.create`. VLAN tagging is handled at the host level by attaching to VLAN interfaces (e.g., `vlan666`).
+- Remove `vlan` attribute from NIC device creation — TrueNAS 25.10 rejects VM-level VLAN tagging via `vm.device.create`. VLAN tagging is handled at the host level by attaching to VLAN interfaces (e.g., `vlan666`)
 - Switch UUID generation from hand-rolled v4 to `google/uuid` v7
+- **Fix orphan cleanup deleting all VMs after provider restart** — replaced in-memory VM tracking (lost on restart) with TrueNAS state queries. Orphan VMs are now detected by checking if their backing zvol (tagged with `org.omni:managed`) still exists. Orphan zvols are detected by checking if their corresponding VM still exists. No in-memory state needed — safe across restarts
 
 ### Features
 - Add multiple NIC support via `additional_nics` in MachineClass config
@@ -54,7 +55,7 @@ All notable changes to this project are documented here.
 - Remove `ENCRYPTION_PASSPHRASE` from env config, secrets, and deployment manifests
 
 ### Quality
-- 313 tests (up from 196)
+- 314 tests (up from 196)
 - Replace `go vet + gofmt` in CI with golangci-lint v2.11.4 via official action
 - Fix all golangci-lint v2 issues (errcheck, gocritic, gofmt, staticcheck, unused)
 - Update `.golangci.yml` for v2 (`gofmt` moved to formatters, `gosimple` merged into `staticcheck`)
@@ -63,6 +64,8 @@ All notable changes to this project are documented here.
 - Add WebSocket chaos tests (`internal/client/ws_chaos_test.go`)
 - Add health endpoint tests (`internal/health/health_test.go`)
 - Add E2E CI workflow (`.github/workflows/e2e.yaml`)
+- Add UUID integration test verifying TrueNAS accepts and persists the `uuid` field on `vm.create`
+- Add 27 cleanup tests including integration test with mixed active/orphan/non-omni resources and crash recovery scenarios
 - Tune log levels (routine operations Info→Debug, NVRAM failures Warn→Error)
 - Add `make scan` and `make setup-hooks` targets
 
