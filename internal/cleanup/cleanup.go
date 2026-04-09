@@ -32,13 +32,11 @@ type Cleaner struct {
 	logger *zap.Logger
 	// activeImageIDs is called to get the set of image IDs currently in use.
 	activeImageIDs func() map[string]bool
-	// activeVMNames is called to get the set of VM names currently tracked by Omni.
-	activeVMNames func() map[string]bool
 }
 
 // New creates a new Cleaner.
-// activeImageIDs and activeVMNames are callbacks that return the currently active resources.
-func New(c *client.Client, cfg Config, logger *zap.Logger, activeImageIDs, activeVMNames func() map[string]bool) *Cleaner {
+// activeImageIDs returns the set of image IDs currently in use (for ISO cleanup).
+func New(c *client.Client, cfg Config, logger *zap.Logger, activeImageIDs func() map[string]bool) *Cleaner {
 	if cfg.CleanupInterval == 0 {
 		cfg.CleanupInterval = time.Hour
 	}
@@ -52,7 +50,6 @@ func New(c *client.Client, cfg Config, logger *zap.Logger, activeImageIDs, activ
 		config:         cfg,
 		logger:         logger.Named("cleanup"),
 		activeImageIDs: activeImageIDs,
-		activeVMNames:  activeVMNames,
 	}
 }
 
@@ -166,23 +163,26 @@ func (cl *Cleaner) cleanupISOs(ctx context.Context) {
 	}
 }
 
-// cleanupOrphanVMs finds VMs with the omni_ prefix that are not tracked by Omni.
+// cleanupOrphanVMs finds VMs with the omni_ prefix whose backing zvol no longer exists.
+// A VM is considered an orphan only when its zvol has been deleted (by Deprovision) but
+// the VM itself was not — indicating a partial cleanup. This avoids any dependency on
+// in-memory state, which is lost on restart.
 func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanVMs")
 	defer span.End()
 
-	activeNames := cl.activeVMNames()
-	if activeNames == nil || len(activeNames) == 0 {
-		// No VMs tracked yet — provider likely just restarted and no provision
-		// steps have run. Skip orphan cleanup to avoid deleting active VMs.
-		cl.logger.Debug("skipping orphan VM cleanup — no VMs tracked yet (provider may have just restarted)")
+	vms, err := cl.client.ListVMs(ctx)
+	if err != nil {
+		cl.logger.Warn("failed to list VMs for orphan cleanup", zap.Error(err))
 
 		return
 	}
 
-	vms, err := cl.client.ListVMs(ctx)
+	// Build a set of request IDs that have a managed zvol on TrueNAS.
+	// A VM is only orphaned if its zvol has been deleted (by Deprovision).
+	managedRequestIDs, err := cl.client.ListManagedRequestIDs(ctx)
 	if err != nil {
-		cl.logger.Warn("failed to list VMs for orphan cleanup", zap.Error(err))
+		cl.logger.Warn("failed to list managed zvols — skipping orphan VM cleanup", zap.Error(err))
 
 		return
 	}
@@ -192,13 +192,20 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 			continue
 		}
 
-		if activeNames[vm.Name] {
+		// Derive the request ID from the VM name.
+		// VM name: "omni_talos_xxx_yyy" → request ID: "talos-xxx-yyy"
+		requestID := strings.ReplaceAll(strings.TrimPrefix(vm.Name, "omni_"), "_", "-")
+
+		// Check if a backing zvol with this request ID still exists.
+		if managedRequestIDs[requestID] {
 			continue
 		}
 
-		cl.logger.Debug("removing orphan VM",
+		// Zvol is gone but VM still exists — orphaned from a partial deprovision
+		cl.logger.Info("removing orphan VM (backing zvol not found)",
 			zap.String("name", vm.Name),
 			zap.Int("id", vm.ID),
+			zap.String("request_id", requestID),
 		)
 
 		if err := cl.client.StopVM(ctx, vm.ID, true); err != nil && !client.IsNotFound(err) {
@@ -214,17 +221,12 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context) {
 	}
 }
 
-// cleanupOrphanZvols finds zvols under <pool>/omni-vms/ that are not tracked by Omni.
+// cleanupOrphanZvols finds zvols under <pool>/*/omni-vms/ whose corresponding VM no longer exists.
+// A zvol is considered an orphan only when its VM has been deleted (by Deprovision) but
+// the zvol itself was not — indicating a partial cleanup.
 func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
 	ctx, span := cleanupTracer.Start(ctx, "cleanup.orphanZvols")
 	defer span.End()
-
-	activeNames := cl.activeVMNames()
-	if activeNames == nil || len(activeNames) == 0 {
-		cl.logger.Debug("skipping orphan zvol cleanup — no VMs tracked yet")
-
-		return
-	}
 
 	parentPath := cl.config.Pool + "/omni-vms"
 
@@ -235,20 +237,35 @@ func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context) {
 		return
 	}
 
+	// Build a set of VM names for fast lookup
+	vms, err := cl.client.ListVMs(ctx)
+	if err != nil {
+		cl.logger.Warn("failed to list VMs for orphan zvol cleanup", zap.Error(err))
+
+		return
+	}
+
+	vmNames := make(map[string]bool, len(vms))
+	for _, vm := range vms {
+		vmNames[vm.Name] = true
+	}
+
 	for _, ds := range datasets {
 		// Dataset ID is the full path (e.g., "default/omni-vms/talos-test-workers-abc")
 		// Extract the request ID (last segment)
 		parts := strings.Split(ds.ID, "/")
 		requestID := parts[len(parts)-1]
 
-		// VM name is "omni_" + requestID with hyphens replaced by underscores
+		// Check if the corresponding VM still exists
 		vmName := "omni_" + strings.ReplaceAll(requestID, "-", "_")
-		if activeNames[vmName] {
+		if vmNames[vmName] {
 			continue
 		}
 
-		cl.logger.Debug("removing orphan zvol",
+		// VM is gone but zvol still exists — orphaned from a partial deprovision
+		cl.logger.Info("removing orphan zvol (VM deleted)",
 			zap.String("path", ds.ID),
+			zap.String("missing_vm", vmName),
 		)
 
 		if err := cl.client.DeleteDataset(ctx, ds.ID); err != nil {

@@ -186,6 +186,58 @@ func (c *Client) EnsureDataset(ctx context.Context, name string) error {
 	return err
 }
 
+// DatasetExists checks if a dataset or zvol exists at the given path.
+func (c *Client) DatasetExists(ctx context.Context, path string) (bool, error) {
+	filter := []any{
+		[]any{[]any{"id", "=", path}},
+	}
+
+	var datasets []struct {
+		ID string `json:"id"`
+	}
+
+	if err := c.call(ctx, "pool.dataset.query", filter, &datasets); err != nil {
+		return false, fmt.Errorf("pool.dataset.query %q failed: %w", path, err)
+	}
+
+	return len(datasets) > 0, nil
+}
+
+// ListManagedRequestIDs returns the set of request IDs for all zvols tagged with org.omni:managed=true.
+// This is used by cleanup to determine which VMs have backing storage (and are therefore not orphans).
+func (c *Client) ListManagedRequestIDs(ctx context.Context) (map[string]bool, error) {
+	// Query all datasets that have the org.omni:managed user property
+	var datasets []struct {
+		ID             string `json:"id"`
+		UserProperties map[string]struct {
+			Value string `json:"value"`
+		} `json:"user_properties"`
+	}
+
+	if err := c.call(ctx, "pool.dataset.query", []any{
+		[]any{},
+		map[string]any{"extra": map[string]any{"retrieve_user_props": true}},
+	}, &datasets); err != nil {
+		return nil, fmt.Errorf("pool.dataset.query failed: %w", err)
+	}
+
+	result := make(map[string]bool)
+
+	for _, ds := range datasets {
+		managed, ok := ds.UserProperties["org.omni:managed"]
+		if !ok || managed.Value != "true" {
+			continue
+		}
+
+		reqID, ok := ds.UserProperties["org.omni:request-id"]
+		if ok && reqID.Value != "" {
+			result[reqID.Value] = true
+		}
+	}
+
+	return result, nil
+}
+
 // DeleteDataset deletes a dataset or zvol by path.
 // JSON-RPC method: pool.dataset.delete
 func (c *Client) DeleteDataset(ctx context.Context, path string) error {
