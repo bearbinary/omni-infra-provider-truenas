@@ -411,6 +411,150 @@ func TestCleanupOrphanZvols_HyphenToUnderscoreMapping(t *testing.T) {
 	}
 }
 
+// --- API failure safety tests ---
+
+func TestCleanupOrphanVMs_ManagedRequestIDsFails_SkipsCleanup(t *testing.T) {
+	var deleteCalled bool
+	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "vm.query":
+			return []client.VM{{ID: 1, Name: "omni_some_vm"}}, nil
+		case "pool.dataset.query":
+			return nil, &client.APIError{Code: 99, Message: "dataset query failed"}
+		case "vm.delete":
+			deleteCalled = true
+			return nil, nil
+		}
+		return nil, nil
+	}, map[string]bool{})
+
+	cl.cleanupOrphanVMs(context.Background())
+	assert.False(t, deleteCalled, "must not delete VMs when managed zvol query fails")
+}
+
+func TestCleanupOrphanZvols_ListVMsFails_SkipsCleanup(t *testing.T) {
+	var deleteCalled bool
+	callCount := 0
+	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "pool.dataset.query":
+			return managedDatasetResponse("some-req"), nil
+		case "vm.query":
+			callCount++
+			return nil, &client.APIError{Code: 99, Message: "vm query failed"}
+		case "pool.dataset.delete":
+			deleteCalled = true
+			return nil, nil
+		}
+		return nil, nil
+	}, map[string]bool{})
+
+	cl.cleanupOrphanZvols(context.Background())
+	assert.False(t, deleteCalled, "must not delete zvols when VM query fails")
+}
+
+func TestCleanupOrphanZvols_ListManagedZvolsFails_SkipsCleanup(t *testing.T) {
+	var deleteCalled bool
+	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "pool.dataset.query":
+			return nil, &client.APIError{Code: 99, Message: "query failed"}
+		case "pool.dataset.delete":
+			deleteCalled = true
+			return nil, nil
+		}
+		return nil, nil
+	}, map[string]bool{})
+
+	cl.cleanupOrphanZvols(context.Background())
+	assert.False(t, deleteCalled, "must not delete zvols when managed zvol query fails")
+}
+
+// --- Partial deprovision crash scenarios ---
+
+func TestCleanupOrphanVMs_CrashAfterZvolDelete_CleansUpVM(t *testing.T) {
+	// Deprovision deleted the zvol but crashed before deleting the VM
+	var vmDeleted bool
+	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "vm.query":
+			return []client.VM{{ID: 42, Name: "omni_crashed_provision"}}, nil
+		case "pool.dataset.query":
+			return managedDatasetResponse(), nil // No managed zvols — zvol was already deleted
+		case "vm.stop":
+			return nil, nil
+		case "vm.delete":
+			vmDeleted = true
+			return nil, nil
+		}
+		return nil, nil
+	}, map[string]bool{})
+
+	cl.cleanupOrphanVMs(context.Background())
+	assert.True(t, vmDeleted, "should delete VM when its zvol was already deleted by deprovision")
+}
+
+func TestCleanupOrphanZvols_CrashAfterVMDelete_CleansUpZvol(t *testing.T) {
+	// Deprovision deleted the VM but crashed before deleting the zvol
+	var zvolDeleted bool
+	cl := testCleaner(func(method string, params json.RawMessage) (any, error) {
+		switch method {
+		case "pool.dataset.query":
+			return managedDatasetResponse("crashed-provision"), nil
+		case "vm.query":
+			return []client.VM{}, nil // No VMs — VM was already deleted
+		case "pool.dataset.delete":
+			zvolDeleted = true
+			return nil, nil
+		}
+		return nil, nil
+	}, map[string]bool{})
+
+	cl.cleanupOrphanZvols(context.Background())
+	assert.True(t, zvolDeleted, "should delete zvol when its VM was already deleted by deprovision")
+}
+
+func TestCleanupOrphanVMs_FullDeprovisionSuccess_Noop(t *testing.T) {
+	// Both VM and zvol were successfully deleted by deprovision — nothing to clean up
+	var deleteCalled bool
+	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "vm.query":
+			return []client.VM{}, nil // No VMs
+		case "pool.dataset.query":
+			return managedDatasetResponse(), nil // No zvols
+		case "vm.delete":
+			deleteCalled = true
+			return nil, nil
+		}
+		return nil, nil
+	}, map[string]bool{})
+
+	cl.cleanupOrphanVMs(context.Background())
+	assert.False(t, deleteCalled, "nothing to clean when deprovision succeeded fully")
+}
+
+func TestCleanupOrphanVMs_ManuallyCreatedOmniVM_NotDeleted(t *testing.T) {
+	// Someone manually created a VM with omni_ prefix that has a zvol
+	// with matching managed properties — should NOT be deleted
+	var deleteCalled bool
+	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "vm.query":
+			return []client.VM{{ID: 1, Name: "omni_manual_test"}}, nil
+		case "pool.dataset.query":
+			return managedDatasetResponse("manual-test"), nil
+		case "vm.delete":
+			deleteCalled = true
+			return nil, nil
+		}
+		return nil, nil
+	}, map[string]bool{})
+
+	cl.cleanupOrphanVMs(context.Background())
+	assert.False(t, deleteCalled, "should not delete VM when matching zvol exists")
+}
+
 // --- runOnce tests ---
 
 func TestRunOnce_CallsAllCleanupFunctions(t *testing.T) {
