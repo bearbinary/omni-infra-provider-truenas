@@ -2,21 +2,10 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [v0.12.0] — VM Identity Fix, Per-Zvol Encryption, Health Endpoint & Hardening
 
 ### Bug Fixes
 - **Fix VM identity duplication** — VMs now get a provider-generated SMBIOS UUID passed to `vm.create`, ensuring the bhyve UUID matches what the provider reports to Omni. Previously, bhyve assigned a random UUID causing Talos to register as a separate machine, resulting in ghost "Provisioned/Waiting" entries alongside the real nodes.
-
-### Features
-- Add per-zvol auto-generated encryption passphrases — replaces global `ENCRYPTION_PASSPHRASE` env var. Each encrypted zvol gets a unique cryptographically random passphrase stored as a ZFS user property (`org.omni:passphrase`), enabling auto-unlock after TrueNAS reboots without a shared secret.
-- Add `advertised_subnets` config patch support — automatically generates and applies Talos machine config patches for etcd `advertisedSubnets` and kubelet `nodeIP.validSubnets` when set in MachineClass config.
-- Add HTTP health endpoint (`/healthz`, `/readyz`) for Kubernetes liveness/readiness probes — verifies actual TrueNAS connectivity instead of just process liveness. Configurable via `HEALTH_LISTEN_ADDR` (default `:8081`).
-- Add VM existence health check step — replaces `removeCDROM` step with `healthCheck` that verifies VMs still exist on TrueNAS and resets state for re-provision if deleted externally.
-- Add unknown field detection in MachineClass config — warns when unrecognized fields are present (typos, removed fields).
-- Add `dataset_prefix` support for organizing VM storage under nested ZFS datasets.
-- Add `GetDatasetUserProperty()` client method for reading ZFS user properties.
-
-### Fixes
 - Fix pool free space reporting — now queries root dataset (`pool.dataset.query`) for usable space that matches TrueNAS UI, instead of raw pool stats that ignore ZFS overhead/parity/metadata.
 - Fix ZFS encryption API compatibility — use `AES-256-GCM` (uppercase) and set `inherit_encryption: false` for TrueNAS 25.04+ compatibility.
 - Fix `UserProperties` format — use list-of-objects (`[{key, value}]`) instead of map for TrueNAS 25.10+ compatibility.
@@ -24,28 +13,18 @@ All notable changes to this project are documented here.
 - Fix `checkExistingVM` — reset `CdromDeviceId` alongside `VmId` when VM is deleted externally.
 - Keep CDROM attached after provisioning — removing it required stopping the VM, which killed Talos mid-install. CDROM is now cleaned up only on deprovision.
 
-### Deployment
-- Replace `pgrep` liveness probe with HTTP health checks in Kubernetes deployment manifest.
-- Add readiness probe to Kubernetes deployment.
-- Remove `ENCRYPTION_PASSPHRASE` from env config, secrets, and deployment manifests.
-
-### Quality
-- 313 tests (up from 196)
-- Add protobuf compatibility test suite (`api/specs/compat_test.go`)
-- Add config patch tests, unknown fields tests, VM lifecycle tests, step sequence tests, step integration tests
-- Add WebSocket chaos tests (`internal/client/ws_chaos_test.go`)
-- Add health endpoint tests (`internal/health/health_test.go`)
-- Add E2E CI workflow (`.github/workflows/e2e.yaml`)
-
-## [v0.12.0] — Multi-NIC, Graceful Shutdown, Observability & Hardening
-
 ### Features
 - Add multiple NIC support with per-NIC VLAN tagging via `additional_nics` in MachineClass config
-- Add `advertised_subnets` field for pinning etcd/kubelet to specific subnets with multi-NIC setups
+- Add `advertised_subnets` config patch support — automatically generates and applies Talos machine config patches for etcd `advertisedSubnets` and kubelet `nodeIP.validSubnets` when set in MachineClass config
+- Add per-zvol auto-generated encryption passphrases — replaces global `ENCRYPTION_PASSPHRASE` env var. Each encrypted zvol gets a unique cryptographically random passphrase stored as a ZFS user property (`org.omni:passphrase`), enabling auto-unlock after TrueNAS reboots without a shared secret.
 - Add graceful VM shutdown on deprovision (ACPI signal with configurable timeout before force-stop)
+- Add HTTP health endpoint (`/healthz`, `/readyz`) for Kubernetes liveness/readiness probes — verifies actual TrueNAS connectivity instead of just process liveness. Configurable via `HEALTH_LISTEN_ADDR` (default `:8081`)
+- Add VM existence health check step — replaces `removeCDROM` step with `healthCheck` that verifies VMs still exist on TrueNAS and resets state for re-provision if deleted externally
 - Add TrueNAS version check at startup — fails with clear error on versions below 25.04
 - Add memory overcommit pre-check — blocks VMs requesting >80% of host RAM
-- Set `MachineInfraID` and `MachineUUID` for Omni node-to-infrastructure correlation
+- Add unknown field detection in MachineClass config — warns when unrecognized fields are present (typos, removed fields)
+- Add `dataset_prefix` support for organizing VM storage under nested ZFS datasets
+- Add `GetDatasetUserProperty()` client method for reading ZFS user properties
 
 ### Observability
 - Add 17 new OTEL metrics: per-step provision/deprovision durations, error categorization, ISO cache hits/misses, cleanup counters, WebSocket reconnects, rate limit queue depth, graceful shutdown outcomes
@@ -63,12 +42,23 @@ All notable changes to this project are documented here.
 - Default `TRUENAS_INSECURE_SKIP_VERIFY` to `false` (was `true`)
 - Add security comments to TrueNAS app template and Kubernetes secret manifest
 - Replace placeholder API key in `.env.test.example` with non-secret value
-- Add betterleaks secret scanning: pre-push git hook, CI job with pinned version + checksum
+- Add betterleaks secret scanning: pre-push hook, CI job with pinned version + checksum
+
+### Deployment
+- Replace `pgrep` liveness probe with HTTP health checks in Kubernetes deployment manifest
+- Add readiness probe to Kubernetes deployment
+- Remove `ENCRYPTION_PASSPHRASE` from env config, secrets, and deployment manifests
 
 ### Quality
+- 313 tests (up from 196)
 - Replace `go vet + gofmt` in CI with golangci-lint v2.11.4 via official action
 - Fix all golangci-lint v2 issues (errcheck, gocritic, gofmt, staticcheck, unused)
 - Update `.golangci.yml` for v2 (`gofmt` moved to formatters, `gosimple` merged into `staticcheck`)
+- Add protobuf compatibility test suite (`api/specs/compat_test.go`)
+- Add config patch tests, unknown fields tests, VM lifecycle tests, step sequence tests, step integration tests
+- Add WebSocket chaos tests (`internal/client/ws_chaos_test.go`)
+- Add health endpoint tests (`internal/health/health_test.go`)
+- Add E2E CI workflow (`.github/workflows/e2e.yaml`)
 - Tune log levels (routine operations Info→Debug, NVRAM failures Warn→Error)
 - Add `make scan` and `make setup-hooks` targets
 
