@@ -1,0 +1,151 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T21:20:20.376202Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-vms",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "error": {
+        "code": 11,
+        "message": "[EINVAL] pool_dataset_create.name: Path /mnt/default/omni-vms already exists\n"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-vms/cleanup-test-orphan-fixed",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/omni-vms/cleanup-test-orphan-fixed",
+        "name": "default/omni-vms/cleanup-test-orphan-fixed",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-vms/cleanup-test-tracked-fixed",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/omni-vms/cleanup-test-tracked-fixed",
+        "name": "default/omni-vms/cleanup-test-tracked-fixed",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omni_cleanup_test_tracked_fixed",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 565,
+        "name": "omni_cleanup_test_tracked_fixed",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.query",
+      "params": [],
+      "result": [
+        {
+          "id": 14,
+          "name": "kali",
+          "vcpus": 1,
+          "memory": 8192,
+          "bootloader": "UEFI",
+          "autostart": true,
+          "status": {
+            "state": "RUNNING",
+            "pid": 5878
+          }
+        },
+        {
+          "id": 565,
+          "name": "omni_cleanup_test_tracked_fixed",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        }
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-vms/cleanup-test-orphan-fixed"
+      ]
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "^",
+            "default/omni-vms/"
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": "default/omni-vms/cleanup-test-tracked-fixed",
+          "name": "default/omni-vms/cleanup-test-tracked-fixed",
+          "type": "VOLUME",
+          "pool": "default"
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        565
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-vms/cleanup-test-tracked-fixed"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-vms/cleanup-test-orphan-fixed"
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: PoolDataset default/omni-vms/cleanup-test-orphan-fixed does not exist"
+      }
+    }
+  ]
+}

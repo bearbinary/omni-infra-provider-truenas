@@ -1,0 +1,22 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:52:19.805628Z",
+  "interactions": [
+    {
+      "method": "system.info",
+      "params": [],
+      "result": {
+        "hostname": "truenas",
+        "version": "25.10.1",
+        "physmem": 66513752064,
+        "cores": 24,
+        "uptime": "42 days, 1:00:23.982569",
+        "loadavg": [
+          1.58984375,
+          0.73486328125,
+          0.42919921875
+        ]
+      }
+    }
+  ]
+}

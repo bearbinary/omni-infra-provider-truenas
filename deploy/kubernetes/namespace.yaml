@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: omni-infra-provider
-  labels:
-    app.kubernetes.io/name: omni-infra-provider-truenas
-    app.kubernetes.io/part-of: omni

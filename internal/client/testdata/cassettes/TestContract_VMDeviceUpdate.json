@@ -1,0 +1,104 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:49:52.762166Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omnicontractdevupd90000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 548,
+        "name": "omnicontractdevupd90000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-contract-test-iso",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-contract-test-iso",
+        "name": "default/omni-contract-test-iso",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "filesystem.put",
+      "params": null,
+      "upload": true
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 548,
+          "order": 1000,
+          "attributes": {
+            "dtype": "CDROM",
+            "path": "/mnt/default/omni-contract-test-iso/contract.iso"
+          }
+        }
+      ],
+      "result": {
+        "id": 440,
+        "vm": 548,
+        "order": 1000,
+        "attributes": {
+          "dtype": "CDROM",
+          "path": "/mnt/default/omni-contract-test-iso/contract.iso"
+        }
+      }
+    },
+    {
+      "method": "vm.device.update",
+      "params": [
+        440,
+        {
+          "attributes": {
+            "dtype": "CDROM",
+            "path": "/mnt/default/omni-contract-test-iso/contract.iso"
+          }
+        }
+      ],
+      "result": {
+        "attributes": {
+          "dtype": "CDROM",
+          "path": "/mnt/default/omni-contract-test-iso/contract.iso"
+        },
+        "id": 440,
+        "order": 1000,
+        "vm": 548
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-contract-test-iso"
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        548
+      ]
+    }
+  ]
+}

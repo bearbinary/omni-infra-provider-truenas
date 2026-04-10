@@ -1,0 +1,37 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:49:52.130938Z",
+  "interactions": [
+    {
+      "method": "filesystem.stat",
+      "params": [
+        "/mnt"
+      ],
+      "result": {
+        "acl": false,
+        "allocation_size": 512,
+        "atime": 1766009558,
+        "attributes": [
+          "MOUNT_ROOT"
+        ],
+        "btime": 1766353634.35604,
+        "ctime": 1766353846.6033258,
+        "dev": 32,
+        "gid": 0,
+        "group": "root",
+        "inode": 34,
+        "is_ctldir": false,
+        "is_mountpoint": true,
+        "mode": 16877,
+        "mount_id": 35,
+        "mtime": 1766353846.6033258,
+        "nlink": 4,
+        "realpath": "/mnt",
+        "size": 4,
+        "type": "DIRECTORY",
+        "uid": 0,
+        "user": "root"
+      }
+    }
+  ]
+}

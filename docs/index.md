@@ -77,10 +77,15 @@ flowchart TD
           DEFAULT_NETWORK_INTERFACE: "br0"
     ```
 
-=== "Kubernetes"
+=== "Kubernetes (Helm)"
 
     ```bash
-    kubectl apply -k deploy/kubernetes/
+    helm install omni-infra-provider deploy/helm/omni-infra-provider-truenas \
+      --namespace omni-infra-provider --create-namespace \
+      --set omniEndpoint="https://omni.example.com" \
+      --set truenasHost="truenas.local" \
+      --set secrets.omniServiceAccountKey="<your-key>" \
+      --set secrets.truenasApiKey="<your-api-key>"
     ```
 
 === "Docker Compose (Remote)"

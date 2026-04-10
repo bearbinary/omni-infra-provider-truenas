@@ -111,7 +111,8 @@ func (p *Provisioner) stepConfigureStorage(ctx context.Context, logger *zap.Logg
 		return fmt.Errorf("failed to build NFS storage config patch: %w", patchErr)
 	}
 
-	if cpErr := pctx.CreateConfigPatch(ctx, "nfs-storage", patchData); cpErr != nil {
+	patchName := "nfs-storage-" + pctx.GetRequestID()
+	if cpErr := pctx.CreateConfigPatch(ctx, patchName, patchData); cpErr != nil {
 		return fmt.Errorf("failed to apply NFS storage config patch: %w", cpErr)
 	}
 

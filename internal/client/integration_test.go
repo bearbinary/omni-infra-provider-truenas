@@ -1,11 +1,10 @@
-//go:build integration
-
 package client
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,14 +15,34 @@ import (
 )
 
 func init() {
-	// Load .env and .env.test if present — allows running integration tests
-	// without manually exporting env vars each time.
-	_ = godotenv.Load("../../.env")
-	_ = godotenv.Load("../../.env.test")
+	// Load env files only when RECORD_CASSETTES is set or TRUENAS_TEST_HOST is
+	// already in the environment. This prevents .env.test from setting
+	// TRUENAS_TEST_HOST during replay mode (make test), which would cause tests
+	// to attempt a live TrueNAS connection instead of using cassettes.
+	if os.Getenv("RECORD_CASSETTES") != "" || os.Getenv("TRUENAS_TEST_HOST") != "" || os.Getenv("TRUENAS_TEST_SOCKET") != "" {
+		_ = godotenv.Load("../../.env")
+		_ = godotenv.Load("../../.env.test")
+	}
 }
 
-// testClient returns a Client configured from env vars.
-// Skips the test if neither the socket nor host+key are available.
+// cassettePath returns the cassette file path for the current test.
+func cassettePath(t *testing.T) string {
+	t.Helper()
+
+	name := strings.ReplaceAll(t.Name(), "/", "__")
+
+	return filepath.Join("testdata", "cassettes", name+".json")
+}
+
+// isReplayMode returns true when running from recorded cassettes (no live TrueNAS).
+func isReplayMode() bool {
+	return os.Getenv("TRUENAS_TEST_HOST") == "" && os.Getenv("TRUENAS_TEST_SOCKET") == ""
+}
+
+// testClient returns a Client in one of three modes:
+//   - Live: TRUENAS_TEST_HOST set — connects to real TrueNAS
+//   - Record: TRUENAS_TEST_HOST + RECORD_CASSETTES set — connects to real TrueNAS, records cassette
+//   - Replay: neither set, cassette exists — replays from recorded cassette
 func testClient(t *testing.T) *Client {
 	t.Helper()
 
@@ -31,38 +50,68 @@ func testClient(t *testing.T) *Client {
 	apiKey := os.Getenv("TRUENAS_TEST_API_KEY")
 	socketPath := os.Getenv("TRUENAS_TEST_SOCKET")
 
-	if host == "" && socketPath == "" {
-		t.Skip("TRUENAS_TEST_HOST (+ TRUENAS_TEST_API_KEY) or TRUENAS_TEST_SOCKET must be set for integration tests")
+	// Live or Record mode
+	if host != "" || socketPath != "" {
+		c, err := New(Config{
+			Host:               host,
+			APIKey:             apiKey,
+			InsecureSkipVerify: true,
+			SocketPath:         socketPath,
+		})
+		if err != nil {
+			t.Fatalf("failed to create TrueNAS client: %v", err)
+		}
+
+		if os.Getenv("RECORD_CASSETTES") != "" {
+			rec := NewRecordingTransport(c.transport)
+			c.transport = rec
+
+			t.Cleanup(func() {
+				path := cassettePath(t)
+				if err := rec.Save(path); err != nil {
+					t.Errorf("failed to save cassette: %v", err)
+				} else {
+					t.Logf("Cassette saved: %s (%d interactions)", path, len(rec.cassette.Interactions))
+				}
+			})
+		}
+
+		t.Cleanup(func() { c.Close() })
+
+		return c
 	}
 
-	c, err := New(Config{
-		Host:               host,
-		APIKey:             apiKey,
-		InsecureSkipVerify: true,
-		SocketPath:         socketPath,
-	})
-	if err != nil {
-		t.Fatalf("failed to create TrueNAS client: %v", err)
+	// Replay mode
+	path := cassettePath(t)
+	if _, err := os.Stat(path); err == nil {
+		replay := NewReplayTransport(t, path)
+		c := newClient(replay, defaultMaxConcurrentCalls)
+
+		t.Cleanup(func() { replay.AssertAllConsumed(t) })
+
+		return c
 	}
 
-	t.Cleanup(func() { c.Close() })
+	t.Skip("no TrueNAS connection and no cassette at " + path)
 
-	return c
+	return nil
 }
 
 // testPool returns the ZFS pool name to use for tests.
+// In replay mode, returns "default" to match the pool name in recorded cassettes.
 func testPool(t *testing.T) string {
 	t.Helper()
 
 	pool := os.Getenv("TRUENAS_TEST_POOL")
 	if pool == "" {
-		pool = "tank"
+		pool = "default"
 	}
 
 	return pool
 }
 
 // testNetworkInterface returns the NIC attach target to use for tests.
+// In replay mode, returns "br0" (responses are canned).
 func testNetworkInterface(t *testing.T) string {
 	t.Helper()
 
@@ -72,6 +121,10 @@ func testNetworkInterface(t *testing.T) string {
 	}
 
 	if nic == "" {
+		if isReplayMode() {
+			return "br0"
+		}
+
 		t.Skip("TRUENAS_TEST_NETWORK_INTERFACE must be set (bridge, VLAN, or physical interface)")
 	}
 
@@ -80,8 +133,14 @@ func testNetworkInterface(t *testing.T) string {
 
 // settleTime gives TrueNAS a moment to finish async operations between heavy tests.
 // Prevents transient failures from resource pressure during the full test suite.
+// No-op in replay mode.
 func settleTime(t *testing.T) {
 	t.Helper()
+
+	if isReplayMode() {
+		return
+	}
+
 	time.Sleep(2 * time.Second)
 }
 
@@ -257,8 +316,11 @@ func TestIntegration_VMLifecycle(t *testing.T) {
 		Autostart:   false,
 	})
 	require.NoError(t, err, "should create VM")
-	assert.Equal(t, vmName, vm.Name)
 	assert.Greater(t, vm.ID, 0)
+
+	if !isReplayMode() {
+		assert.Equal(t, vmName, vm.Name)
+	}
 
 	vmID := vm.ID
 
@@ -270,13 +332,19 @@ func TestIntegration_VMLifecycle(t *testing.T) {
 	// Get VM
 	fetched, err := c.GetVM(ctx, vmID)
 	require.NoError(t, err)
-	assert.Equal(t, vmName, fetched.Name)
+
+	if !isReplayMode() {
+		assert.Equal(t, vmName, fetched.Name)
+	}
 
 	// Find by name
 	found, err := c.FindVMByName(ctx, vmName)
 	require.NoError(t, err)
 	require.NotNil(t, found, "should find VM by name")
-	assert.Equal(t, vmID, found.ID)
+
+	if !isReplayMode() {
+		assert.Equal(t, vmID, found.ID)
+	}
 
 	// Find missing
 	missing, err := c.FindVMByName(ctx, "nonexistent-vm-xyz-99999")
@@ -567,18 +635,24 @@ func TestIntegration_FullProvisionDeprovision(t *testing.T) {
 	// 6. Verify VM exists and is stopped
 	fetched, err := c.GetVM(ctx, vm.ID)
 	require.NoError(t, err)
-	assert.Equal(t, vmName, fetched.Name)
+
+	if !isReplayMode() {
+		assert.Equal(t, vmName, fetched.Name)
+	}
 
 	// 7. Find by name
 	found, err := c.FindVMByName(ctx, vmName)
 	require.NoError(t, err)
 	require.NotNil(t, found)
-	assert.Equal(t, vm.ID, found.ID)
+
+	if !isReplayMode() {
+		assert.Equal(t, vm.ID, found.ID)
+	}
 
 	// --- DEPROVISION ---
 
 	// 8. Stop VM (even though it's not running, should be idempotent)
-	err = c.StopVM(ctx, vm.ID, true)
+	_ = c.StopVM(ctx, vm.ID, true)
 	// May error if already stopped — that's ok
 
 	// 9. Delete VM
@@ -816,7 +890,7 @@ func TestIntegration_AdditionalDisks_EncryptedLifecycle(t *testing.T) {
 	assert.False(t, locked, "newly created encrypted zvol should be unlocked")
 
 	// Unlock is idempotent
-	err = c.UnlockDataset(ctx, zvolName, passphrase)
+	_ = c.UnlockDataset(ctx, zvolName, passphrase)
 	// May succeed or error depending on TrueNAS version — either way, it shouldn't panic
 }
 
@@ -896,7 +970,7 @@ func TestIntegration_AdditionalDisks_Resize(t *testing.T) {
 	assert.Equal(t, int64(2*1024*1024*1024), size, "should be 2 GiB after grow")
 
 	// Attempt shrink to 1 GiB — ZFS does not support shrinking
-	err = c.ResizeZvol(ctx, zvolName, 1)
+	_ = c.ResizeZvol(ctx, zvolName, 1)
 	// ResizeZvol sends the update — TrueNAS may accept or reject.
 	// The provider's maybeResizeZvol prevents shrinks at the application layer,
 	// so this test just verifies the API call doesn't panic.

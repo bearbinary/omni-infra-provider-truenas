@@ -1,0 +1,226 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T19:05:50.404569Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-vms",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "error": {
+        "code": 11,
+        "message": "[EINVAL] pool_dataset_create.name: Path /mnt/default/omni-vms already exists\n"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-vms/e2e-prov35000",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/omni-vms/e2e-prov35000",
+        "name": "default/omni-vms/e2e-prov35000",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omni_e2e_prov35000",
+          "description": "E2E test — safe to delete",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "cpu_mode": "HOST-PASSTHROUGH"
+        }
+      ],
+      "result": {
+        "id": 563,
+        "name": "omni_e2e_prov35000",
+        "description": "E2E test — safe to delete",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 563,
+          "order": 1001,
+          "attributes": {
+            "dtype": "DISK",
+            "path": "/dev/zvol/default/omni-vms/e2e-prov35000",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 452,
+        "vm": 563,
+        "order": 1001,
+        "attributes": {
+          "create_zvol": false,
+          "dtype": "DISK",
+          "iotype": "THREADS",
+          "logical_sectorsize": null,
+          "path": "/dev/zvol/default/omni-vms/e2e-prov35000",
+          "physical_sectorsize": null,
+          "serial": "iG1Wb2ky",
+          "type": "VIRTIO",
+          "zvol_name": null,
+          "zvol_volsize": null
+        }
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 563,
+          "order": 2001,
+          "attributes": {
+            "dtype": "NIC",
+            "mac": "02:e2:e0:00:00:01",
+            "nic_attach": "br100",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 453,
+        "vm": 563,
+        "order": 2001,
+        "attributes": {
+          "dtype": "NIC",
+          "mac": "02:e2:e0:00:00:01",
+          "nic_attach": "br100",
+          "trust_guest_rx_filters": false,
+          "type": "VIRTIO"
+        }
+      }
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            563
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "id": 563,
+        "name": "omni_e2e_prov35000",
+        "description": "E2E test — safe to delete",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "name",
+            "=",
+            "omni_e2e_prov35000"
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": 563,
+          "name": "omni_e2e_prov35000",
+          "description": "E2E test — safe to delete",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.stop",
+      "params": [
+        563,
+        {
+          "force": true
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        563
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-vms/e2e-prov35000"
+      ]
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "name",
+            "=",
+            "omni_e2e_prov35000"
+          ]
+        ]
+      ],
+      "result": []
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        563
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: VM 563 does not exist"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-vms/e2e-prov35000"
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: PoolDataset default/omni-vms/e2e-prov35000 does not exist"
+      }
+    }
+  ]
+}

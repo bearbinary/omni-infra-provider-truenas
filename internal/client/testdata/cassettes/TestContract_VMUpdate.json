@@ -1,0 +1,82 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:49:49.743127Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omnicontractupd41000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 547,
+        "name": "omnicontractupd41000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.update",
+      "params": [
+        547,
+        {
+          "description": "contract test"
+        }
+      ],
+      "result": {
+        "arch_type": null,
+        "autostart": false,
+        "bootloader": "UEFI",
+        "bootloader_ovmf": "OVMF_CODE_4M.fd",
+        "command_line_args": "",
+        "cores": 1,
+        "cpu_mode": "CUSTOM",
+        "cpu_model": null,
+        "cpuset": null,
+        "description": "contract test",
+        "devices": [],
+        "display_available": false,
+        "enable_cpu_topology_extension": false,
+        "enable_secure_boot": false,
+        "ensure_display_device": true,
+        "hide_from_msr": false,
+        "hyperv_enlightenments": false,
+        "id": 547,
+        "machine_type": null,
+        "memory": 512,
+        "min_memory": null,
+        "name": "omnicontractupd41000",
+        "nodeset": null,
+        "pin_vcpus": false,
+        "shutdown_timeout": 90,
+        "status": {
+          "domain_state": "SHUTOFF",
+          "pid": null,
+          "state": "STOPPED"
+        },
+        "suspend_on_snapshot": false,
+        "threads": 1,
+        "time": "LOCAL",
+        "trusted_platform_module": false,
+        "uuid": "047e973c-9b7f-4e40-b906-26f16032a870",
+        "vcpus": 1
+      }
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        547
+      ]
+    }
+  ]
+}

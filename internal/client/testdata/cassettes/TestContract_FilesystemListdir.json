@@ -1,0 +1,36 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:49:52.48807Z",
+  "interactions": [
+    {
+      "method": "filesystem.listdir",
+      "params": [
+        "/mnt"
+      ],
+      "result": [
+        {
+          "acl": false,
+          "allocation_size": 11264,
+          "attributes": [
+            "MOUNT_ROOT"
+          ],
+          "gid": 0,
+          "is_ctldir": false,
+          "is_mountpoint": true,
+          "mode": 16877,
+          "mount_id": 64,
+          "name": "default",
+          "path": "/mnt/default",
+          "realpath": "/mnt/default",
+          "size": 13,
+          "type": "DIRECTORY",
+          "uid": 0,
+          "xattrs": [],
+          "zfs_attrs": [
+            "ARCHIVE"
+          ]
+        }
+      ]
+    }
+  ]
+}

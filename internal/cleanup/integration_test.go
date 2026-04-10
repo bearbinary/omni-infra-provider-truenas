@@ -1,10 +1,9 @@
-//go:build integration
-
 package cleanup
 
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,8 +17,19 @@ import (
 )
 
 func init() {
-	_ = godotenv.Load("../../.env")
-	_ = godotenv.Load("../../.env.test")
+	if os.Getenv("RECORD_CASSETTES") != "" || os.Getenv("TRUENAS_TEST_HOST") != "" || os.Getenv("TRUENAS_TEST_SOCKET") != "" {
+		_ = godotenv.Load("../../.env")
+		_ = godotenv.Load("../../.env.test")
+	}
+}
+
+// cleanupCassettePath returns the cassette file path for the current test.
+func cleanupCassettePath(t *testing.T) string {
+	t.Helper()
+
+	name := strings.ReplaceAll(t.Name(), "/", "__")
+
+	return filepath.Join("testdata", "cassettes", name+".json")
 }
 
 func testClient(t *testing.T) *client.Client {
@@ -29,21 +39,49 @@ func testClient(t *testing.T) *client.Client {
 	apiKey := os.Getenv("TRUENAS_TEST_API_KEY")
 	socketPath := os.Getenv("TRUENAS_TEST_SOCKET")
 
-	if host == "" && socketPath == "" {
-		t.Skip("TRUENAS_TEST_HOST or TRUENAS_TEST_SOCKET must be set")
+	// Live or Record mode
+	if host != "" || socketPath != "" {
+		c, err := client.New(client.Config{
+			Host:               host,
+			APIKey:             apiKey,
+			InsecureSkipVerify: true,
+			SocketPath:         socketPath,
+		})
+		require.NoError(t, err)
+
+		if os.Getenv("RECORD_CASSETTES") != "" {
+			rec := client.NewRecordingTransport(client.TransportOf(c))
+			client.ReplaceTransport(c, rec)
+
+			t.Cleanup(func() {
+				path := cleanupCassettePath(t)
+				if err := rec.Save(path); err != nil {
+					t.Errorf("failed to save cassette: %v", err)
+				} else {
+					t.Logf("Cassette saved: %s", path)
+				}
+			})
+		}
+
+		t.Cleanup(func() { c.Close() })
+
+		return c
 	}
 
-	c, err := client.New(client.Config{
-		Host:               host,
-		APIKey:             apiKey,
-		InsecureSkipVerify: true,
-		SocketPath:         socketPath,
-	})
-	require.NoError(t, err)
+	// Replay mode
+	path := cleanupCassettePath(t)
+	if _, err := os.Stat(path); err == nil {
+		replay := client.NewReplayTransport(t, path)
+		c := client.NewReplayClient(replay)
 
-	t.Cleanup(func() { c.Close() })
+		t.Cleanup(func() { replay.AssertAllConsumed(t) })
 
-	return c
+		return c
+	}
+
+	t.Skip("no TrueNAS connection and no cassette at " + path)
+
+	return nil
 }
 
 func testPool(t *testing.T) string {
@@ -137,7 +175,6 @@ func TestIntegration_ISOCleanup_SkipsWhenActive(t *testing.T) {
 		func() map[string]bool {
 			return map[string]bool{"active_test_keep": true}
 		},
-		func() map[string]bool { return map[string]bool{} },
 	)
 
 	cleaner.cleanupISOs(ctx)
@@ -192,15 +229,20 @@ func TestIntegration_OrphanVMCleanup(t *testing.T) {
 		c.DeleteVM(context.Background(), trackedVM.ID)     //nolint:errcheck
 	})
 
-	// Run cleanup — only trackedName is in the active set
+	// Run cleanup — the tracked VM has a backing zvol, the orphan does not
 	cleaner := New(c, Config{Pool: pool}, logger,
 		func() map[string]bool { return map[string]bool{} },
-		func() map[string]bool {
-			return map[string]bool{trackedName: true}
-		},
 	)
 
-	cleaner.cleanupOrphanVMs(ctx)
+	// Build managed zvols list: only the tracked VM has a backing zvol.
+	// The orphan VM has no backing zvol, so cleanup should remove it.
+	trackedRequestID := strings.TrimPrefix(trackedName, "omni_")
+	trackedRequestID = strings.ReplaceAll(trackedRequestID, "_", "-")
+	managedZvols := []client.ManagedZvol{
+		{Path: pool + "/omni-vms/" + trackedRequestID, RequestID: trackedRequestID},
+	}
+
+	cleaner.cleanupOrphanVMs(ctx, managedZvols)
 
 	// Orphan VM should be gone
 	found, err := c.FindVMByName(ctx, orphanName)
@@ -226,8 +268,11 @@ func TestIntegration_OrphanZvolCleanup(t *testing.T) {
 	err := c.EnsureDataset(ctx, parentDS)
 	require.NoError(t, err)
 
+	// Fixed suffix: deterministic for replay, unique enough for serial test runs
+	suffix := "fixed"
+
 	// Create an orphan zvol (request ID with hyphens)
-	orphanRequestID := "cleanup-test-orphan-" + time.Now().Format("150405")
+	orphanRequestID := "cleanup-test-orphan-" + suffix
 	orphanZvol := parentDS + "/" + orphanRequestID
 
 	_, err = c.CreateZvol(ctx, orphanZvol, 1)
@@ -237,8 +282,8 @@ func TestIntegration_OrphanZvolCleanup(t *testing.T) {
 		c.DeleteDataset(context.Background(), orphanZvol) //nolint:errcheck
 	})
 
-	// Create a tracked zvol
-	trackedRequestID := "cleanup-test-tracked-" + time.Now().Format("150405")
+	// Create a tracked zvol with a corresponding VM (so it won't be cleaned up)
+	trackedRequestID := "cleanup-test-tracked-" + suffix
 	trackedZvol := parentDS + "/" + trackedRequestID
 	trackedVMName := "omni_" + strings.ReplaceAll(trackedRequestID, "-", "_")
 
@@ -249,15 +294,33 @@ func TestIntegration_OrphanZvolCleanup(t *testing.T) {
 		c.DeleteDataset(context.Background(), trackedZvol) //nolint:errcheck
 	})
 
-	// Run cleanup — only trackedVMName is active
+	// Create a VM matching the tracked zvol so cleanup won't treat it as orphan
+	trackedVM, err := c.CreateVM(ctx, client.CreateVMRequest{
+		Name:       trackedVMName,
+		VCPUs:      1,
+		Memory:     512,
+		Bootloader: "UEFI",
+		Autostart:  false,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteVM(context.Background(), trackedVM.ID) //nolint:errcheck
+	})
+
+	// Run cleanup — the tracked zvol has a corresponding VM, the orphan does not
 	cleaner := New(c, Config{Pool: pool}, logger,
 		func() map[string]bool { return map[string]bool{} },
-		func() map[string]bool {
-			return map[string]bool{trackedVMName: true}
-		},
 	)
 
-	cleaner.cleanupOrphanZvols(ctx)
+	// Build managed zvols list: both zvols appear as managed.
+	// cleanupOrphanZvols checks if the corresponding VM exists — only orphan's VM is missing.
+	managedZvols := []client.ManagedZvol{
+		{Path: orphanZvol, RequestID: orphanRequestID},
+		{Path: trackedZvol, RequestID: trackedRequestID},
+	}
+
+	cleaner.cleanupOrphanZvols(ctx, managedZvols)
 
 	// Orphan zvol should be gone — listing child datasets should not include it
 	datasets, err := c.ListChildDatasets(ctx, parentDS)

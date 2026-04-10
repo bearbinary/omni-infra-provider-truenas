@@ -1,0 +1,96 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:49:51.348559Z",
+  "interactions": [
+    {
+      "method": "vm.query",
+      "params": [],
+      "result": [
+        {
+          "arch_type": null,
+          "autostart": true,
+          "bootloader": "UEFI",
+          "bootloader_ovmf": "OVMF_CODE_4M.fd",
+          "command_line_args": "",
+          "cores": 4,
+          "cpu_mode": "HOST-MODEL",
+          "cpu_model": null,
+          "cpuset": "",
+          "description": "",
+          "devices": [
+            {
+              "attributes": {
+                "dtype": "NIC",
+                "mac": "00:a0:98:7e:5e:a5",
+                "nic_attach": "vlan666",
+                "trust_guest_rx_filters": false,
+                "type": "VIRTIO"
+              },
+              "id": 57,
+              "order": 1002,
+              "vm": 14
+            },
+            {
+              "attributes": {
+                "bind": "0.0.0.0",
+                "dtype": "DISPLAY",
+                "password": "kali",
+                "port": 5900,
+                "resolution": "1920x1080",
+                "type": "VNC",
+                "wait": false,
+                "web": false,
+                "web_port": 5901
+              },
+              "id": 58,
+              "order": 1002,
+              "vm": 14
+            },
+            {
+              "attributes": {
+                "create_zvol": false,
+                "dtype": "DISK",
+                "iotype": "THREADS",
+                "logical_sectorsize": null,
+                "path": "/dev/zvol/default/vms/kali-1g9jmi",
+                "physical_sectorsize": null,
+                "serial": "aMN2BBhj",
+                "type": "VIRTIO",
+                "zvol_name": null,
+                "zvol_volsize": null
+              },
+              "id": 59,
+              "order": 1001,
+              "vm": 14
+            }
+          ],
+          "display_available": true,
+          "enable_cpu_topology_extension": false,
+          "enable_secure_boot": false,
+          "ensure_display_device": true,
+          "hide_from_msr": false,
+          "hyperv_enlightenments": false,
+          "id": 14,
+          "machine_type": null,
+          "memory": 8192,
+          "min_memory": null,
+          "name": "kali",
+          "nodeset": "",
+          "pin_vcpus": false,
+          "shutdown_timeout": 90,
+          "status": {
+            "domain_state": "RUNNING",
+            "pid": 5878,
+            "state": "RUNNING"
+          },
+          "suspend_on_snapshot": false,
+          "threads": 2,
+          "time": "LOCAL",
+          "trusted_platform_module": false,
+          "uuid": "946886b1-56cd-477d-a5da-84820815a3fb",
+          "vcpus": 1
+        }
+      ]
+    }
+  ]
+}

@@ -146,6 +146,11 @@
             "minimum": 576,
             "maximum": 9216,
             "description": "MTU size for this NIC. Omit to use the host default (typically 1500). Set to 9000 for jumbo frames on storage networks. The host bridge/VLAN must also be configured for the same MTU."
+          },
+          "deterministic_mac": {
+            "type": "boolean",
+            "default": false,
+            "description": "Derive a stable MAC address from the machine request ID. Ensures DHCP reservations survive reprovision."
           }
         },
         "required": ["network_interface"]

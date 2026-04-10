@@ -1,0 +1,391 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:54:16.285529Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-multidisk",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-multidisk",
+        "name": "default/omni-integration-test-multidisk",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-multidisk/mdisk34000",
+          "type": "VOLUME",
+          "volsize": 1073741824,
+          "user_properties": [
+            {
+              "key": "org.omni:managed",
+              "value": "true"
+            },
+            {
+              "key": "org.omni:provider",
+              "value": "truenas"
+            },
+            {
+              "key": "org.omni:request-id",
+              "value": "mdisk34000"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-multidisk/mdisk34000",
+        "name": "default/omni-integration-test-multidisk/mdisk34000",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-multidisk/mdisk34000-disk-1",
+          "type": "VOLUME",
+          "volsize": 2147483648,
+          "user_properties": [
+            {
+              "key": "org.omni:managed",
+              "value": "true"
+            },
+            {
+              "key": "org.omni:provider",
+              "value": "truenas"
+            },
+            {
+              "key": "org.omni:request-id",
+              "value": "mdisk34000"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-multidisk/mdisk34000-disk-1",
+        "name": "default/omni-integration-test-multidisk/mdisk34000-disk-1",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-multidisk/mdisk34000-disk-2",
+          "type": "VOLUME",
+          "volsize": 3221225472,
+          "user_properties": [
+            {
+              "key": "org.omni:managed",
+              "value": "true"
+            },
+            {
+              "key": "org.omni:provider",
+              "value": "truenas"
+            },
+            {
+              "key": "org.omni:request-id",
+              "value": "mdisk34000"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-multidisk/mdisk34000-disk-2",
+        "name": "default/omni-integration-test-multidisk/mdisk34000-disk-2",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-integration-test-multidisk/mdisk34000"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 1073741824
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-integration-test-multidisk/mdisk34000-disk-1"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 2147483648
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-integration-test-multidisk/mdisk34000-disk-2"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 3221225472
+        }
+      }
+    },
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttestmd13000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 557,
+        "name": "omniinttestmd13000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 557,
+          "order": 1001,
+          "attributes": {
+            "dtype": "DISK",
+            "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 446,
+        "vm": 557,
+        "order": 1001,
+        "attributes": {
+          "create_zvol": false,
+          "dtype": "DISK",
+          "iotype": "THREADS",
+          "logical_sectorsize": null,
+          "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000",
+          "physical_sectorsize": null,
+          "serial": "gy1H8sTz",
+          "type": "VIRTIO",
+          "zvol_name": null,
+          "zvol_volsize": null
+        }
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 557,
+          "order": 1002,
+          "attributes": {
+            "dtype": "DISK",
+            "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000-disk-1",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 447,
+        "vm": 557,
+        "order": 1002,
+        "attributes": {
+          "create_zvol": false,
+          "dtype": "DISK",
+          "iotype": "THREADS",
+          "logical_sectorsize": null,
+          "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000-disk-1",
+          "physical_sectorsize": null,
+          "serial": "xbVeg89J",
+          "type": "VIRTIO",
+          "zvol_name": null,
+          "zvol_volsize": null
+        }
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 557,
+          "order": 1003,
+          "attributes": {
+            "dtype": "DISK",
+            "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000-disk-2",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 448,
+        "vm": 557,
+        "order": 1003,
+        "attributes": {
+          "create_zvol": false,
+          "dtype": "DISK",
+          "iotype": "THREADS",
+          "logical_sectorsize": null,
+          "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000-disk-2",
+          "physical_sectorsize": null,
+          "serial": "ft9WVoyR",
+          "type": "VIRTIO",
+          "zvol_name": null,
+          "zvol_volsize": null
+        }
+      }
+    },
+    {
+      "method": "vm.device.query",
+      "params": [
+        [
+          [
+            "vm",
+            "=",
+            557
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": 446,
+          "vm": 557,
+          "order": 1001,
+          "attributes": {
+            "create_zvol": false,
+            "dtype": "DISK",
+            "iotype": "THREADS",
+            "logical_sectorsize": null,
+            "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000",
+            "physical_sectorsize": null,
+            "serial": "gy1H8sTz",
+            "type": "VIRTIO",
+            "zvol_name": null,
+            "zvol_volsize": null
+          }
+        },
+        {
+          "id": 447,
+          "vm": 557,
+          "order": 1002,
+          "attributes": {
+            "create_zvol": false,
+            "dtype": "DISK",
+            "iotype": "THREADS",
+            "logical_sectorsize": null,
+            "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000-disk-1",
+            "physical_sectorsize": null,
+            "serial": "xbVeg89J",
+            "type": "VIRTIO",
+            "zvol_name": null,
+            "zvol_volsize": null
+          }
+        },
+        {
+          "id": 448,
+          "vm": 557,
+          "order": 1003,
+          "attributes": {
+            "create_zvol": false,
+            "dtype": "DISK",
+            "iotype": "THREADS",
+            "logical_sectorsize": null,
+            "path": "/dev/zvol/default/omni-integration-test-multidisk/mdisk34000-disk-2",
+            "physical_sectorsize": null,
+            "serial": "ft9WVoyR",
+            "type": "VIRTIO",
+            "zvol_name": null,
+            "zvol_volsize": null
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.stop",
+      "params": [
+        557,
+        {
+          "force": true
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        557
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-multidisk/mdisk34000-disk-2"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-multidisk/mdisk34000-disk-1"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-multidisk/mdisk34000"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-multidisk"
+      ]
+    }
+  ]
+}

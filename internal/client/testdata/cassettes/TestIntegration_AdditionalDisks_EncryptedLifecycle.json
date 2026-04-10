@@ -1,0 +1,136 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:54:59.819677Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-encrdisk",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-encrdisk",
+        "name": "default/omni-integration-test-encrdisk",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-encrdisk/encr53000",
+          "type": "VOLUME",
+          "volsize": 1073741824,
+          "encryption": true,
+          "inherit_encryption": false,
+          "encryption_options": {
+            "algorithm": "AES-256-GCM",
+            "passphrase": "integration-test-passphrase-1234567890abcdef"
+          },
+          "user_properties": [
+            {
+              "key": "org.omni:managed",
+              "value": "true"
+            },
+            {
+              "key": "org.omni:provider",
+              "value": "truenas"
+            },
+            {
+              "key": "org.omni:request-id",
+              "value": "test-req"
+            },
+            {
+              "key": "org.omni:passphrase",
+              "value": "integration-test-passphrase-1234567890abcdef"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-encrdisk/encr53000",
+        "name": "default/omni-integration-test-encrdisk/encr53000",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-integration-test-encrdisk/encr53000"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "user_properties": {
+          "org.omni:managed": {
+            "value": "true"
+          },
+          "org.omni:passphrase": {
+            "value": "integration-test-passphrase-1234567890abcdef"
+          },
+          "org.omni:provider": {
+            "value": "truenas"
+          },
+          "org.omni:request-id": {
+            "value": "test-req"
+          }
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-integration-test-encrdisk/encr53000"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "locked": false
+      }
+    },
+    {
+      "method": "pool.dataset.unlock",
+      "params": [
+        "default/omni-integration-test-encrdisk/encr53000",
+        {
+          "datasets": [
+            {
+              "name": "default/omni-integration-test-encrdisk/encr53000",
+              "passphrase": "integration-test-passphrase-1234567890abcdef"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-encrdisk/encr53000"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-encrdisk"
+      ]
+    }
+  ]
+}

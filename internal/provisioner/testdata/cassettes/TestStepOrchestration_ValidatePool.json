@@ -1,0 +1,19 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:55:46.611705Z",
+  "interactions": [
+    {
+      "method": "pool.query",
+      "params": [
+        [
+          [
+            "name",
+            "=",
+            "nonexistent-pool-xyz"
+          ]
+        ]
+      ],
+      "result": []
+    }
+  ]
+}

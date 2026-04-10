@@ -1,0 +1,144 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:52:14.057127Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttesta41000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 553,
+        "name": "omniinttesta41000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttestb72000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 554,
+        "name": "omniinttestb72000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "otherinttestc73000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 555,
+        "name": "otherinttestc73000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.query",
+      "params": [],
+      "result": [
+        {
+          "id": 14,
+          "name": "kali",
+          "vcpus": 1,
+          "memory": 8192,
+          "bootloader": "UEFI",
+          "autostart": true,
+          "status": {
+            "state": "RUNNING",
+            "pid": 5878
+          }
+        },
+        {
+          "id": 553,
+          "name": "omniinttesta41000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        },
+        {
+          "id": 554,
+          "name": "omniinttestb72000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        },
+        {
+          "id": 555,
+          "name": "otherinttestc73000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        553
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        554
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        555
+      ]
+    }
+  ]
+}

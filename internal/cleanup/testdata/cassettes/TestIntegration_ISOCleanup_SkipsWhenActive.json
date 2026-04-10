@@ -1,0 +1,68 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:57:11.798227Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/talos-iso",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/talos-iso",
+        "name": "default/talos-iso",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "filesystem.put",
+      "params": null,
+      "upload": true
+    },
+    {
+      "method": "filesystem.listdir",
+      "params": [
+        "/mnt/default/talos-iso"
+      ],
+      "result": [
+        {
+          "name": "active_test_keep.iso",
+          "path": "/mnt/default/talos-iso/active_test_keep.iso",
+          "type": "FILE"
+        }
+      ]
+    },
+    {
+      "method": "filesystem.stat",
+      "params": [
+        "/mnt/default/talos-iso/active_test_keep.iso"
+      ],
+      "result": {
+        "acl": false,
+        "allocation_size": 512,
+        "atime": 1775843832.8893986,
+        "attributes": [],
+        "btime": 1775843832.8893986,
+        "ctime": 1775843832.8893986,
+        "dev": 199,
+        "gid": 0,
+        "group": "root",
+        "inode": 2,
+        "is_ctldir": false,
+        "is_mountpoint": false,
+        "mode": 33261,
+        "mount_id": 1497,
+        "mtime": 1775843832.8893986,
+        "nlink": 1,
+        "realpath": "/mnt/default/talos-iso/active_test_keep.iso",
+        "size": 7,
+        "type": "FILE",
+        "uid": 0,
+        "user": "root"
+      }
+    }
+  ]
+}

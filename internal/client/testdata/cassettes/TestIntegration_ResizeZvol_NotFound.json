@@ -1,0 +1,19 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:51:10.937405Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.update",
+      "params": [
+        "default/nonexistent-zvol-xyz",
+        {
+          "volsize": 10737418240
+        }
+      ],
+      "error": {
+        "code": 11,
+        "message": "[ENOENT] id: default/nonexistent-zvol-xyz does not exist\n"
+      }
+    }
+  ]
+}

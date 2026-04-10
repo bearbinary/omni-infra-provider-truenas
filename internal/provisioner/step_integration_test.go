@@ -1,11 +1,11 @@
-//go:build integration
-
 package provisioner
 
 import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,58 +20,109 @@ import (
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
 )
 
-// TestStepOrchestration_ValidatePool verifies validatePool is called early and fails
-// cleanly for nonexistent pools. This tests the real client against real TrueNAS.
-func TestStepOrchestration_ValidatePool(t *testing.T) {
-	_ = godotenv.Load("../../.env")
-	_ = godotenv.Load("../../.env.test")
+func init() {
+	if os.Getenv("RECORD_CASSETTES") != "" || os.Getenv("TRUENAS_TEST_HOST") != "" || os.Getenv("TRUENAS_TEST_SOCKET") != "" {
+		_ = godotenv.Load("../../.env")
+		_ = godotenv.Load("../../.env.test")
+	}
+}
+
+// stepCassettePath returns the cassette file path for the current test.
+func stepCassettePath(t *testing.T) string {
+	t.Helper()
+
+	name := strings.ReplaceAll(t.Name(), "/", "__")
+
+	return filepath.Join("testdata", "cassettes", name+".json")
+}
+
+// stepTestClient returns a client in live, record, or replay mode.
+func stepTestClient(t *testing.T) *client.Client {
+	t.Helper()
 
 	host := os.Getenv("TRUENAS_TEST_HOST")
 	apiKey := os.Getenv("TRUENAS_TEST_API_KEY")
-	if host == "" || apiKey == "" {
-		t.Skip("TRUENAS_TEST_HOST and TRUENAS_TEST_API_KEY must be set")
+
+	if host != "" && apiKey != "" {
+		c, err := client.New(client.Config{
+			Host:               host,
+			APIKey:             apiKey,
+			InsecureSkipVerify: true,
+		})
+		require.NoError(t, err)
+
+		if os.Getenv("RECORD_CASSETTES") != "" {
+			rec := client.NewRecordingTransport(client.TransportOf(c))
+			client.ReplaceTransport(c, rec)
+
+			t.Cleanup(func() {
+				path := stepCassettePath(t)
+				if err := rec.Save(path); err != nil {
+					t.Errorf("failed to save cassette: %v", err)
+				} else {
+					t.Logf("Cassette saved: %s", path)
+				}
+			})
+		}
+
+		t.Cleanup(func() { c.Close() })
+
+		return c
 	}
 
-	c, err := client.New(client.Config{
-		Host:               host,
-		APIKey:             apiKey,
-		InsecureSkipVerify: true,
-	})
-	require.NoError(t, err)
-	defer c.Close()
+	// Replay mode
+	path := stepCassettePath(t)
+	if _, err := os.Stat(path); err == nil {
+		replay := client.NewReplayTransport(t, path)
+		c := client.NewReplayClient(replay)
+
+		t.Cleanup(func() { replay.AssertAllConsumed(t) })
+
+		return c
+	}
+
+	t.Skip("no TrueNAS connection and no cassette at " + path)
+
+	return nil
+}
+
+func stepTestPool(t *testing.T) string {
+	t.Helper()
+
+	pool := os.Getenv("TRUENAS_TEST_POOL")
+	if pool == "" {
+		pool = "tank"
+	}
+
+	return pool
+}
+
+// TestStepOrchestration_ValidatePool verifies validatePool is called early and fails
+// cleanly for nonexistent pools. This tests the real client against real TrueNAS.
+func TestStepOrchestration_ValidatePool(t *testing.T) {
+	c := stepTestClient(t)
 
 	p := NewProvisioner(c, ProviderConfig{
 		DefaultPool:             "nonexistent-pool-xyz",
 		DefaultNetworkInterface: "br0",
 	})
 
-	err = p.validatePool(context.Background(), "nonexistent-pool-xyz")
+	err := p.validatePool(context.Background(), "nonexistent-pool-xyz")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 // TestStepOrchestration_MaybeResizeZvol_Integration tests actual zvol resize against TrueNAS.
 func TestStepOrchestration_MaybeResizeZvol_Integration(t *testing.T) {
-	_ = godotenv.Load("../../.env")
-	_ = godotenv.Load("../../.env.test")
-
-	host := os.Getenv("TRUENAS_TEST_HOST")
-	apiKey := os.Getenv("TRUENAS_TEST_API_KEY")
-	pool := os.Getenv("TRUENAS_TEST_POOL")
-	if host == "" || apiKey == "" || pool == "" {
-		t.Skip("TRUENAS_TEST_HOST, TRUENAS_TEST_API_KEY, and TRUENAS_TEST_POOL must be set")
-	}
-
-	c, err := client.New(client.Config{
-		Host:               host,
-		APIKey:             apiKey,
-		InsecureSkipVerify: true,
-	})
-	require.NoError(t, err)
-	defer c.Close()
+	c := stepTestClient(t)
+	pool := stepTestPool(t)
 
 	p := NewProvisioner(c, ProviderConfig{DefaultPool: pool})
 	logger, _ := zap.NewDevelopment()
+
+	// Ensure parent dataset exists
+	err := c.EnsureDataset(context.Background(), pool+"/omni-vms")
+	require.NoError(t, err)
 
 	// Create a small zvol
 	zvolPath := pool + "/omni-vms/step-test-resize-" + time.Now().Format("20060102150405")
@@ -128,7 +179,7 @@ func TestDeprovision_CleanupOrchestration(t *testing.T) {
 		PollInterval:            10 * time.Millisecond,
 	})
 
-	machine := resources.NewMachine("test-machine")
+	machine := resources.NewMachine("default", "test-machine")
 	machine.TypedSpec().Value = &specs.MachineSpec{
 		VmId:     42,
 		ZvolPath: "tank/omni-vms/test-machine",
@@ -169,9 +220,9 @@ func indexOf(s []string, v string) int {
 // assigned for various failure modes.
 func TestStepOrchestration_ErrorCategorization(t *testing.T) {
 	tests := []struct {
-		name     string
-		pool     string
-		wantCat  string
+		name    string
+		pool    string
+		wantCat string
 	}{
 		{"nonexistent pool", "nonexistent-pool-xyz", "pool_not_found"},
 	}

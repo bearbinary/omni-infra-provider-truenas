@@ -40,13 +40,19 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
           DEFAULT_NETWORK_INTERFACE: "br0"
     ```
 
-=== "Kubernetes"
+=== "Kubernetes (Helm)"
 
     ```bash
-    kubectl apply -k deploy/kubernetes/
+    helm install omni-infra-provider deploy/helm/omni-infra-provider-truenas \
+      --namespace omni-infra-provider --create-namespace \
+      --set omniEndpoint="https://omni.example.com" \
+      --set truenasHost="truenas.local" \
+      --set secrets.omniServiceAccountKey="<your-key>" \
+      --set secrets.truenasApiKey="<your-api-key>" \
+      --set defaults.pool="default"
     ```
 
-    See `deploy/kubernetes/` for the full manifests.
+    See `deploy/helm/omni-infra-provider-truenas/values.yaml` for all options.
 
 === "Docker Compose (Remote)"
 

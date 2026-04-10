@@ -1,0 +1,91 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:54:37.884388Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-mdeprov",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-mdeprov",
+        "name": "default/omni-integration-test-mdeprov",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-mdeprov/deprov81000",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-mdeprov/deprov81000",
+        "name": "default/omni-integration-test-mdeprov/deprov81000",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-mdeprov/deprov81000-disk-1",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-mdeprov/deprov81000-disk-1",
+        "name": "default/omni-integration-test-mdeprov/deprov81000-disk-1",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-mdeprov/deprov81000-disk-1"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-mdeprov/deprov81000"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-mdeprov/deprov81000-disk-1"
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: PoolDataset default/omni-integration-test-mdeprov/deprov81000-disk-1 does not exist"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-mdeprov/deprov81000"
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: PoolDataset default/omni-integration-test-mdeprov/deprov81000 does not exist"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-mdeprov"
+      ]
+    }
+  ]
+}

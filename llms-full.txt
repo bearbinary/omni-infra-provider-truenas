@@ -101,34 +101,25 @@ services:
 
 If they see both lines, the provider is running and connected.
 
-### Option B: Kubernetes
+### Option B: Kubernetes (Helm)
 
 Best for: Running on an external Kubernetes cluster.
 
 **Step 1:** Clone or download the repo.
 
-**Step 2:** Edit `deploy/kubernetes/configmap.yaml`:
-```yaml
-data:
-  OMNI_ENDPOINT: "https://<omni-url>"
-  DEFAULT_POOL: "<pool-name>"
-  DEFAULT_NETWORK_INTERFACE: "<interface-name>"
-  TRUENAS_HOST: "<truenas-hostname-or-ip>"
-```
-
-**Step 3:** Edit `deploy/kubernetes/secret.yaml`:
-```yaml
-stringData:
-  OMNI_SERVICE_ACCOUNT_KEY: "<key>"
-  TRUENAS_API_KEY: "<truenas-api-key>"
-```
-
-**Step 4:** Apply:
+**Step 2:** Install with Helm:
 ```bash
-kubectl apply -k deploy/kubernetes/
+helm install omni-infra-provider deploy/helm/omni-infra-provider-truenas \
+  --namespace omni-infra-provider --create-namespace \
+  --set omniEndpoint="https://<omni-url>" \
+  --set truenasHost="<truenas-hostname-or-ip>" \
+  --set secrets.omniServiceAccountKey="<key>" \
+  --set secrets.truenasApiKey="<truenas-api-key>" \
+  --set defaults.pool="<pool-name>" \
+  --set defaults.networkInterface="<interface-name>"
 ```
 
-**Step 5:** Check logs:
+**Step 3:** Check logs:
 ```bash
 kubectl logs -n omni-infra-provider -l app.kubernetes.io/name=omni-infra-provider-truenas
 ```

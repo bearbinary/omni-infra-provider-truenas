@@ -1,0 +1,181 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:57:13.234495Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omni_cleanup_test_orphan",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "cpu_mode": "HOST-PASSTHROUGH"
+        }
+      ],
+      "result": {
+        "id": 559,
+        "name": "omni_cleanup_test_orphan",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omni_cleanup_test_tracked",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "cpu_mode": "HOST-PASSTHROUGH"
+        }
+      ],
+      "result": {
+        "id": 560,
+        "name": "omni_cleanup_test_tracked",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.query",
+      "params": [],
+      "result": [
+        {
+          "id": 14,
+          "name": "kali",
+          "vcpus": 1,
+          "memory": 8192,
+          "bootloader": "UEFI",
+          "autostart": true,
+          "status": {
+            "state": "RUNNING",
+            "pid": 5878
+          }
+        },
+        {
+          "id": 559,
+          "name": "omni_cleanup_test_orphan",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        },
+        {
+          "id": 560,
+          "name": "omni_cleanup_test_tracked",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.stop",
+      "params": [
+        559,
+        {
+          "force": true
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        559
+      ]
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "name",
+            "=",
+            "omni_cleanup_test_orphan"
+          ]
+        ]
+      ],
+      "result": []
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "name",
+            "=",
+            "omni_cleanup_test_tracked"
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": 560,
+          "name": "omni_cleanup_test_tracked",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.stop",
+      "params": [
+        560,
+        {
+          "force": true
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        560
+      ]
+    },
+    {
+      "method": "vm.stop",
+      "params": [
+        559,
+        {
+          "force": true
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        559
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: VM 559 does not exist"
+      }
+    }
+  ]
+}

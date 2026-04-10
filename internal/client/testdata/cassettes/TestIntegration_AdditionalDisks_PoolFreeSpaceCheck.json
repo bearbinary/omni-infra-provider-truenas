@@ -1,0 +1,29 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:52:18.712835Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "available": {
+          "parsed": 2739396052608
+        },
+        "used": {
+          "parsed": 1118366437072
+        }
+      }
+    }
+  ]
+}

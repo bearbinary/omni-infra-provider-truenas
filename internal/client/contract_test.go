@@ -1,5 +1,3 @@
-//go:build integration
-
 package client
 
 import (
@@ -198,4 +196,3 @@ func TestContract_VMDeviceUpdate(t *testing.T) {
 	err = c.call(ctx, "vm.device.update", []any{cdrom.ID, map[string]any{"attributes": map[string]any{"dtype": "CDROM", "path": isoPath}}}, &result)
 	require.NoError(t, err, "vm.device.update should exist and be callable")
 }
-

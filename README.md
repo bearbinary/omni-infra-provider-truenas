@@ -134,14 +134,19 @@ services:
       DEFAULT_NETWORK_INTERFACE: "br0"
 ```
 
-### Option 2: Kubernetes
+### Option 2: Kubernetes (Helm)
 
 ```bash
-# Edit the configmap and secret with your values
-kubectl apply -k deploy/kubernetes/
+helm install omni-infra-provider deploy/helm/omni-infra-provider-truenas \
+  --namespace omni-infra-provider --create-namespace \
+  --set omniEndpoint="https://omni.example.com" \
+  --set truenasHost="truenas.local" \
+  --set secrets.omniServiceAccountKey="<your-key>" \
+  --set secrets.truenasApiKey="<your-api-key>" \
+  --set defaults.pool="default"
 ```
 
-See [`deploy/kubernetes/`](deploy/kubernetes/) for the full manifests.
+See [`deploy/helm/`](deploy/helm/omni-infra-provider-truenas/) for the chart and `values.yaml`.
 
 ### Option 3: Docker Compose (Remote)
 
@@ -434,7 +439,7 @@ internal/
 
 deploy/
 ├── docker-compose.yaml         # Docker Compose for remote deployment
-├── kubernetes/                 # Kustomize manifests
+├── helm/                       # Helm chart
 └── observability/              # Prometheus + Tempo + Grafana stack
 
 api/specs/

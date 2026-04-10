@@ -1,0 +1,100 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:50:54.789628Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttestuuid38000",
+          "description": "UUID integration test — safe to delete",
+          "uuid": "01970fba-1234-7000-8000-abcdef012345",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 550,
+        "name": "omniinttestuuid38000",
+        "description": "UUID integration test — safe to delete",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            550
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "arch_type": null,
+        "autostart": false,
+        "bootloader": "UEFI",
+        "bootloader_ovmf": "OVMF_CODE_4M.fd",
+        "command_line_args": "",
+        "cores": 1,
+        "cpu_mode": "CUSTOM",
+        "cpu_model": null,
+        "cpuset": null,
+        "description": "UUID integration test — safe to delete",
+        "devices": [],
+        "display_available": false,
+        "enable_cpu_topology_extension": false,
+        "enable_secure_boot": false,
+        "ensure_display_device": true,
+        "hide_from_msr": false,
+        "hyperv_enlightenments": false,
+        "id": 550,
+        "machine_type": null,
+        "memory": 512,
+        "min_memory": null,
+        "name": "omniinttestuuid38000",
+        "nodeset": null,
+        "pin_vcpus": false,
+        "shutdown_timeout": 90,
+        "status": {
+          "domain_state": "SHUTOFF",
+          "pid": null,
+          "state": "STOPPED"
+        },
+        "suspend_on_snapshot": false,
+        "threads": 1,
+        "time": "LOCAL",
+        "trusted_platform_module": false,
+        "uuid": "01970fba-1234-7000-8000-abcdef012345",
+        "vcpus": 1
+      }
+    },
+    {
+      "method": "vm.stop",
+      "params": [
+        550,
+        {
+          "force": true
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        550
+      ]
+    }
+  ]
+}

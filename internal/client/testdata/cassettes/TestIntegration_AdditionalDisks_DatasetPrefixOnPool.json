@@ -1,0 +1,90 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:55:12.021967Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/inttest-pfx93000",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/inttest-pfx93000",
+        "name": "default/inttest-pfx93000",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/inttest-pfx93000/omni-vms",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/inttest-pfx93000/omni-vms",
+        "name": "default/inttest-pfx93000/omni-vms",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/inttest-pfx93000/omni-vms/disk47000-disk-1",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/inttest-pfx93000/omni-vms/disk47000-disk-1",
+        "name": "default/inttest-pfx93000/omni-vms/disk47000-disk-1",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/inttest-pfx93000/omni-vms/disk47000-disk-1"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 1073741824
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/inttest-pfx93000/omni-vms/disk47000-disk-1"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/inttest-pfx93000/omni-vms"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/inttest-pfx93000"
+      ]
+    }
+  ]
+}

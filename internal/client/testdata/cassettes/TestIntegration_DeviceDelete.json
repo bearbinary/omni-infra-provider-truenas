@@ -1,0 +1,78 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T19:05:58.73478Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttestdevdel90000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 564,
+        "name": "omniinttestdevdel90000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 564,
+          "order": 2001,
+          "attributes": {
+            "dtype": "NIC",
+            "mac": "02:de:1e:7e:00:01",
+            "nic_attach": "br100",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 454,
+        "vm": 564,
+        "order": 2001,
+        "attributes": {
+          "dtype": "NIC",
+          "mac": "02:de:1e:7e:00:01",
+          "nic_attach": "br100",
+          "trust_guest_rx_filters": false,
+          "type": "VIRTIO"
+        }
+      }
+    },
+    {
+      "method": "vm.device.delete",
+      "params": [
+        454
+      ]
+    },
+    {
+      "method": "vm.device.delete",
+      "params": [
+        454
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: VMDevice 454 does not exist"
+      }
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        564
+      ]
+    }
+  ]
+}

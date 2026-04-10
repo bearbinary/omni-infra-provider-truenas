@@ -1,0 +1,18 @@
+apiVersion: v2
+name: omni-infra-provider-truenas
+description: TrueNAS SCALE infrastructure provider for Sidero Labs Omni
+type: application
+version: 0.1.0
+appVersion: "0.13.0"
+home: https://github.com/bearbinary/omni-infra-provider-truenas
+sources:
+  - https://github.com/bearbinary/omni-infra-provider-truenas
+maintainers:
+  - name: Bear Binary
+    url: https://github.com/bearbinary
+keywords:
+  - truenas
+  - omni
+  - talos
+  - kubernetes
+  - infrastructure

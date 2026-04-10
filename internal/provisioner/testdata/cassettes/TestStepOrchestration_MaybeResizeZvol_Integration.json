@@ -1,0 +1,152 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:56:17.391071Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-vms",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-vms",
+        "name": "default/omni-vms",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-vms/step-test-resize-20260410135618",
+          "type": "VOLUME",
+          "volsize": 10737418240
+        }
+      ],
+      "result": {
+        "id": "default/omni-vms/step-test-resize-20260410135618",
+        "name": "default/omni-vms/step-test-resize-20260410135618",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-vms/step-test-resize-20260410135618"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 10737418240
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.update",
+      "params": [
+        "default/omni-vms/step-test-resize-20260410135618",
+        {
+          "volsize": 21474836480
+        }
+      ]
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-vms/step-test-resize-20260410135618"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 21474836480
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-vms/step-test-resize-20260410135618"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 21474836480
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-vms/step-test-resize-20260410135618"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 21474836480
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-vms/step-test-resize-20260410135618"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 21474836480
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-vms/step-test-resize-20260410135618"
+      ]
+    }
+  ]
+}

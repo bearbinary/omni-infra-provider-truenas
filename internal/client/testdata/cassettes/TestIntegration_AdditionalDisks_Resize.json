@@ -1,0 +1,111 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:52:08.384057Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-mdresize",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-mdresize",
+        "name": "default/omni-integration-test-mdresize",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-mdresize/rz68000-disk-1",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-mdresize/rz68000-disk-1",
+        "name": "default/omni-integration-test-mdresize/rz68000-disk-1",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-integration-test-mdresize/rz68000-disk-1"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 1073741824
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.update",
+      "params": [
+        "default/omni-integration-test-mdresize/rz68000-disk-1",
+        {
+          "volsize": 2147483648
+        }
+      ]
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default/omni-integration-test-mdresize/rz68000-disk-1"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "volsize": {
+          "parsed": 2147483648
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.update",
+      "params": [
+        "default/omni-integration-test-mdresize/rz68000-disk-1",
+        {
+          "volsize": 1073741824
+        }
+      ],
+      "error": {
+        "code": 11,
+        "message": "[EINVAL] pool_dataset_update.volsize: You cannot shrink a zvol from GUI, this may lead to data loss.\n"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-mdresize/rz68000-disk-1"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-mdresize"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T19:05:38.398712Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttestdev51000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 562,
+        "name": "omniinttestdev51000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-devs",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-devs",
+        "name": "default/omni-integration-test-devs",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-devs/disk72000",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-devs/disk72000",
+        "name": "default/omni-integration-test-devs/disk72000",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 562,
+          "order": 2001,
+          "attributes": {
+            "dtype": "NIC",
+            "mac": "02:de:ad:00:00:01",
+            "nic_attach": "br100",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 450,
+        "vm": 562,
+        "order": 2001,
+        "attributes": {
+          "dtype": "NIC",
+          "mac": "02:de:ad:00:00:01",
+          "nic_attach": "br100",
+          "trust_guest_rx_filters": false,
+          "type": "VIRTIO"
+        }
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 562,
+          "order": 1001,
+          "attributes": {
+            "dtype": "DISK",
+            "path": "/dev/zvol/default/omni-integration-test-devs/disk72000",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 451,
+        "vm": 562,
+        "order": 1001,
+        "attributes": {
+          "create_zvol": false,
+          "dtype": "DISK",
+          "iotype": "THREADS",
+          "logical_sectorsize": null,
+          "path": "/dev/zvol/default/omni-integration-test-devs/disk72000",
+          "physical_sectorsize": null,
+          "serial": "SyT5Gsuy",
+          "type": "VIRTIO",
+          "zvol_name": null,
+          "zvol_volsize": null
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-devs/disk72000"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-devs"
+      ]
+    },
+    {
+      "method": "vm.stop",
+      "params": [
+        562,
+        {
+          "force": true
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        562
+      ]
+    }
+  ]
+}

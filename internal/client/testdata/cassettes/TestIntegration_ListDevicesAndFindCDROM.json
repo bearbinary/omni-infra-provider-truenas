@@ -1,0 +1,201 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:52:22.917277Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttestdevops92000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 556,
+        "name": "omniinttestdevops92000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-cdrom",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-cdrom",
+        "name": "default/omni-integration-test-cdrom",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "filesystem.put",
+      "params": null,
+      "upload": true
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 556,
+          "order": 1000,
+          "attributes": {
+            "dtype": "CDROM",
+            "path": "/mnt/default/omni-integration-test-cdrom/test.iso"
+          }
+        }
+      ],
+      "result": {
+        "id": 445,
+        "vm": 556,
+        "order": 1000,
+        "attributes": {
+          "dtype": "CDROM",
+          "path": "/mnt/default/omni-integration-test-cdrom/test.iso"
+        }
+      }
+    },
+    {
+      "method": "vm.device.query",
+      "params": [
+        [
+          [
+            "vm",
+            "=",
+            556
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": 445,
+          "vm": 556,
+          "order": 1000,
+          "attributes": {
+            "dtype": "CDROM",
+            "path": "/mnt/default/omni-integration-test-cdrom/test.iso"
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.device.query",
+      "params": [
+        [
+          [
+            "vm",
+            "=",
+            556
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": 445,
+          "vm": 556,
+          "order": 1000,
+          "attributes": {
+            "dtype": "CDROM",
+            "path": "/mnt/default/omni-integration-test-cdrom/test.iso"
+          }
+        }
+      ]
+    },
+    {
+      "method": "filesystem.put",
+      "params": null,
+      "upload": true
+    },
+    {
+      "method": "vm.device.query",
+      "params": [
+        [
+          [
+            "vm",
+            "=",
+            556
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": 445,
+          "vm": 556,
+          "order": 1000,
+          "attributes": {
+            "dtype": "CDROM",
+            "path": "/mnt/default/omni-integration-test-cdrom/test.iso"
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.device.update",
+      "params": [
+        445,
+        {
+          "attributes": {
+            "dtype": "CDROM",
+            "path": "/mnt/default/omni-integration-test-cdrom/test2.iso"
+          }
+        }
+      ],
+      "result": {
+        "id": 445,
+        "vm": 556,
+        "order": 1000,
+        "attributes": {
+          "dtype": "CDROM",
+          "path": "/mnt/default/omni-integration-test-cdrom/test2.iso"
+        }
+      }
+    },
+    {
+      "method": "vm.device.query",
+      "params": [
+        [
+          [
+            "vm",
+            "=",
+            556
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": 445,
+          "vm": 556,
+          "order": 1000,
+          "attributes": {
+            "dtype": "CDROM",
+            "path": "/mnt/default/omni-integration-test-cdrom/test2.iso"
+          }
+        }
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-cdrom"
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        556
+      ]
+    }
+  ]
+}

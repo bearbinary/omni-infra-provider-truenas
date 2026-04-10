@@ -1,0 +1,61 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:50:48.570831Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-upload",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-upload",
+        "name": "default/omni-integration-test-upload",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "filesystem.put",
+      "params": null,
+      "upload": true
+    },
+    {
+      "method": "filesystem.stat",
+      "params": [
+        "/mnt/default/omni-integration-test-upload/test68000.txt"
+      ],
+      "result": {
+        "acl": false,
+        "allocation_size": 512,
+        "atime": 1775843449.7027848,
+        "attributes": [],
+        "btime": 1775843449.7027848,
+        "ctime": 1775843449.7027848,
+        "dev": 199,
+        "gid": 0,
+        "group": "root",
+        "inode": 2,
+        "is_ctldir": false,
+        "is_mountpoint": false,
+        "mode": 33261,
+        "mount_id": 1497,
+        "mtime": 1775843449.7027848,
+        "nlink": 1,
+        "realpath": "/mnt/default/omni-integration-test-upload/test68000.txt",
+        "size": 24,
+        "type": "FILE",
+        "uid": 0,
+        "user": "root"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-upload"
+      ]
+    }
+  ]
+}

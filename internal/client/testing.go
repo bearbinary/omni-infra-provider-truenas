@@ -57,3 +57,19 @@ func (t *MockTransport) Call(_ context.Context, method string, params any, resul
 func NewMockClient(handler MockHandler) *Client {
 	return newClient(&MockTransport{Handler: handler}, defaultMaxConcurrentCalls)
 }
+
+// TransportOf returns the client's underlying transport. Exported for cross-package test use.
+func TransportOf(c *Client) Transport {
+	return c.transport
+}
+
+// ReplaceTransport swaps a client's transport (e.g., to wrap with RecordingTransport).
+// Exported for cross-package test use.
+func ReplaceTransport(c *Client, t Transport) {
+	c.transport = t
+}
+
+// NewReplayClient creates a Client backed by a ReplayTransport for cross-package tests.
+func NewReplayClient(t *ReplayTransport) *Client {
+	return newClient(t, defaultMaxConcurrentCalls)
+}

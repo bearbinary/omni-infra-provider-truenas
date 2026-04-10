@@ -51,7 +51,7 @@ All via environment variables:
 ## Deployment Options
 
 1. TrueNAS App (recommended): Docker container with Unix socket mounted, no API key
-2. Kubernetes: Kustomize manifests in deploy/kubernetes/
+2. Kubernetes: Helm chart in deploy/helm/omni-infra-provider-truenas/
 3. Docker Compose: Remote deployment via WebSocket in deploy/docker-compose.yaml
 
 ## For Beginners

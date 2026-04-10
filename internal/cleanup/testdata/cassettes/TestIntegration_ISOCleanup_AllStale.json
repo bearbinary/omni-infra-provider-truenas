@@ -1,0 +1,138 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:57:00.824317Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/talos-iso-test-135700",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/talos-iso-test-135700",
+        "name": "default/talos-iso-test-135700",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "filesystem.put",
+      "params": null,
+      "upload": true
+    },
+    {
+      "method": "filesystem.put",
+      "params": null,
+      "upload": true
+    },
+    {
+      "method": "filesystem.stat",
+      "params": [
+        "/mnt/default/talos-iso-test-135700/stale1.iso"
+      ],
+      "result": {
+        "acl": false,
+        "allocation_size": 512,
+        "atime": 1775843821.8973236,
+        "attributes": [],
+        "btime": 1775843821.8973236,
+        "ctime": 1775843821.8973236,
+        "dev": 199,
+        "gid": 0,
+        "group": "root",
+        "inode": 2,
+        "is_ctldir": false,
+        "is_mountpoint": false,
+        "mode": 33261,
+        "mount_id": 1497,
+        "mtime": 1775843821.8973236,
+        "nlink": 1,
+        "realpath": "/mnt/default/talos-iso-test-135700/stale1.iso",
+        "size": 4,
+        "type": "FILE",
+        "uid": 0,
+        "user": "root"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/talos-iso-test-135700"
+      ]
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/talos-iso-test-135700",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/talos-iso-test-135700",
+        "name": "default/talos-iso-test-135700",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "filesystem.stat",
+      "params": [
+        "/mnt/default/talos-iso-test-135700/stale1.iso"
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] Path /mnt/default/talos-iso-test-135700/stale1.iso not found"
+      }
+    },
+    {
+      "method": "filesystem.stat",
+      "params": [
+        "/mnt/default/talos-iso-test-135700/stale2.iso"
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] Path /mnt/default/talos-iso-test-135700/stale2.iso not found"
+      }
+    },
+    {
+      "method": "filesystem.stat",
+      "params": [
+        "/mnt/default/talos-iso-test-135700"
+      ],
+      "result": {
+        "acl": false,
+        "allocation_size": 512,
+        "atime": 1775843826.8213573,
+        "attributes": [
+          "MOUNT_ROOT"
+        ],
+        "btime": 1775843826.8213573,
+        "ctime": 1775843826.8213573,
+        "dev": 199,
+        "gid": 0,
+        "group": "root",
+        "inode": 34,
+        "is_ctldir": false,
+        "is_mountpoint": true,
+        "mode": 16877,
+        "mount_id": 1497,
+        "mtime": 1775843826.8213573,
+        "nlink": 2,
+        "realpath": "/mnt/default/talos-iso-test-135700",
+        "size": 2,
+        "type": "DIRECTORY",
+        "uid": 0,
+        "user": "root"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/talos-iso-test-135700"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:50:54.017808Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttestvm26000",
+          "description": "Integration test VM — safe to delete",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 549,
+        "name": "omniinttestvm26000",
+        "description": "Integration test VM — safe to delete",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            549
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "id": 549,
+        "name": "omniinttestvm26000",
+        "description": "Integration test VM — safe to delete",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "name",
+            "=",
+            "omniinttestvm26000"
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "id": 549,
+          "name": "omniinttestvm26000",
+          "description": "Integration test VM — safe to delete",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.query",
+      "params": [
+        [
+          [
+            "name",
+            "=",
+            "nonexistent-vm-xyz-99999"
+          ]
+        ]
+      ],
+      "result": []
+    },
+    {
+      "method": "vm.query",
+      "params": [],
+      "result": [
+        {
+          "id": 14,
+          "name": "kali",
+          "vcpus": 1,
+          "memory": 8192,
+          "bootloader": "UEFI",
+          "autostart": true,
+          "status": {
+            "state": "RUNNING",
+            "pid": 5878
+          }
+        },
+        {
+          "id": 549,
+          "name": "omniinttestvm26000",
+          "description": "Integration test VM — safe to delete",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false,
+          "status": {
+            "state": "STOPPED"
+          }
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        549
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        549
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: VM 549 does not exist"
+      }
+    },
+    {
+      "method": "vm.stop",
+      "params": [
+        549,
+        {
+          "force": true
+        }
+      ]
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        549
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: VM 549 does not exist"
+      }
+    }
+  ]
+}

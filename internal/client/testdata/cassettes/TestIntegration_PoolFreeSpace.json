@@ -1,0 +1,48 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:51:11.346717Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "available": {
+          "parsed": 2732846461408
+        },
+        "used": {
+          "parsed": 1124916028272
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "nonexistent-pool-xyz"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "error": {
+        "code": 22,
+        "message": "MatchNotFound()"
+      }
+    }
+  ]
+}

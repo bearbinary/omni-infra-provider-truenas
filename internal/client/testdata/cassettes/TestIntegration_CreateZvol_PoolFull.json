@@ -1,0 +1,43 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:51:10.348774Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [
+          [
+            "id",
+            "=",
+            "default"
+          ]
+        ],
+        {
+          "get": true
+        }
+      ],
+      "result": {
+        "available": {
+          "parsed": 2732846461408
+        },
+        "used": {
+          "parsed": 1124916028272
+        }
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-toobig",
+          "type": "VOLUME",
+          "volsize": 27326729420800
+        }
+      ],
+      "error": {
+        "code": 11,
+        "message": "[EINVAL] pool_dataset_create.volsize: It is not recommended to use more than 80% of your available space for VOLUME\n"
+      }
+    }
+  ]
+}

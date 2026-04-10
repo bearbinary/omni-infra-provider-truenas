@@ -1,0 +1,20 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:54:57.42728Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "nonexistent-pool-xyz/omni-vms/test-disk-1",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "error": {
+        "code": 11,
+        "message": "[EINVAL] pool_dataset_create.name: Parent dataset (nonexistent-pool-xyz/omni-vms) does not exist.\n"
+      }
+    }
+  ]
+}

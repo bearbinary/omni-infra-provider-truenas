@@ -1,0 +1,76 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:49:50.634009Z",
+  "interactions": [
+    {
+      "method": "system.info",
+      "params": [],
+      "result": {
+        "boottime": {
+          "$date": 1772211115000
+        },
+        "buildtime": {
+          "$date": 1765974743000
+        },
+        "cores": 24,
+        "datetime": {
+          "$date": 1775843390000
+        },
+        "ecc_memory": false,
+        "hostname": "truenas",
+        "license": null,
+        "loadavg": [
+          0.31884765625,
+          0.27099609375,
+          0.255859375
+        ],
+        "model": "AMD Ryzen 9 3900X 12-Core Processor",
+        "physical_cores": 12,
+        "physmem": 66513752064,
+        "system_manufacturer": "System manufacturer",
+        "system_product": "System Product Name",
+        "system_product_version": "System Version",
+        "system_serial": "System Serial Number",
+        "timezone": "America/Los_Angeles",
+        "uptime": "42 days, 0:57:54.812293",
+        "uptime_seconds": 3632274.812293056,
+        "version": "25.10.1"
+      }
+    },
+    {
+      "method": "system.info",
+      "params": [],
+      "result": {
+        "boottime": {
+          "$date": 1772211115000
+        },
+        "buildtime": {
+          "$date": 1765974743000
+        },
+        "cores": 24,
+        "datetime": {
+          "$date": 1775843390000
+        },
+        "ecc_memory": false,
+        "hostname": "truenas",
+        "license": null,
+        "loadavg": [
+          0.31884765625,
+          0.27099609375,
+          0.255859375
+        ],
+        "model": "AMD Ryzen 9 3900X 12-Core Processor",
+        "physical_cores": 12,
+        "physmem": 66513752064,
+        "system_manufacturer": "System manufacturer",
+        "system_product": "System Product Name",
+        "system_product_version": "System Version",
+        "system_serial": "System Serial Number",
+        "timezone": "America/Los_Angeles",
+        "uptime": "42 days, 0:57:54.815773",
+        "uptime_seconds": 3632274.815772715,
+        "version": "25.10.1"
+      }
+    }
+  ]
+}

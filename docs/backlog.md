@@ -76,15 +76,29 @@ Now that multi-disk VM support has landed (v0.13.0), document and test Longhorn 
 
 ---
 
+## Upstream SDK Workarounds
+
+### Error Visibility Workaround (siderolabs/omni#2629)
+The Omni SDK clears the error on every retry, so users only see "Provisioning" forever when something fails. Build a workaround that persists the last error so it surfaces in the Omni UI. Options: write error to a sidecar annotation or condition on MachineRequestStatus, or expose via the health endpoint.
+
+### Talos Upgrade Step Re-Run (siderolabs/omni#2646)
+The SDK does not re-run provision steps after a machine reaches `PROVISIONED` stage, so CDROM swap for Talos upgrades never fires. Build a polling loop outside the step framework that detects when the requested Talos version differs from what's installed and triggers CDROM swap independently.
+
+### Teardown Stuck Workaround (siderolabs/omni#2642)
+The SDK's `reconcileTearingDown` never calls `Deprovision` if machine state was destroyed before the check. Build a periodic reconciler that finds machines stuck in tearing-down state and forces deprovision after a configurable timeout.
+
 ---
 
 ## CI/CD & Release
 
+### Nightly Cassette Drift Detection
+Connect the TrueNAS box to GitHub Actions via Tailscale or Cloudflare Tunnel so the nightly E2E workflow can re-record cassettes from live TrueNAS and detect API drift automatically. Opens an issue when cassette responses differ from what's committed.
+
 ### Velero CSI Snapshots
 Extend the [backup guide](backup.md) with Velero CSI snapshot integration. Any CSI driver that implements the Kubernetes `VolumeSnapshot` API can use this — for TrueNAS-backed storage, that means democratic-csi. This would allow Velero to take ZFS-native snapshots of PVs via the CSI snapshot API instead of file-system-level copies, improving backup speed and consistency for large volumes.
 
-### Helm Chart
-Helm chart for deploying the provider as a Kubernetes workload (connecting to TrueNAS remotely via WebSocket). Most homelab users run the provider directly on TrueNAS via Docker, but multi-cluster or enterprise setups may want to manage it as a K8s deployment.
+### ~~Helm Chart~~ (Done)
+Helm chart in `deploy/helm/omni-infra-provider-truenas/` for deploying the provider as a Kubernetes workload (connecting to TrueNAS remotely via WebSocket). Supports `existingSecret` for pre-created credentials, configurable via `values.yaml` or `--set` flags.
 
 ---
 ## Future Work

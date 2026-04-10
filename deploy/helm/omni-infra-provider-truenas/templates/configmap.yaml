@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "omni-infra-provider-truenas.fullname" . }}
+  labels:
+    {{- include "omni-infra-provider-truenas.labels" . | nindent 4 }}
+data:
+  OMNI_ENDPOINT: {{ .Values.omniEndpoint | quote }}
+  TRUENAS_HOST: {{ .Values.truenasHost | quote }}
+  TRUENAS_INSECURE_SKIP_VERIFY: {{ .Values.truenasInsecureSkipVerify | quote }}
+  PROVIDER_ID: {{ .Values.provider.id | quote }}
+  PROVIDER_NAME: {{ .Values.provider.name | quote }}
+  PROVIDER_DESCRIPTION: {{ .Values.provider.description | quote }}
+  DEFAULT_POOL: {{ .Values.defaults.pool | quote }}
+  DEFAULT_NETWORK_INTERFACE: {{ .Values.defaults.networkInterface | quote }}
+  DEFAULT_BOOT_METHOD: {{ .Values.defaults.bootMethod | quote }}
+  CONCURRENCY: {{ .Values.concurrency | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+  GRACEFUL_SHUTDOWN_TIMEOUT: {{ .Values.gracefulShutdownTimeout | quote }}
+  HEALTH_LISTEN_ADDR: {{ .Values.healthListenAddr | quote }}

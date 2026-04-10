@@ -1,0 +1,68 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:52:20.565992Z",
+  "interactions": [
+    {
+      "method": "disk.query",
+      "params": [],
+      "result": [
+        {
+          "name": "nvme0n1",
+          "serial": "S59ANM0R221670X",
+          "size": 1000204886016,
+          "type": "SSD",
+          "pool": ""
+        },
+        {
+          "name": "sdc",
+          "serial": "WD-WX72A704T2RC",
+          "size": 2000398934016,
+          "type": "HDD",
+          "pool": ""
+        },
+        {
+          "name": "sdd",
+          "serial": "WD-WX32D648V55R",
+          "size": 2000398934016,
+          "type": "HDD",
+          "pool": ""
+        },
+        {
+          "name": "sdf",
+          "serial": "WD-WX32D648VFT2",
+          "size": 2000398934016,
+          "type": "HDD",
+          "pool": ""
+        },
+        {
+          "name": "sdg",
+          "serial": "DD0000000000001D",
+          "size": 512110190592,
+          "type": "SSD",
+          "pool": ""
+        },
+        {
+          "name": "sde",
+          "serial": "MX_00000000000050161",
+          "size": 256060514304,
+          "type": "SSD",
+          "pool": ""
+        },
+        {
+          "name": "sdb",
+          "serial": "WD-WX72A704T07A",
+          "size": 2000398934016,
+          "type": "HDD",
+          "pool": ""
+        },
+        {
+          "name": "sda",
+          "serial": "MX_00000000000040038",
+          "size": 256060514304,
+          "type": "SSD",
+          "pool": ""
+        }
+      ]
+    }
+  ]
+}

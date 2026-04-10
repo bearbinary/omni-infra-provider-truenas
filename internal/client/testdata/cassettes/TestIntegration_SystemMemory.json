@@ -1,0 +1,13 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-10T17:51:11.780169Z",
+  "interactions": [
+    {
+      "method": "system.info",
+      "params": [],
+      "result": {
+        "physmem": 66513752064
+      }
+    }
+  ]
+}
