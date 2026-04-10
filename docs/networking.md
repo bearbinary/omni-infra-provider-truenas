@@ -95,11 +95,11 @@ This is preferred over static IP configuration because:
 
 ### Finding the MAC Address
 
-The provider logs each VM's MAC address during provisioning:
+The provider logs each VM's MAC address during provisioning. Since v0.13.0, the primary NIC uses a deterministic MAC derived from the machine request ID — this MAC is stable across reprovisions, so DHCP reservations survive:
 
 ```
-VM NIC MAC address — use this for DHCP reservation in your router
-  mac=00:a0:98:18:c4:af  vm_name=omni_cluster_workers_abc123  network_interface=br100
+VM NIC MAC address (deterministic) — stable across reprovision for DHCP reservations
+  mac=02:ab:cd:ef:01:23  vm_name=omni_cluster_workers_abc123  network_interface=br100  role=primary
 ```
 
 You can also find it in TrueNAS UI: **Virtualization > click VM > Devices > NIC**.

@@ -31,6 +31,7 @@ var (
 	VMsProvisioned   metric.Int64Counter
 	VMsDeprovisioned metric.Int64Counter
 	VMsErrored       metric.Int64Counter
+	VMsAutoReplaced  metric.Int64Counter
 	ZvolsResized     metric.Int64Counter
 
 	// Host health gauges
@@ -92,6 +93,9 @@ func initMetrics() {
 	)
 	VMsErrored, _ = meter.Int64Counter("truenas.vms.errored",
 		metric.WithDescription("Total VM provision/deprovision errors"),
+	)
+	VMsAutoReplaced, _ = meter.Int64Counter("truenas.vms.auto_replaced",
+		metric.WithDescription("Total VMs auto-deprovisioned by circuit breaker after exceeding max error recoveries"),
 	)
 	ZvolsResized, _ = meter.Int64Counter("truenas.zvols.resized",
 		metric.WithDescription("Total zvols resized"),

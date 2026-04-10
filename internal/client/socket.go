@@ -13,9 +13,11 @@ import (
 
 // socketTransport implements Transport over the TrueNAS middleware Unix socket.
 // No authentication is required — the socket is trusted for local processes.
+//
+// Each Call opens a fresh Unix socket connection, so no mutex is needed for
+// connection state. Concurrency is governed by the Client-level semaphore.
 type socketTransport struct {
 	socketPath string
-	mu         sync.Mutex
 	wg         sync.WaitGroup
 }
 
@@ -67,9 +69,6 @@ func (t *socketTransport) Close() error {
 func (t *socketTransport) Call(ctx context.Context, method string, params any, result any) error {
 	t.wg.Add(1)
 	defer t.wg.Done()
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	conn, err := net.Dial("unix", t.socketPath)
 	if err != nil {

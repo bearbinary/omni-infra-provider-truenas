@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // AddDeviceRequest is the payload for adding a device to a VM.
@@ -146,21 +147,28 @@ func (c *Client) ListDevices(ctx context.Context, vmID int) ([]Device, error) {
 	return devices, nil
 }
 
-// ListAllNICMACs returns the set of MAC addresses currently in use by NIC devices
-// across all VMs. Used for collision detection when assigning deterministic MACs.
-// JSON-RPC method: vm.device.query (unfiltered)
-func (c *Client) ListAllNICMACs(ctx context.Context) (map[string]int, error) {
+// NICMACsOnSegment returns the set of MAC addresses in use by NIC devices
+// attached to the given network interface (bridge, VLAN, or physical interface).
+// MAC collisions only matter within the same L2 segment, so querying by
+// nic_attach scopes the check correctly and avoids pulling every device on the host.
+// JSON-RPC method: vm.device.query (unfiltered, client-side filtered)
+func (c *Client) NICMACsOnSegment(ctx context.Context, nicAttach string) (map[string]int, error) {
 	var devices []Device
 
 	if err := c.call(ctx, "vm.device.query", nil, &devices); err != nil {
-		return nil, fmt.Errorf("vm.device.query (all) failed: %w", err)
+		return nil, fmt.Errorf("vm.device.query failed: %w", err)
 	}
 
-	macs := make(map[string]int) // mac -> vm ID
+	macs := make(map[string]int)
 
 	for _, d := range devices {
 		dtype, _ := d.Attributes["dtype"].(string)
 		if dtype != "NIC" {
+			continue
+		}
+
+		attach, _ := d.Attributes["nic_attach"].(string)
+		if attach != nicAttach {
 			continue
 		}
 

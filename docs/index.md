@@ -18,11 +18,13 @@ An open-source infrastructure provider that bridges [Sidero Omni](https://omni.s
 ## Key Features
 
 - **Zero-touch VM lifecycle** — provision, start, stop, and destroy VMs automatically
-- **ZFS-native storage** — zvols for VM disks, SHA-256 deduplicated ISO caching
+- **Multi-disk VMs** — additional data disks with per-disk pool and encryption options
+- **Deterministic MACs** — stable MAC addresses survive reprovision, so DHCP reservations persist
+- **ZFS-native storage** — zvols for VM disks, per-zvol encryption, SHA-256 deduplicated ISO caching
+- **Flexible networking** — bridges, VLANs, multi-NIC, jumbo frames (MTU 9000)
+- **Self-healing** — auto-replace VMs stuck in ERROR state after configurable recovery attempts
 - **Dual transport** — Unix socket (zero-auth on TrueNAS) or WebSocket (API key for remote)
-- **Multi-arch** — amd64 and arm64 via [Talos Image Factory](https://factory.talos.dev/)
-- **Flexible networking** — bridges, VLANs, or physical NICs
-- **Observability** — OpenTelemetry traces, metrics, and profiling
+- **Observability** — OpenTelemetry traces, Prometheus metrics, Grafana dashboards, Pyroscope profiling
 
 ## How It Works
 
@@ -47,9 +49,9 @@ flowchart TD
 
 - :material-rocket-launch: **[Getting Started](getting-started.md)** — From NAS to running cluster, no experience required
 - :material-cog: **[Quick Start](quickstart.md)** — Configuration reference and deployment options
+- :material-nas: **[TrueNAS Setup](truenas-setup.md)** — Step-by-step NFS, iSCSI, SSH, bridges, and jumbo frames
 - :material-lan: **[Networking](networking.md)** — Bridges, DHCP, MetalLB, VIP, router-specific guides
 - :material-harddisk: **[Storage](storage.md)** — CSI options: NFS, iSCSI, democratic-csi, Longhorn
-- :material-sitemap: **[Architecture](architecture.md)** — System design, provision flow, transport detection
 - :material-wrench: **[Troubleshooting](troubleshooting.md)** — Common issues and solutions
 
 </div>

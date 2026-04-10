@@ -87,7 +87,7 @@ Extend the [backup guide](backup.md) with Velero CSI snapshot integration. Any C
 Helm chart for deploying the provider as a Kubernetes workload (connecting to TrueNAS remotely via WebSocket). Most homelab users run the provider directly on TrueNAS via Docker, but multi-cluster or enterprise setups may want to manage it as a K8s deployment.
 
 ---
-
+## Future Work
 ### Automatic Autoscaling Setup
 Guide and tooling for pressure-based autoscaling of TrueNAS-provisioned clusters. Uses the [Kubernetes Cluster Autoscaler](https://github.com/kubernetes/autoscaler) with a generic gRPC autoscaler that adds/removes nodes from an Omni MachineSet based on cluster pressure and resource usage. See proof-of-concept: [rothgar/omni-node-autoscaler](https://github.com/rothgar/omni-node-autoscaler). Upstream discussion: [siderolabs/omni#2647 (comment)](https://github.com/siderolabs/omni/discussions/2647#discussioncomment-16508705).
 
@@ -96,8 +96,6 @@ Implementation:
 - Provide example Omni MachineSet and autoscaler config tuned for homelab scale (conservative scale-down delays, min/max node counts)
 - Test with this provider to validate the full loop: pressure → gRPC autoscaler → Omni MachineSet resize → provider provisions/deprovisions VM
 - Consider shipping a Helm values template or config patch that wires up the autoscaler with sensible defaults
-
----
 
 ## Might Implement
 

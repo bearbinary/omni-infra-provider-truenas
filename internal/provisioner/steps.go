@@ -28,6 +28,10 @@ import (
 
 var provTracer = otel.Tracer("truenas-provisioner")
 
+// isoHTTPClient is reused across ISO downloads to benefit from connection pooling
+// (TLS session resumption, keep-alive) when hitting Image Factory repeatedly.
+var isoHTTPClient = &http.Client{Timeout: 10 * time.Minute}
+
 const errUnmarshalProviderData = "failed to unmarshal provider data: %w"
 
 // hashRequestID returns a truncated SHA-256 hash of the request ID for use in
@@ -228,9 +232,7 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 			return nil, fmt.Errorf("failed to create ISO download request: %w", err)
 		}
 
-		isoClient := &http.Client{Timeout: 10 * time.Minute}
-
-		resp, err := isoClient.Do(isoReq)
+		resp, err := isoHTTPClient.Do(isoReq)
 		if err != nil {
 			return nil, fmt.Errorf("failed to download ISO: %w", err)
 		}
@@ -440,15 +442,21 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			diskPool = data.Pool
 		}
 
+		// Per-disk dataset_prefix overrides the MachineClass-level one
+		diskPrefix := disk.DatasetPrefix
+		if diskPrefix == "" {
+			diskPrefix = data.DatasetPrefix
+		}
+
 		diskBasePath := diskPool
-		if data.DatasetPrefix != "" {
-			diskBasePath = diskPool + "/" + data.DatasetPrefix
+		if diskPrefix != "" {
+			diskBasePath = diskPool + "/" + diskPrefix
 		}
 
 		additionalZvolPath := fmt.Sprintf("%s/omni-vms/%s-disk-%d", diskBasePath, requestID, i+1)
 
 		// Ensure parent dataset hierarchy exists on the target pool
-		if data.DatasetPrefix != "" && diskPool != data.Pool {
+		if diskPrefix != "" {
 			if err := p.client.EnsureDataset(ctx, diskBasePath); err != nil {
 				return fmt.Errorf("failed to ensure dataset prefix on pool %q for additional disk %d: %w", diskPool, i, err)
 			}
@@ -479,7 +487,29 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	// Attach primary NIC with a deterministic MAC derived from the request ID.
 	// This ensures the MAC survives reprovisioning, so DHCP reservations stay valid.
+	// Collision detection is scoped to the same network segment (bridge/VLAN) because
+	// MAC addresses only need to be unique within a single L2 broadcast domain.
 	primaryMAC := DeterministicMAC(requestID, 0)
+
+	segmentMACs, macErr := p.client.NICMACsOnSegment(ctx, data.NetworkInterface)
+	if macErr != nil {
+		logger.Warn("could not query segment MACs for collision detection — proceeding without",
+			zap.String("network_interface", data.NetworkInterface),
+			zap.Error(macErr),
+		)
+	} else {
+		resolved, collided := ResolveDeterministicMAC(requestID, 0, segmentMACs)
+		if collided {
+			logger.Warn("deterministic MAC collision on segment — resolved with alternate hash",
+				zap.String("original_mac", primaryMAC),
+				zap.String("resolved_mac", resolved),
+				zap.String("network_interface", data.NetworkInterface),
+				zap.String("vm_name", vmName),
+			)
+		}
+
+		primaryMAC = resolved
+	}
 
 	nicDev, err := p.client.AddNICWithConfig(ctx, vm.ID, client.NICConfig{
 		NetworkInterface: data.NetworkInterface,
@@ -510,7 +540,30 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		}
 
 		if nic.DeterministicMAC {
-			nicCfg.MAC = DeterministicMAC(requestID, i+1)
+			nicMAC := DeterministicMAC(requestID, i+1)
+
+			nicSegmentMACs, segErr := p.client.NICMACsOnSegment(ctx, nic.NetworkInterface)
+			if segErr != nil {
+				logger.Warn("could not query segment MACs for collision detection — proceeding without",
+					zap.String("network_interface", nic.NetworkInterface),
+					zap.Error(segErr),
+				)
+			} else {
+				resolved, nicCollided := ResolveDeterministicMAC(requestID, i+1, nicSegmentMACs)
+				if nicCollided {
+					logger.Warn("deterministic MAC collision on segment — resolved with alternate hash",
+						zap.Int("index", i),
+						zap.String("original_mac", nicMAC),
+						zap.String("resolved_mac", resolved),
+						zap.String("network_interface", nic.NetworkInterface),
+						zap.String("vm_name", vmName),
+					)
+				}
+
+				nicMAC = resolved
+			}
+
+			nicCfg.MAC = nicMAC
 		}
 
 		dev, nicErr := p.client.AddNICWithConfig(ctx, vm.ID, nicCfg, 2002+i)
@@ -531,7 +584,6 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			zap.Int("index", i),
 			zap.String("network_interface", nic.NetworkInterface),
 			zap.String("mac", mac),
-			zap.Bool("deterministic_mac", nic.DeterministicMAC),
 			zap.Int("mtu", nic.MTU),
 			zap.String("vm_name", vmName),
 		)
@@ -986,6 +1038,10 @@ func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, 
 			)
 
 			p.clearVMErrors(vm.ID)
+
+			if telemetry.VMsAutoReplaced != nil {
+				telemetry.VMsAutoReplaced.Add(ctx, 1)
+			}
 
 			if err := p.cleanupVM(ctx, logger, vm.ID); err != nil {
 				logger.Warn("failed to deprovision broken VM", zap.Int("vm_id", vm.ID), zap.Error(err))

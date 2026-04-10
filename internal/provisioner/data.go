@@ -12,17 +12,18 @@ import (
 
 // AdditionalNIC describes an extra NIC to attach to the VM beyond the primary.
 type AdditionalNIC struct {
-	NetworkInterface string `yaml:"network_interface"`                                              // Required: bridge, VLAN, or physical interface
-	Type             string `yaml:"type,omitempty"`                                                 // VIRTIO (default) or E1000
-	MTU              int    `yaml:"mtu,omitempty"`                                                  // MTU size (default: 0 = use host default, typically 1500). Set to 9000 for jumbo frames.
-	DeterministicMAC bool   `yaml:"deterministic_mac,omitempty" json:"deterministic_mac,omitempty"` // Derive a stable MAC from the machine request ID (survives reprovision)
+	NetworkInterface string `yaml:"network_interface"`           // Required: bridge, VLAN, or physical interface
+	Type             string `yaml:"type,omitempty"`              // VIRTIO (default) or E1000
+	MTU              int    `yaml:"mtu,omitempty"`               // MTU size (default: 0 = use host default, typically 1500). Set to 9000 for jumbo frames.
+	DeterministicMAC bool   `yaml:"deterministic_mac,omitempty"` // Derive a stable MAC from the machine request ID (survives reprovision) //nolint:tagliatelle
 }
 
 // AdditionalDisk describes an extra disk to attach to the VM beyond the root disk.
 type AdditionalDisk struct {
-	Size      int    `yaml:"size"`                // Size in GiB (required)
-	Pool      string `yaml:"pool,omitempty"`      // Pool override (defaults to primary pool)
-	Encrypted bool   `yaml:"encrypted,omitempty"` // Per-disk encryption toggle
+	Size          int    `yaml:"size"`                     // Size in GiB (required)
+	Pool          string `yaml:"pool,omitempty"`           // Pool override (defaults to primary pool)
+	DatasetPrefix string `yaml:"dataset_prefix,omitempty"` // Dataset prefix override (defaults to MachineClass dataset_prefix)
+	Encrypted     bool   `yaml:"encrypted,omitempty"`      // Per-disk encryption toggle
 }
 
 type Data struct {
@@ -113,8 +114,8 @@ func (d *Data) BasePath() string {
 	return d.Pool
 }
 
-// knownFields returns the set of known YAML field names from the Data struct tags.
-func knownFields() map[string]bool {
+// cachedKnownFields is computed once at init time since Data struct tags never change.
+var cachedKnownFields = func() map[string]bool {
 	fields := make(map[string]bool)
 	t := reflect.TypeOf(Data{})
 
@@ -129,6 +130,11 @@ func knownFields() map[string]bool {
 	}
 
 	return fields
+}()
+
+// knownFields returns the set of known YAML field names from the Data struct tags.
+func knownFields() map[string]bool {
+	return cachedKnownFields
 }
 
 // UnknownFields returns field names present in rawData that are not recognized by the Data struct.
@@ -199,6 +205,18 @@ func (d *Data) Validate() error {
 		if disk.Pool != "" {
 			if err := validateSafeName(fmt.Sprintf("additional_disks[%d].pool", i), disk.Pool); err != nil {
 				return err
+			}
+		}
+
+		if disk.DatasetPrefix != "" {
+			for j, seg := range strings.Split(disk.DatasetPrefix, "/") {
+				if seg == "" {
+					continue
+				}
+
+				if err := validateSafeName(fmt.Sprintf("additional_disks[%d].dataset_prefix segment %d (%q)", i, j, seg), seg); err != nil {
+					return err
+				}
 			}
 		}
 	}

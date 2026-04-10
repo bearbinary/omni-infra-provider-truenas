@@ -27,7 +27,19 @@ For TrueNAS app deployments, update the image tag in the app configuration.
 
 ### v0.13.0
 
-No breaking changes. Adds multi-disk VM support via `additional_disks` in MachineClass config. Removes ZFS snapshot/rollback code — Talos nodes are immutable, so the correct recovery for a failed VM is replacement (Omni reprovisions automatically), not zvol rollback. Adds a backup guide covering control plane backup via Omni and workload/PVC backup via Velero. See [Backup & Recovery](backup.md).
+**MAC address change on first reprovision:**
+
+The primary NIC now uses a deterministic MAC address derived from the machine request ID. This means DHCP reservations survive future reprovisions. However, existing VMs have TrueNAS-generated random MACs — the first reprovision after upgrading to v0.13.0 will change each VM's MAC address one final time. After that, the MAC is stable.
+
+**Action required if you use DHCP reservations:**
+1. Upgrade the provider
+2. When a VM is reprovisioned (scale event, manual delete, pool change), note the new MAC from the provider logs: `VM NIC MAC address (deterministic) — stable across reprovision for DHCP reservations`
+3. Update the DHCP reservation in your router (UniFi, pfSense, OPNsense, Mikrotik) to the new MAC
+4. No further updates needed — the MAC is now permanent for that machine request ID
+
+VMs that are not reprovisioned keep their existing MAC. The change only takes effect when a VM is created fresh.
+
+No other breaking changes. Adds multi-disk VM support via `additional_disks` in MachineClass config. Removes ZFS snapshot/rollback code — Talos nodes are immutable, so the correct recovery for a failed VM is replacement (Omni reprovisions automatically), not zvol rollback. Adds a backup guide covering control plane backup via Omni and workload/PVC backup via Velero. See [Backup & Recovery](backup.md).
 
 ### v0.12.0
 

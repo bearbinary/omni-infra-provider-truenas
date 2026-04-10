@@ -92,12 +92,12 @@ The `advertised_subnets` field pins etcd and kubelet to the internal network (`v
 
 ## DHCP Reservations
 
-Set up static DHCP leases in your router for predictable IPs. The provider logs each NIC's MAC address at creation:
+Set up static DHCP leases in your router for predictable IPs. All NICs use deterministic MAC addresses derived from the machine request ID, so DHCP reservations survive reprovision. The provider logs each NIC's MAC address at creation:
 
 ```
-VM NIC MAC address — use this for DHCP reservation in your router
-  mac=00:a0:98:xx:xx:xx  vm_name=omni_talos_worker_1  network_interface=vlan100  role=primary
-attached additional NIC  network_interface=vlan200  mac=00:a0:98:yy:yy:yy  vm_name=omni_talos_worker_1
+VM NIC MAC address (deterministic) — stable across reprovision for DHCP reservations
+  mac=02:ab:cd:xx:xx:xx  vm_name=omni_talos_worker_1  network_interface=vlan100  role=primary
+attached additional NIC  network_interface=vlan200  mac=02:ef:01:yy:yy:yy  vm_name=omni_talos_worker_1
 ```
 
 | VM | vlan100 (Internal) | vlan200 (DMZ) |

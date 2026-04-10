@@ -101,6 +101,16 @@ groups:
           summary: "Over 50% of VM shutdowns are forced"
           description: "Most VMs are not shutting down gracefully. Consider increasing GRACEFUL_SHUTDOWN_TIMEOUT or checking qemu-guest-agent."
 
+      # Circuit breaker auto-replacing VMs (persistent ERROR state)
+      - alert: TrueNASVMAutoReplaced
+        expr: rate(truenas_vms_auto_replaced_total[1h]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VMs being auto-replaced by circuit breaker"
+          description: "One or more VMs exceeded MAX_ERROR_RECOVERIES and were automatically deprovisioned for replacement. This indicates a persistent issue — check TrueNAS firmware, pool health, or host hardware."
+
       # Orphan VMs being cleaned up (indicates provider/Omni state drift)
       - alert: TrueNASOrphanVMsDetected
         expr: rate(truenas_cleanup_orphan_vms_total[1h]) > 0

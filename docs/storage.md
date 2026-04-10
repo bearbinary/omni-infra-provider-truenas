@@ -2,7 +2,7 @@
 
 This guide covers persistent storage options for Kubernetes clusters running on TrueNAS via the Omni infrastructure provider. It helps you choose the right CSI driver based on your workload, complexity tolerance, and whether you want to leverage TrueNAS-managed storage or run distributed storage inside the cluster.
 
-For Talos Linux-specific CSI guidance, see the [Siderolabs Storage Documentation](https://docs.siderolabs.com/kubernetes-guides/csi/storage).
+For step-by-step TrueNAS configuration (NFS shares, iSCSI service, SSH for democratic-csi), see the [TrueNAS Setup Guide](truenas-setup.md). For Talos Linux-specific CSI guidance, see the [Siderolabs Storage Documentation](https://docs.siderolabs.com/kubernetes-guides/csi/storage).
 
 ---
 

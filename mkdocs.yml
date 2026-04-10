@@ -79,6 +79,7 @@ nav:
   - Getting Started: getting-started.md
   - Configuration:
       - Quick Start: quickstart.md
+      - TrueNAS Setup: truenas-setup.md
       - Networking: networking.md
       - Storage: storage.md
       - CNI: cni.md

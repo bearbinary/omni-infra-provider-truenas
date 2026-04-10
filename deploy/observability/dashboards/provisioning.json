@@ -55,6 +55,7 @@
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"createSchematic\",job=~\"$job\"}[5m]))", "legendFormat": "createSchematic" },
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"uploadISO\",job=~\"$job\"}[5m]))", "legendFormat": "uploadISO" },
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"createVM\",job=~\"$job\"}[5m]))", "legendFormat": "createVM" },
+        { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"configureStorage\",job=~\"$job\"}[5m]))", "legendFormat": "configureStorage" },
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"healthCheck\",job=~\"$job\"}[5m]))", "legendFormat": "healthCheck" }
       ],
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } } },
@@ -108,9 +109,22 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
-      "title": "VM Error Rate",
+      "title": "VMs Auto-Replaced",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 23 },
+      "targets": [
+        { "expr": "truenas_vms_auto_replaced_total{job=~\"$job\"}", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] } }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "VM Error Rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 27 },
       "targets": [
         { "expr": "rate(truenas_vms_errored_total{job=~\"$job\"}[5m])", "legendFormat": "" }
       ],

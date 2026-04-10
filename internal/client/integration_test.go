@@ -393,10 +393,17 @@ func TestIntegration_DeviceAttachment(t *testing.T) {
 		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
 	})
 
-	// Attach NIC
-	nicDev, err := c.AddNIC(ctx, vm.ID, networkIface)
-	require.NoError(t, err, "should attach NIC")
+	// Attach NIC with explicit MAC (mirrors production path)
+	nicDev, err := c.AddNICWithConfig(ctx, vm.ID, NICConfig{
+		NetworkInterface: networkIface,
+		MAC:              "02:de:ad:00:00:01",
+	}, 2001)
+	require.NoError(t, err, "should attach NIC with explicit MAC")
 	assert.Equal(t, "NIC", nicDev.Attributes["dtype"])
+
+	gotMAC, _ := nicDev.Attributes["mac"].(string)
+	assert.Equal(t, "02:de:ad:00:00:01", strings.ToLower(gotMAC),
+		"TrueNAS must respect the MAC we set")
 
 	// Attach DISK
 	diskDev, err := c.AddDisk(ctx, vm.ID, zvolName)
@@ -549,9 +556,12 @@ func TestIntegration_FullProvisionDeprovision(t *testing.T) {
 	require.NoError(t, err, "should attach disk")
 	assert.Equal(t, "DISK", diskDev.Attributes["dtype"])
 
-	// 5. Attach NIC
-	nicDev, err := c.AddNIC(ctx, vm.ID, networkIface)
-	require.NoError(t, err, "should attach NIC")
+	// 5. Attach NIC with explicit MAC (mirrors production deterministic MAC path)
+	nicDev, err := c.AddNICWithConfig(ctx, vm.ID, NICConfig{
+		NetworkInterface: networkIface,
+		MAC:              "02:e2:e0:00:00:01",
+	}, 2001)
+	require.NoError(t, err, "should attach NIC with explicit MAC")
 	assert.Equal(t, "NIC", nicDev.Attributes["dtype"])
 
 	// 6. Verify VM exists and is stopped
@@ -614,8 +624,11 @@ func TestIntegration_DeviceDelete(t *testing.T) {
 		c.DeleteVM(context.Background(), vm.ID) //nolint:errcheck
 	})
 
-	// Attach a NIC
-	dev, err := c.AddNIC(ctx, vm.ID, networkIface)
+	// Attach a NIC with explicit MAC (mirrors production path)
+	dev, err := c.AddNICWithConfig(ctx, vm.ID, NICConfig{
+		NetworkInterface: networkIface,
+		MAC:              "02:de:1e:7e:00:01",
+	}, 2001)
 	require.NoError(t, err)
 
 	// Delete the device

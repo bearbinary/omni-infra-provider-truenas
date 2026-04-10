@@ -210,6 +210,7 @@ type ManagedZvol struct {
 
 // ListManagedZvols returns all zvols tagged with org.omni:managed=true and their request IDs.
 // Searches across all pools and dataset prefixes.
+// Filters to VOLUME type server-side to avoid fetching every FILESYSTEM dataset on the NAS.
 func (c *Client) ListManagedZvols(ctx context.Context) ([]ManagedZvol, error) {
 	var datasets []struct {
 		ID             string `json:"id"`
@@ -219,7 +220,7 @@ func (c *Client) ListManagedZvols(ctx context.Context) ([]ManagedZvol, error) {
 	}
 
 	if err := c.call(ctx, "pool.dataset.query", []any{
-		[]any{},
+		[]any{[]any{"type", "=", "VOLUME"}},
 		map[string]any{"extra": map[string]any{"retrieve_user_props": true}},
 	}, &datasets); err != nil {
 		return nil, fmt.Errorf("pool.dataset.query failed: %w", err)

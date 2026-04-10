@@ -112,6 +112,55 @@ func TestAddNICWithConfig_ExplicitMAC(t *testing.T) {
 	assert.Contains(t, string(receivedParams), `"nic_attach":"br100"`)
 }
 
+func TestNICMACsOnSegment_FiltersbySegmentAndType(t *testing.T) {
+	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
+		assert.Equal(t, "vm.device.query", method)
+
+		return []Device{
+			{ID: 1, VM: 10, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br100", "mac": "02:aa:bb:cc:dd:01"}},
+			{ID: 2, VM: 10, Attributes: map[string]any{"dtype": "DISK", "path": "/dev/zvol/tank/x"}},
+			{ID: 3, VM: 20, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br100", "mac": "02:aa:bb:cc:dd:02"}},
+			{ID: 4, VM: 20, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br200", "mac": "02:aa:bb:cc:dd:03"}}, // different segment
+			{ID: 5, VM: 30, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br100", "mac": ""}},                  // empty MAC
+		}, nil
+	})
+
+	macs, err := c.NICMACsOnSegment(context.Background(), "br100")
+	require.NoError(t, err)
+
+	assert.Len(t, macs, 2, "should only include NICs on br100 with non-empty MACs")
+	assert.Equal(t, 10, macs["02:aa:bb:cc:dd:01"])
+	assert.Equal(t, 20, macs["02:aa:bb:cc:dd:02"])
+	_, hasBr200 := macs["02:aa:bb:cc:dd:03"]
+	assert.False(t, hasBr200, "should not include MACs from br200")
+}
+
+func TestNICMACsOnSegment_NormalizesCase(t *testing.T) {
+	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
+		return []Device{
+			{ID: 1, VM: 10, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br100", "mac": "02:AA:BB:CC:DD:EE"}},
+		}, nil
+	})
+
+	macs, err := c.NICMACsOnSegment(context.Background(), "br100")
+	require.NoError(t, err)
+
+	_, ok := macs["02:aa:bb:cc:dd:ee"]
+	assert.True(t, ok, "MACs should be lowercased for case-insensitive matching")
+}
+
+func TestNICMACsOnSegment_EmptyWhenNoMatch(t *testing.T) {
+	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
+		return []Device{
+			{ID: 1, VM: 10, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br200", "mac": "02:aa:bb:cc:dd:01"}},
+		}, nil
+	})
+
+	macs, err := c.NICMACsOnSegment(context.Background(), "br100")
+	require.NoError(t, err)
+	assert.Empty(t, macs, "should return empty map when no NICs on the requested segment")
+}
+
 func TestAddNICWithConfig_InvalidMAC(t *testing.T) {
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
 		t.Fatal("should not reach TrueNAS with invalid MAC")

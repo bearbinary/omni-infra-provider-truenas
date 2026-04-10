@@ -76,3 +76,63 @@ func TestDeterministicMAC_UniqueAcrossMany(t *testing.T) {
 	// 3000 unique MACs across 1000 request IDs x 3 NIC indexes
 	require.Len(t, seen, 3000)
 }
+
+// --- ResolveDeterministicMAC tests ---
+
+func TestResolveDeterministicMAC_NoCollision(t *testing.T) {
+	existing := map[string]int{"aa:bb:cc:dd:ee:ff": 99}
+
+	mac, collided := ResolveDeterministicMAC("request-abc", 0, existing)
+	assert.False(t, collided, "should not report collision when MAC is free")
+	assert.Regexp(t, macRe, mac)
+	assert.Equal(t, DeterministicMAC("request-abc", 0), mac, "should return base MAC when no collision")
+}
+
+func TestResolveDeterministicMAC_NilExistingMACs(t *testing.T) {
+	// When ListAllNICMACs fails, existingMACs is nil — should not panic
+	mac, collided := ResolveDeterministicMAC("request-abc", 0, nil)
+	assert.False(t, collided)
+	assert.Equal(t, DeterministicMAC("request-abc", 0), mac)
+}
+
+func TestResolveDeterministicMAC_CollisionResolved(t *testing.T) {
+	baseMAC := DeterministicMAC("request-abc", 0)
+	existing := map[string]int{baseMAC: 42} // simulate another VM already has this MAC
+
+	mac, collided := ResolveDeterministicMAC("request-abc", 0, existing)
+	assert.True(t, collided, "should report collision")
+	assert.Regexp(t, macRe, mac)
+	assert.NotEqual(t, baseMAC, mac, "resolved MAC must differ from the colliding one")
+	assert.Equal(t, "02", mac[:2], "resolved MAC must still be locally-administered")
+}
+
+func TestResolveDeterministicMAC_CollisionResolvedIsDeterministic(t *testing.T) {
+	baseMAC := DeterministicMAC("request-abc", 0)
+	existing := map[string]int{baseMAC: 42}
+
+	mac1, _ := ResolveDeterministicMAC("request-abc", 0, existing)
+	mac2, _ := ResolveDeterministicMAC("request-abc", 0, existing)
+	assert.Equal(t, mac1, mac2, "collision resolution must be deterministic")
+}
+
+func TestResolveDeterministicMAC_MultipleCollisions(t *testing.T) {
+	// Simulate the unlikely case where both the base MAC AND the first
+	// collision-salted MAC are taken.
+	existing := make(map[string]int)
+
+	// Block attempt 0 (base)
+	existing[DeterministicMAC("request-abc", 0)] = 10
+
+	// Block attempt 1 (first collision salt) — compute it manually
+	mac1, _ := ResolveDeterministicMAC("request-abc", 0, map[string]int{
+		DeterministicMAC("request-abc", 0): 10,
+	})
+	existing[mac1] = 20
+
+	// Attempt 2 should find a different MAC
+	mac2, collided := ResolveDeterministicMAC("request-abc", 0, existing)
+	assert.True(t, collided)
+	assert.Regexp(t, macRe, mac2)
+	assert.NotEqual(t, DeterministicMAC("request-abc", 0), mac2)
+	assert.NotEqual(t, mac1, mac2, "must skip past both blocked MACs")
+}

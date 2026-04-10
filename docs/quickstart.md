@@ -87,6 +87,14 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 | `CONCURRENCY` | `4` | Max parallel provision/deprovision workers |
 | `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 
+### Operational
+
+| Variable | Default | Description |
+|---|---|---|
+| `GRACEFUL_SHUTDOWN_TIMEOUT` | `30` | Seconds to wait for ACPI shutdown before force-stop |
+| `MAX_ERROR_RECOVERIES` | `5` | Max consecutive ERROR recoveries before auto-replacing a VM (set to `-1` to disable) |
+| `HEALTH_LISTEN_ADDR` | `:8081` | Address for `/healthz` and `/readyz` HTTP endpoints |
+
 ### MachineClass Config
 
 These fields go in the MachineClass `configpatch`:
@@ -96,8 +104,30 @@ These fields go in the MachineClass `configpatch`:
 | `cpus` | int | Yes | `2` | Virtual CPUs (min: 1) |
 | `memory` | int | Yes | `4096` | Memory in MiB (min: 1024) |
 | `disk_size` | int | Yes | `40` | Root disk in GiB (min: 10) |
-| `pool` | string | No | `DEFAULT_POOL` | ZFS pool for zvols and ISOs |
-| `network_interface` | string | No | `DEFAULT_NETWORK_INTERFACE` | Bridge, VLAN, or physical interface |
-| `boot_method` | string | No | `UEFI` | `UEFI` or `BIOS` |
-| `architecture` | string | No | `amd64` | `amd64` or `arm64` |
-| `extensions` | list | No | — | Additional Talos extensions |
+| `pool` | string | Yes | `DEFAULT_POOL` | ZFS pool for zvols and ISOs |
+| `network_interface` | string | Yes | `DEFAULT_NETWORK_INTERFACE` | Bridge, VLAN, or physical interface |
+| `boot_method` | string | Yes | `UEFI` | `UEFI` or `BIOS` |
+| `architecture` | string | Yes | `amd64` | `amd64` or `arm64` |
+| `encrypted` | bool | No | `false` | Enable ZFS encryption (AES-256-GCM) on the root disk |
+| `dataset_prefix` | string | No | — | Nested dataset path (e.g., `prod/k8s` → `pool/prod/k8s/omni-vms/`) |
+| `extensions` | list | No | — | Additional Talos extensions (e.g., `siderolabs/iscsi-tools`) |
+| `advertised_subnets` | string | No | — | Pin etcd/kubelet to specific CIDRs for multi-NIC setups |
+| `additional_disks` | list | No | — | Extra data disks — see below |
+| `additional_nics` | list | No | — | Extra NICs for network segmentation — see below |
+
+#### `additional_disks` items
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `size` | int | Yes | — | Disk size in GiB |
+| `pool` | string | No | primary pool | ZFS pool override for this disk |
+| `encrypted` | bool | No | `false` | Per-disk encryption toggle |
+
+#### `additional_nics` items
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `network_interface` | string | Yes | — | Bridge, VLAN, or physical interface |
+| `type` | string | No | `VIRTIO` | `VIRTIO` or `E1000` |
+| `mtu` | int | No | host default | MTU size (set to `9000` for jumbo frames) |
+| `deterministic_mac` | bool | No | `false` | Derive a stable MAC from machine request ID |

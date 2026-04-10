@@ -44,7 +44,8 @@ type wsTransport struct {
 	mu                 sync.Mutex
 	wg                 sync.WaitGroup
 	authed             bool
-	lastReconnect      time.Time // Circuit breaker: minimum time between reconnect bursts
+	lastReconnect      time.Time    // Circuit breaker: minimum time between reconnect bursts
+	uploadClient       *http.Client // Reused for file uploads to benefit from connection pooling
 }
 
 // TrueNAS WebSocket message types.
@@ -128,6 +129,14 @@ func newWSTransport(host string, apiKey SecretString, insecureSkipVerify bool) (
 		apiKey:             apiKey,
 		host:               host,
 		insecureSkipVerify: insecureSkipVerify,
+		uploadClient: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: insecureSkipVerify, //nolint:gosec
+				},
+			},
+			Timeout: 5 * time.Minute,
+		},
 	}
 
 	if err := t.connect(); err != nil {
@@ -475,16 +484,7 @@ func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.R
 	req.Header.Set("Authorization", "Bearer "+t.apiKey.Reveal())
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: t.insecureSkipVerify, //nolint:gosec
-			},
-		},
-		Timeout: 5 * time.Minute, // ISOs can be large
-	}
-
-	resp, err := httpClient.Do(req)
+	resp, err := t.uploadClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}

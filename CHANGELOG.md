@@ -2,20 +2,27 @@
 
 All notable changes to this project are documented here.
 
-## [v0.13.0] — Backup Guide, Snapshot Removal
+## [v0.13.0] — Multi-Disk VMs, Deterministic MACs, Circuit Breaker & Storage
 
 ### Features
 - **Additional disk support (multi-disk VMs)** — Attach extra data disks beyond the root disk via `additional_disks` in MachineClass config. Each disk can target a different ZFS pool and independently toggle encryption. Enables dedicated etcd disks on fast SSD pools, bulk data disks on HDD pools, and is a prerequisite for node-local distributed storage (Longhorn). Max 16 additional disks per VM. Paths tracked in protobuf state for automatic cleanup on deprovision.
 - **Additional disk resize** — Additional disks grow automatically when the `size` in `additional_disks` config increases, matching the root disk resize behavior. Shrinking is prevented (ZFS limitation).
 - **MTU / jumbo frames for additional NICs** — Optional `mtu` field on `additional_nics` items. Passed to TrueNAS on NIC creation and applied as a Talos machine config patch using MAC-based interface matching. Set to 9000 for jumbo frames on iSCSI/NFS storage networks.
-- **Deterministic MAC addresses** — Primary NIC always gets a stable MAC derived from the machine request ID, so DHCP reservations survive reprovision. Additional NICs opt in via `deterministic_mac: true`.
+- **Deterministic MAC addresses** — All NICs (primary and additional) get a stable MAC derived from the machine request ID, so DHCP reservations survive reprovision. Collision detection queries the same network segment before attaching.
 - **Node auto-replace circuit breaker** — VMs stuck in ERROR state are automatically deprovisioned after exceeding `MAX_ERROR_RECOVERIES` (default: 5) consecutive failed recoveries. Omni's reconciliation loop then provisions a fresh replacement. Configurable via env var; set to `-1` to disable.
+
+### Observability
+- Add `truenas.vms.auto_replaced` metric — counts VMs deprovisioned by the circuit breaker
+- Add "VMs Auto-Replaced" stat panel to provisioning Grafana dashboard
+- Add `TrueNASVMAutoReplaced` Prometheus alert rule — fires when circuit breaker triggers, severity: warning
+- Add `configureStorage` to provision step duration breakdown in Grafana dashboard
 
 ### Removed
 - **Remove ZFS snapshot/rollback code** — Talos nodes are immutable; the correct recovery path is to replace a failed VM (Omni reprovisions automatically), not to roll back a zvol. Removed: `CreateSnapshot`, `ListSnapshots`, `DeleteSnapshot`, `RollbackSnapshot` client methods, `snapshotBeforeUpgrade` and `enforceSnapshotRetention` provisioner logic, `last_upgrade_snapshot` protobuf field, snapshot telemetry counters, and all related tests. The `Snapshot` type and pre-upgrade snapshot workflow introduced in v0.6.0–v0.8.0 are fully removed.
 
 ### Documentation
 - Add backup & disaster recovery guide (`docs/backup.md`) — control plane backup via Omni, workload/PVC backup via Velero to remote S3
+- Add jumbo frames / MTU guide to networking docs (`docs/networking.md`)
 - Add maintenance/trust caveats to storage guide for nfs-subdir-external-provisioner and democratic-csi
 - Add manual NFS PVs fallback section to storage guide
 - Remove snapshot rollback documentation from upgrading guide
