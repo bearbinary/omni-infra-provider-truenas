@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"regexp"
 )
 
 // AddDeviceRequest is the payload for adding a device to a VM.
@@ -51,6 +52,8 @@ func (c *Client) AddCDROM(ctx context.Context, vmID int, isoPath string) (*Devic
 type NICConfig struct {
 	NetworkInterface    string `json:"network_interface" yaml:"network_interface"`                               // Bridge, VLAN, or physical interface
 	Type                string `json:"type,omitempty" yaml:"type,omitempty"`                                     // VIRTIO (default) or E1000
+	MAC                 string `json:"mac,omitempty" yaml:"mac,omitempty"`                                       // Explicit MAC address (empty = TrueNAS auto-generates)
+	MTU                 int    `json:"mtu,omitempty" yaml:"mtu,omitempty"`                                       // MTU size (0 = host default)
 	TrustGuestRxFilters bool   `json:"trust_guest_rx_filters,omitempty" yaml:"trust_guest_rx_filters,omitempty"` // Enable for promiscuous mode (required for nested VLAN tagging)
 }
 
@@ -61,8 +64,14 @@ func (c *Client) AddNIC(ctx context.Context, vmID int, nicAttach string) (*Devic
 	return c.AddNICWithConfig(ctx, vmID, NICConfig{NetworkInterface: nicAttach}, 2001)
 }
 
+// macRe validates colon-separated, lowercase hex MAC addresses (e.g., "02:ab:cd:ef:01:23").
+var macRe = regexp.MustCompile(`^([0-9a-f]{2}:){5}[0-9a-f]{2}$`)
+
 // AddNICWithConfig attaches a NIC device to a VM with full configuration options.
 func (c *Client) AddNICWithConfig(ctx context.Context, vmID int, cfg NICConfig, order int) (*Device, error) {
+	if cfg.MAC != "" && !macRe.MatchString(cfg.MAC) {
+		return nil, fmt.Errorf("invalid MAC address %q: must be lowercase colon-separated hex (e.g., 02:ab:cd:ef:01:23)", cfg.MAC)
+	}
 	nicType := cfg.Type
 	if nicType == "" {
 		nicType = "VIRTIO"
@@ -72,6 +81,14 @@ func (c *Client) AddNICWithConfig(ctx context.Context, vmID int, cfg NICConfig, 
 		"dtype":      "NIC",
 		"type":       nicType,
 		"nic_attach": cfg.NetworkInterface,
+	}
+
+	if cfg.MTU > 0 {
+		attrs["mtu"] = cfg.MTU
+	}
+
+	if cfg.MAC != "" {
+		attrs["mac"] = cfg.MAC
 	}
 
 	if cfg.TrustGuestRxFilters {
@@ -127,6 +144,33 @@ func (c *Client) ListDevices(ctx context.Context, vmID int) ([]Device, error) {
 	}
 
 	return devices, nil
+}
+
+// ListAllNICMACs returns the set of MAC addresses currently in use by NIC devices
+// across all VMs. Used for collision detection when assigning deterministic MACs.
+// JSON-RPC method: vm.device.query (unfiltered)
+func (c *Client) ListAllNICMACs(ctx context.Context) (map[string]int, error) {
+	var devices []Device
+
+	if err := c.call(ctx, "vm.device.query", nil, &devices); err != nil {
+		return nil, fmt.Errorf("vm.device.query (all) failed: %w", err)
+	}
+
+	macs := make(map[string]int) // mac -> vm ID
+
+	for _, d := range devices {
+		dtype, _ := d.Attributes["dtype"].(string)
+		if dtype != "NIC" {
+			continue
+		}
+
+		mac, _ := d.Attributes["mac"].(string)
+		if mac != "" {
+			macs[strings.ToLower(mac)] = d.VM
+		}
+	}
+
+	return macs, nil
 }
 
 // FindCDROM finds the CDROM device on a VM, if any.

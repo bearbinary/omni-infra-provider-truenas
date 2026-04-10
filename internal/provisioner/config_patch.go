@@ -29,6 +29,56 @@ import (
 //	    }
 //	  }
 //	}
+
+// nicMTUConfig pairs a MAC address with a desired MTU for Talos config patching.
+type nicMTUConfig struct {
+	mac string
+	mtu int
+}
+
+// buildMTUPatch generates a Talos machine config patch that sets MTU on
+// network interfaces identified by their hardware (MAC) address.
+//
+// Using MAC address matching ensures the correct interface is configured
+// regardless of Talos interface naming (eth0, enp0s4, etc.).
+//
+// Output: JSON config patch for Talos machine config:
+//
+//	{
+//	  "machine": {
+//	    "network": {
+//	      "interfaces": [
+//	        {
+//	          "deviceSelector": {"hardwareAddr": "00:a0:98:..."},
+//	          "mtu": 9000
+//	        }
+//	      ]
+//	    }
+//	  }
+//	}
+func buildMTUPatch(nics []nicMTUConfig) ([]byte, error) {
+	var interfaces []map[string]any
+
+	for _, nic := range nics {
+		interfaces = append(interfaces, map[string]any{
+			"deviceSelector": map[string]any{
+				"hardwareAddr": nic.mac,
+			},
+			"mtu": nic.mtu,
+		})
+	}
+
+	patch := map[string]any{
+		"machine": map[string]any{
+			"network": map[string]any{
+				"interfaces": interfaces,
+			},
+		},
+	}
+
+	return json.Marshal(patch)
+}
+
 func buildAdvertisedSubnetsPatch(advertisedSubnets string) ([]byte, error) {
 	if advertisedSubnets == "" {
 		return nil, nil

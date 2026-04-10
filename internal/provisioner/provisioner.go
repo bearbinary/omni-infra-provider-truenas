@@ -18,6 +18,9 @@ type ProviderConfig struct {
 	DefaultBootMethod       string
 	GracefulShutdownTimeout time.Duration // How long to wait for ACPI shutdown before force (default: 30s, 0=force immediately)
 	PollInterval            time.Duration // How often to poll VM state during graceful shutdown (default: 2s)
+	MaxErrorRecoveries      int           // Max consecutive ERROR state recoveries before deprovisioning a VM (default: 5, 0=disable)
+	AutoStorageEnabled      bool          // Deploy NFS provisioner + StorageClass by default (default: true)
+	NFSHost                 string        // TrueNAS IP for NFS mounts (defaults to TRUENAS_HOST)
 }
 
 // Provisioner implements the Omni provision.Provisioner interface for TrueNAS.
@@ -25,21 +28,50 @@ type Provisioner struct {
 	client   *client.Client
 	config   ProviderConfig
 	isoGroup singleflight.Group
+	nfsGroup singleflight.Group // Dedup concurrent NFS share creation per cluster
 
 	// Track active resources for cleanup
 	mu             sync.RWMutex
 	activeImageIDs map[string]bool
 	activeVMNames  map[string]bool
+
+	// Circuit breaker: track consecutive ERROR recoveries per VM ID
+	errorMu     sync.Mutex
+	errorCounts map[int]int
 }
 
 // NewProvisioner creates a new TrueNAS provisioner.
 func NewProvisioner(c *client.Client, cfg ProviderConfig) *Provisioner {
+	if cfg.MaxErrorRecoveries == 0 {
+		cfg.MaxErrorRecoveries = 5
+	}
+
 	return &Provisioner{
 		client:         c,
 		config:         cfg,
 		activeImageIDs: make(map[string]bool),
 		activeVMNames:  make(map[string]bool),
+		errorCounts:    make(map[int]int),
 	}
+}
+
+// recordVMError increments the consecutive error count for a VM.
+// Returns the new count.
+func (p *Provisioner) recordVMError(vmID int) int {
+	p.errorMu.Lock()
+	defer p.errorMu.Unlock()
+
+	p.errorCounts[vmID]++
+
+	return p.errorCounts[vmID]
+}
+
+// clearVMErrors resets the error count for a VM (called when VM reaches RUNNING).
+func (p *Provisioner) clearVMErrors(vmID int) {
+	p.errorMu.Lock()
+	defer p.errorMu.Unlock()
+
+	delete(p.errorCounts, vmID)
 }
 
 // TrackImageID records an image ID as actively in use.
@@ -98,6 +130,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 		provision.NewStep("createSchematic", p.stepCreateSchematic),
 		provision.NewStep("uploadISO", p.stepUploadISO),
 		provision.NewStep("createVM", p.stepCreateVM),
+		provision.NewStep("configureStorage", p.stepConfigureStorage),
 		provision.NewStep("healthCheck", p.stepHealthCheck),
 	}
 }

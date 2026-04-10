@@ -12,8 +12,10 @@ import (
 
 // AdditionalNIC describes an extra NIC to attach to the VM beyond the primary.
 type AdditionalNIC struct {
-	NetworkInterface string `yaml:"network_interface"` // Required: bridge, VLAN, or physical interface
-	Type             string `yaml:"type,omitempty"`    // VIRTIO (default) or E1000
+	NetworkInterface string `yaml:"network_interface"`                                              // Required: bridge, VLAN, or physical interface
+	Type             string `yaml:"type,omitempty"`                                                 // VIRTIO (default) or E1000
+	MTU              int    `yaml:"mtu,omitempty"`                                                  // MTU size (default: 0 = use host default, typically 1500). Set to 9000 for jumbo frames.
+	DeterministicMAC bool   `yaml:"deterministic_mac,omitempty" json:"deterministic_mac,omitempty"` // Derive a stable MAC from the machine request ID (survives reprovision)
 }
 
 // AdditionalDisk describes an extra disk to attach to the VM beyond the root disk.
@@ -50,6 +52,20 @@ type Data struct {
 	// Multihoming: pin etcd/kubelet to specific subnets when multiple NICs are present
 	// Comma-separated CIDRs, e.g., "192.168.100.0/24" or "192.168.100.0/24,fd00::/64"
 	AdvertisedSubnets string `yaml:"advertised_subnets,omitempty"`
+
+	// Auto-storage: deploy NFS provisioner + default StorageClass so PVCs work out of the box.
+	// nil = use global default (true), explicit false = disabled for this MachineClass.
+	AutoStorage *bool `yaml:"auto_storage,omitempty"`
+}
+
+// IsAutoStorageEnabled returns whether auto storage should be configured.
+// Uses the per-MachineClass setting if explicit, otherwise falls back to the global default.
+func (d *Data) IsAutoStorageEnabled(globalDefault bool) bool {
+	if d.AutoStorage != nil {
+		return *d.AutoStorage
+	}
+
+	return globalDefault
 }
 
 // ApplyDefaults fills in zero values from the provider config.
@@ -211,6 +227,10 @@ func (d *Data) Validate() error {
 
 		if nic.Type != "" && nic.Type != "VIRTIO" && nic.Type != "E1000" {
 			return fmt.Errorf("additional_nics[%d]: type must be VIRTIO or E1000, got %q", i, nic.Type)
+		}
+
+		if nic.MTU != 0 && (nic.MTU < 576 || nic.MTU > 9216) {
+			return fmt.Errorf("additional_nics[%d]: mtu must be between 576 and 9216, got %d", i, nic.MTU)
 		}
 	}
 

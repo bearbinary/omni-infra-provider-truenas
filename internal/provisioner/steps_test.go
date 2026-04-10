@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -405,6 +406,113 @@ func TestAdditionalDisk_NoShrinkOnReProvision(t *testing.T) {
 	err := p.maybeResizeZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1", 50)
 	require.NoError(t, err)
 	assert.False(t, resized, "should not shrink additional disk")
+}
+
+// --- Circuit Breaker Tests ---
+
+func TestHandleExistingVM_ErrorState_CircuitBreaker(t *testing.T) {
+	vmDeleted := false
+
+	p := NewProvisioner(client.NewMockClient(func(method string, _ json.RawMessage) (any, error) {
+		if method == "vm.query" {
+			return client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}, nil
+		}
+
+		if method == "vm.update" {
+			return nil, nil // NVRAM reset
+		}
+
+		if method == "vm.start" {
+			return true, nil
+		}
+
+		if method == "vm.stop" || method == "vm.delete" {
+			vmDeleted = true
+
+			return true, nil
+		}
+
+		return nil, nil
+	}), ProviderConfig{
+		DefaultPool:        "tank",
+		MaxErrorRecoveries: 3,
+		PollInterval:       10 * time.Millisecond,
+	})
+
+	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}
+
+	// First 3 errors should retry
+	for i := 0; i < 3; i++ {
+		result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
+		require.NotNil(t, result)
+		assert.Error(t, *result) // RetryInterval is non-nil error
+	}
+
+	assert.False(t, vmDeleted, "should not delete VM within max recoveries")
+
+	// 4th error (count > max) should trigger deprovision
+	result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
+	require.NotNil(t, result)
+	assert.True(t, vmDeleted, "should delete VM after exceeding max recoveries")
+}
+
+func TestHandleExistingVM_Running_ResetsErrorCount(t *testing.T) {
+	p := NewProvisioner(client.NewMockClient(func(_ string, _ json.RawMessage) (any, error) {
+		return nil, nil
+	}), ProviderConfig{
+		DefaultPool:        "tank",
+		MaxErrorRecoveries: 3,
+	})
+
+	// Simulate 2 errors
+	p.recordVMError(42)
+	p.recordVMError(42)
+
+	// VM reaches RUNNING — should clear errors
+	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}
+	result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
+
+	require.NotNil(t, result)
+	assert.NoError(t, *result, "RUNNING VM should return nil error")
+
+	// Error count should be cleared
+	p.errorMu.Lock()
+	assert.Zero(t, p.errorCounts[42], "error count should be reset after RUNNING")
+	p.errorMu.Unlock()
+}
+
+func TestCircuitBreaker_Disabled(t *testing.T) {
+	p := NewProvisioner(client.NewMockClient(func(method string, _ json.RawMessage) (any, error) {
+		if method == "vm.query" {
+			return client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}, nil
+		}
+
+		return nil, nil
+	}), ProviderConfig{
+		DefaultPool:        "tank",
+		MaxErrorRecoveries: -1, // Disabled
+	})
+
+	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}
+
+	// Should retry indefinitely without deprovisioning
+	for i := 0; i < 100; i++ {
+		result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
+		require.NotNil(t, result)
+		assert.Error(t, *result) // RetryInterval
+	}
+}
+
+func TestRecordAndClearVMErrors(t *testing.T) {
+	p := NewProvisioner(client.NewMockClient(nil), ProviderConfig{DefaultPool: "tank"})
+
+	assert.Equal(t, 1, p.recordVMError(42))
+	assert.Equal(t, 2, p.recordVMError(42))
+	assert.Equal(t, 3, p.recordVMError(42))
+
+	p.clearVMErrors(42)
+
+	assert.Equal(t, 1, p.recordVMError(42), "should restart from 1 after clear")
 }
 
 func TestHandleExistingVM_Stopped_StartFails(t *testing.T) {

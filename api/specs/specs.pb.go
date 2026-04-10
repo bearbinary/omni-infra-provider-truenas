@@ -32,6 +32,7 @@ type MachineSpec struct {
 	ZvolPath            string                 `protobuf:"bytes,6,opt,name=zvol_path,json=zvolPath,proto3" json:"zvol_path,omitempty"`
 	CdromDeviceId       int32                  `protobuf:"varint,7,opt,name=cdrom_device_id,json=cdromDeviceId,proto3" json:"cdrom_device_id,omitempty"`
 	AdditionalZvolPaths []string               `protobuf:"bytes,9,rep,name=additional_zvol_paths,json=additionalZvolPaths,proto3" json:"additional_zvol_paths,omitempty"` // Paths of additional data zvols for cleanup tracking
+	NfsDatasetPath      string                 `protobuf:"bytes,10,opt,name=nfs_dataset_path,json=nfsDatasetPath,proto3" json:"nfs_dataset_path,omitempty"`               // NFS dataset created for auto storage (per-cluster)
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -122,11 +123,18 @@ func (x *MachineSpec) GetAdditionalZvolPaths() []string {
 	return nil
 }
 
+func (x *MachineSpec) GetNfsDatasetPath() string {
+	if x != nil {
+		return x.NfsDatasetPath
+	}
+	return ""
+}
+
 var File_api_specs_specs_proto protoreflect.FileDescriptor
 
 const file_api_specs_specs_proto_rawDesc = "" +
 	"\n" +
-	"\x15api/specs/specs.proto\x12\ftruenasspecs\"\xaa\x02\n" +
+	"\x15api/specs/specs.proto\x12\ftruenasspecs\"\xd4\x02\n" +
 	"\vMachineSpec\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1c\n" +
 	"\tschematic\x18\x02 \x01(\tR\tschematic\x12#\n" +
@@ -135,7 +143,9 @@ const file_api_specs_specs_proto_rawDesc = "" +
 	"\x05vm_id\x18\x05 \x01(\x05R\x04vmId\x12\x1b\n" +
 	"\tzvol_path\x18\x06 \x01(\tR\bzvolPath\x12&\n" +
 	"\x0fcdrom_device_id\x18\a \x01(\x05R\rcdromDeviceId\x122\n" +
-	"\x15additional_zvol_paths\x18\t \x03(\tR\x13additionalZvolPathsJ\x04\b\b\x10\tR\x15last_upgrade_snapshotB=Z;github.com/bearbinary/omni-infra-provider-truenas/api/specsb\x06proto3"
+	"\x15additional_zvol_paths\x18\t \x03(\tR\x13additionalZvolPaths\x12(\n" +
+	"\x10nfs_dataset_path\x18\n" +
+	" \x01(\tR\x0enfsDatasetPathJ\x04\b\b\x10\tR\x15last_upgrade_snapshotB=Z;github.com/bearbinary/omni-infra-provider-truenas/api/specsb\x06proto3"
 
 var (
 	file_api_specs_specs_proto_rawDescOnce sync.Once

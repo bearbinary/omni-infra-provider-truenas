@@ -152,6 +152,9 @@ func run() error {
 		DefaultNetworkInterface: defaultNetworkInterface,
 		DefaultBootMethod:       defaultBootMethod,
 		GracefulShutdownTimeout: time.Duration(envInt("GRACEFUL_SHUTDOWN_TIMEOUT", 30)) * time.Second,
+		MaxErrorRecoveries:      envInt("MAX_ERROR_RECOVERIES", 5),
+		AutoStorageEnabled:      envBool("AUTO_STORAGE_ENABLED", true),
+		NFSHost:                 envString("NFS_HOST", os.Getenv("TRUENAS_HOST")),
 	})
 
 	// Create infra provider

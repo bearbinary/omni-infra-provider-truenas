@@ -42,6 +42,11 @@ Tracked improvements for future releases.
 - **Orphan Cleanup Rewrite** — Replaced in-memory VM tracking with TrueNAS state queries (`org.omni:managed` properties). Safe across restarts, handles dataset prefixes (v0.12.0)
 - **Multi-Homing Guide** — Traefik with internal + DMZ subnets, MetalLB, firewall rules ([docs/multihoming.md](multihoming.md)) (v0.12.0)
 - **Additional Disk Support** — Multi-disk VMs via `additional_disks` in MachineClass config. Per-disk pool and encryption. Prerequisite for Longhorn (v0.13.0)
+- **Disk Resize for Additional Disks** — Additional disks resize on re-provision when config size increases, matching root disk behavior (v0.13.0)
+- **Additional Disk Integration Tests** — 8 integration tests: multi-disk create/attach, deprovision cleanup, non-existent pool, encrypted lifecycle, dataset prefix hierarchy, resize grow/no-shrink, pool space check (v0.13.0)
+- **MTU / Jumbo Frames** — Optional `mtu` field on `additional_nics`, passed to TrueNAS and applied as Talos config patch via MAC-based matching (v0.13.0)
+- **Deterministic MAC Addresses** — Primary NIC always gets a deterministic MAC derived from request ID. Additional NICs opt in via `deterministic_mac`. DHCP reservations survive reprovision (v0.13.0)
+- **Node Auto-Replace Circuit Breaker** — VMs stuck in ERROR state auto-deprovisioned after `MAX_ERROR_RECOVERIES` (default 5) consecutive failures. Counter resets on RUNNING (v0.13.0)
 - **Backup Guide** — Control plane backup via Omni, workload/PVC backup via Velero ([docs/backup.md](backup.md)) (v0.13.0)
 
 ## Upstream Issues
@@ -55,58 +60,21 @@ Tracked improvements for future releases.
 
 ## Storage Integration
 
-### Disk Resize for Additional Disks
-Extend the existing `maybeResizeZvol` logic to additional disks. Currently only the root disk is resized when the MachineClass `disk_size` changes. Additional disks should also be resizable by updating their `size` in the `additional_disks` array.
-
-### Additional Disk Integration Tests
-Add integration tests (against real TrueNAS) for the multi-disk feature:
-- Create VM with 2 additional disks on different pools, verify zvols exist and are attached
-- Deprovision VM with additional disks, verify all zvols cleaned up
-- Additional disk on non-existent pool fails with clear error
-- Encrypted additional disk creates, unlocks after restart, and is accessible by VM
-- Pool space pre-check rejects when aggregate disk space exceeds pool free space
-- Additional disk with dataset_prefix on different pool creates full hierarchy
-
 ### CSI Storage Auto-Configuration
-Auto-configure persistent storage for provisioned clusters via Omni config patches. See [Storage Guide](storage.md) for the full comparison of CSI options.
-
-The recommended starting point is **NFS with nfs-subdir-external-provisioner** (simplest, no Talos extensions needed). For better performance with stateful workloads, **democratic-csi with iSCSI** provides block-level storage with dynamic ZFS zvol provisioning.
+Auto-configure persistent storage for provisioned clusters via Omni config patches. The recommended driver is **democratic-csi** (actively maintained, single-maintainer). See [Storage Guide](storage.md) for driver comparison and maintenance status.
 
 > **Note:** democratic-csi's API-based drivers use the TrueNAS REST v2.0 API, while SCALE 25.04+ uses JSON-RPC internally. The SSH-based drivers (which execute ZFS commands directly) are unaffected. Verify REST API compatibility on your version before choosing API-based drivers.
 
 Implementation:
-- Detect available NFS/iSCSI services on TrueNAS via `sharing.nfs.query` / `iscsi.target.query`
-- For NFS: generate Helm values for nfs-subdir-external-provisioner with server IP and share path
-- Inject as a cluster-level config patch in Omni during provisioning
-- For iSCSI: include `iscsi-tools` Talos system extension in machine config
+- For democratic-csi NFS mode: auto-create NFS share on TrueNAS, generate Helm values, inject as cluster config patch
+- For democratic-csi iSCSI mode: auto-enable iSCSI service, include `iscsi-tools` Talos extension in machine config
 - Configure a default StorageClass so PVCs work out of the box
+- Fallback: manual NFS PVs (documented in [Storage Guide](storage.md#manual-nfs-pvs-fallback)) require no auto-configuration
 
-### Node-Local Distributed Storage (Not Recommended)
-Options like [Longhorn](https://longhorn.io/), [Rook/Ceph](https://rook.io/), and [Mayastor](https://openebs.io/docs/concepts/mayastor) can run inside the cluster using extra virtual disks attached to VMs. These are documented in the [Storage Guide](storage.md) for completeness, but **not recommended** for TrueNAS-hosted VMs — they treat virtual disks as if they were real physical drives, adding a redundant replication/management layer on top of storage that TrueNAS is already managing via ZFS. This means double the write amplification and no benefit from ZFS features like snapshots, replication, or scrubbing.
-
-If you need replicated storage independent of the NAS, these options work — they just aren't efficient in a virtualized-on-ZFS environment. Requires multi-disk VM support (see below).
+### Longhorn Support
+Now that multi-disk VM support has landed (v0.13.0), document and test Longhorn deployment on TrueNAS-hosted clusters. Longhorn requires additional virtual disks attached to worker nodes for its storage pool. See [Storage Guide](storage.md) for trade-offs vs democratic-csi.
 
 ---
-
-## Networking
-
-### MAC Address Stability Across Reprovision
-When a VM is deprovisioned and reprovisioned (scale down/up, pool change, manual delete), it gets a new random MAC address, which breaks DHCP reservations. Since the networking guide documents DHCP reservation workflows for UniFi, pfSense, OPNsense, and Mikrotik, this is a real pain point — users set up a reservation, then lose it on reprovision.
-
-Implementation:
-- Derive a deterministic MAC from the machine request ID (e.g., hash request ID into the locally-administered MAC range `02:xx:xx:xx:xx:xx`)
-- Pass the MAC to `AddNIC()` / `AddNICWithConfig()` via the TrueNAS `vm.device.create` attributes
-- Same request ID always gets the same MAC, so DHCP reservations survive reprovision
-- Primary NIC only — additional NICs can stay random (they're typically on isolated storage/management networks)
-
-### MTU / Jumbo Frames for Storage NICs
-For iSCSI or NFS storage networks on a dedicated NIC, jumbo frames (MTU 9000) significantly improve throughput. The `additional_nics` config has no MTU field — NIC type (VIRTIO/E1000) is set but MTU isn't passed through to TrueNAS or the Talos network config.
-
-Implementation:
-- Add optional `mtu` field to `AdditionalNIC` struct and schema.json (default: 1500)
-- Pass MTU to TrueNAS `vm.device.create` NIC attributes
-- Generate a Talos machine config patch for the corresponding interface to set the MTU at the OS level
-- Validate: MTU must match the physical network (bridge/VLAN must also be configured for jumbo frames)
 
 ---
 
@@ -120,14 +88,16 @@ Helm chart for deploying the provider as a Kubernetes workload (connecting to Tr
 
 ---
 
-### Node Auto-Replace Circuit Breaker
-If a VM enters ERROR state and NVRAM reset doesn't fix it, the provider retries forever. There's no circuit breaker that says "this VM is permanently broken — deprovision and request a fresh one." Omni may handle this at the orchestration layer, but a provider-side max-retry with deprovision-and-recreate would be more responsive.
+### Automatic Autoscaling Setup
+Guide and tooling for pressure-based autoscaling of TrueNAS-provisioned clusters. Uses the [Kubernetes Cluster Autoscaler](https://github.com/kubernetes/autoscaler) with a generic gRPC autoscaler that adds/removes nodes from an Omni MachineSet based on cluster pressure and resource usage. See proof-of-concept: [rothgar/omni-node-autoscaler](https://github.com/rothgar/omni-node-autoscaler). Upstream discussion: [siderolabs/omni#2647 (comment)](https://github.com/siderolabs/omni/discussions/2647#discussioncomment-16508705).
 
 Implementation:
-- Track consecutive ERROR recoveries per VM in memory
-- After N failures (configurable, default: 3), deprovision the broken VM and let Omni's reconciliation loop create a replacement
-- Log clearly: `"VM {id} failed {N} recovery attempts — deprovisioning for replacement"`
-- Reset counter on successful RUNNING state
+- Document how to deploy the Cluster Autoscaler + gRPC autoscaler alongside TrueNAS-provisioned clusters
+- Provide example Omni MachineSet and autoscaler config tuned for homelab scale (conservative scale-down delays, min/max node counts)
+- Test with this provider to validate the full loop: pressure → gRPC autoscaler → Omni MachineSet resize → provider provisions/deprovisions VM
+- Consider shipping a Helm values template or config patch that wires up the autoscaler with sensible defaults
+
+---
 
 ## Might Implement
 

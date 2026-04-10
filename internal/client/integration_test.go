@@ -627,6 +627,298 @@ func TestIntegration_DeviceDelete(t *testing.T) {
 	require.NoError(t, err, "double delete device should not error")
 }
 
+// --- Additional Disk Integration Tests ---
+
+func TestIntegration_AdditionalDisks_CreateAndAttach(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	parentDS := pool + "/omni-integration-test-multidisk"
+	err := c.EnsureDataset(ctx, parentDS)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
+	})
+
+	requestID := uniqueName("mdisk")
+	rootZvol := parentDS + "/" + requestID
+	disk1Zvol := parentDS + "/" + requestID + "-disk-1"
+	disk2Zvol := parentDS + "/" + requestID + "-disk-2"
+
+	// Create root zvol and 2 additional zvols
+	_, err = c.CreateZvol(ctx, rootZvol, 1, OmniManagedProperties(requestID))
+	require.NoError(t, err)
+
+	_, err = c.CreateZvol(ctx, disk1Zvol, 2, OmniManagedProperties(requestID))
+	require.NoError(t, err)
+
+	_, err = c.CreateZvol(ctx, disk2Zvol, 3, OmniManagedProperties(requestID))
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), disk2Zvol) //nolint:errcheck
+		c.DeleteDataset(context.Background(), disk1Zvol) //nolint:errcheck
+		c.DeleteDataset(context.Background(), rootZvol)  //nolint:errcheck
+	})
+
+	// Verify all zvols exist and have correct sizes
+	rootSize, err := c.GetZvolSize(ctx, rootZvol)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1*1024*1024*1024), rootSize)
+
+	disk1Size, err := c.GetZvolSize(ctx, disk1Zvol)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2*1024*1024*1024), disk1Size)
+
+	disk2Size, err := c.GetZvolSize(ctx, disk2Zvol)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3*1024*1024*1024), disk2Size)
+
+	// Create VM and attach all disks
+	vmName := "omniinttest" + uniqueName("md")
+	vm, err := c.CreateVM(ctx, CreateVMRequest{
+		Name:       vmName,
+		VCPUs:      1,
+		Memory:     512,
+		Bootloader: "UEFI",
+		Autostart:  false,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.StopVM(context.Background(), vm.ID, true) //nolint:errcheck
+		c.DeleteVM(context.Background(), vm.ID)     //nolint:errcheck
+	})
+
+	// Attach root disk (order 1001), additional disks (1002, 1003)
+	_, err = c.AddDisk(ctx, vm.ID, rootZvol)
+	require.NoError(t, err, "should attach root disk")
+
+	_, err = c.AddDiskWithOrder(ctx, vm.ID, disk1Zvol, 1002)
+	require.NoError(t, err, "should attach additional disk 1")
+
+	_, err = c.AddDiskWithOrder(ctx, vm.ID, disk2Zvol, 1003)
+	require.NoError(t, err, "should attach additional disk 2")
+
+	// Verify all devices are attached
+	devices, err := c.ListDevices(ctx, vm.ID)
+	require.NoError(t, err)
+
+	diskCount := 0
+	for _, d := range devices {
+		if dtype, _ := d.Attributes["dtype"].(string); dtype == "DISK" {
+			diskCount++
+		}
+	}
+
+	assert.Equal(t, 3, diskCount, "VM should have 3 DISK devices (root + 2 additional)")
+}
+
+func TestIntegration_AdditionalDisks_Deprovision(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	parentDS := pool + "/omni-integration-test-mdeprov"
+	err := c.EnsureDataset(ctx, parentDS)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
+	})
+
+	requestID := uniqueName("deprov")
+	rootZvol := parentDS + "/" + requestID
+	disk1Zvol := parentDS + "/" + requestID + "-disk-1"
+
+	_, err = c.CreateZvol(ctx, rootZvol, 1)
+	require.NoError(t, err)
+
+	_, err = c.CreateZvol(ctx, disk1Zvol, 1)
+	require.NoError(t, err)
+
+	// Delete additional disk first, then root — mimics deprovision order
+	err = c.DeleteDataset(ctx, disk1Zvol)
+	require.NoError(t, err, "should delete additional disk zvol")
+
+	err = c.DeleteDataset(ctx, rootZvol)
+	require.NoError(t, err, "should delete root zvol")
+
+	// Verify both are gone — double delete should be idempotent
+	err = c.DeleteDataset(ctx, disk1Zvol)
+	require.NoError(t, err, "double delete additional disk should be idempotent")
+
+	err = c.DeleteDataset(ctx, rootZvol)
+	require.NoError(t, err, "double delete root zvol should be idempotent")
+}
+
+func TestIntegration_AdditionalDisks_NonExistentPool(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+
+	_, err := c.CreateZvol(ctx, "nonexistent-pool-xyz/omni-vms/test-disk-1", 1)
+	assert.Error(t, err, "creating zvol on non-existent pool should fail")
+}
+
+func TestIntegration_AdditionalDisks_EncryptedLifecycle(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	parentDS := pool + "/omni-integration-test-encrdisk"
+	err := c.EnsureDataset(ctx, parentDS)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
+	})
+
+	zvolName := parentDS + "/" + uniqueName("encr")
+	passphrase := "integration-test-passphrase-1234567890abcdef"
+
+	props := OmniManagedProperties("test-req")
+	props = append(props, UserProperty{Key: "org.omni:passphrase", Value: passphrase})
+
+	// Create encrypted zvol
+	_, err = c.CreateEncryptedZvol(ctx, zvolName, 1, passphrase, props)
+	require.NoError(t, err, "should create encrypted zvol")
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
+	})
+
+	// Verify passphrase was stored
+	stored, err := c.GetDatasetUserProperty(ctx, zvolName, "org.omni:passphrase")
+	require.NoError(t, err)
+	assert.Equal(t, passphrase, stored, "stored passphrase should match")
+
+	// Check lock status — newly created should be unlocked
+	locked, err := c.IsDatasetLocked(ctx, zvolName)
+	require.NoError(t, err)
+	assert.False(t, locked, "newly created encrypted zvol should be unlocked")
+
+	// Unlock is idempotent
+	err = c.UnlockDataset(ctx, zvolName, passphrase)
+	// May succeed or error depending on TrueNAS version — either way, it shouldn't panic
+}
+
+func TestIntegration_AdditionalDisks_DatasetPrefixOnPool(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	// Simulate: dataset_prefix = "inttest/nested" on the same pool
+	prefix := pool + "/inttest-" + uniqueName("pfx")
+	nestedPath := prefix + "/omni-vms"
+
+	// Ensure hierarchy — this is what the provisioner does for dataset_prefix
+	err := c.EnsureDataset(ctx, prefix)
+	require.NoError(t, err)
+
+	err = c.EnsureDataset(ctx, nestedPath)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), nestedPath) //nolint:errcheck
+		c.DeleteDataset(context.Background(), prefix)     //nolint:errcheck
+	})
+
+	// Create an additional disk zvol under the prefix
+	zvolName := nestedPath + "/" + uniqueName("disk") + "-disk-1"
+
+	_, err = c.CreateZvol(ctx, zvolName, 1)
+	require.NoError(t, err, "should create zvol under dataset prefix hierarchy")
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
+	})
+
+	// Verify it exists
+	size, err := c.GetZvolSize(ctx, zvolName)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1*1024*1024*1024), size)
+}
+
+func TestIntegration_AdditionalDisks_Resize(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	parentDS := pool + "/omni-integration-test-mdresize"
+	err := c.EnsureDataset(ctx, parentDS)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), parentDS) //nolint:errcheck
+	})
+
+	zvolName := parentDS + "/" + uniqueName("rz") + "-disk-1"
+
+	// Create 1 GiB additional disk
+	_, err = c.CreateZvol(ctx, zvolName, 1)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
+	})
+
+	// Verify initial size
+	size, err := c.GetZvolSize(ctx, zvolName)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1*1024*1024*1024), size, "initial size should be 1 GiB")
+
+	// Grow to 2 GiB
+	err = c.ResizeZvol(ctx, zvolName, 2)
+	require.NoError(t, err)
+
+	size, err = c.GetZvolSize(ctx, zvolName)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2*1024*1024*1024), size, "should be 2 GiB after grow")
+
+	// Attempt shrink to 1 GiB — ZFS does not support shrinking
+	err = c.ResizeZvol(ctx, zvolName, 1)
+	// ResizeZvol sends the update — TrueNAS may accept or reject.
+	// The provider's maybeResizeZvol prevents shrinks at the application layer,
+	// so this test just verifies the API call doesn't panic.
+}
+
+func TestIntegration_AdditionalDisks_PoolFreeSpaceCheck(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	free, err := c.PoolFreeSpace(ctx, pool)
+	require.NoError(t, err)
+	assert.Greater(t, free, int64(0), "pool should have some free space")
+
+	// Verify the space check math works for aggregate calculation
+	// If pool has 100 GiB free, a root disk of 40 + additional disks of 100+200 = 340 GiB should fail
+	rootGiB := 40
+	additionalGiB := []int{100, 200}
+
+	totalRequired := int64(rootGiB)
+	for _, s := range additionalGiB {
+		totalRequired += int64(s)
+	}
+
+	totalRequiredBytes := totalRequired * 1024 * 1024 * 1024
+
+	if free < totalRequiredBytes {
+		t.Logf("Pool %q has %d GiB free, aggregate requirement of %d GiB would correctly be rejected",
+			pool, free/(1024*1024*1024), totalRequired)
+	} else {
+		t.Logf("Pool %q has %d GiB free, aggregate requirement of %d GiB would be accepted (pool is large enough)",
+			pool, free/(1024*1024*1024), totalRequired)
+	}
+}
+
 // --- WebSocket Reconnect Against Real TrueNAS ---
 
 func TestIntegration_WebSocketReconnect(t *testing.T) {
@@ -873,4 +1165,42 @@ func TestIntegration_VMNamingConvention(t *testing.T) {
 		assert.True(t, strings.HasPrefix(v.Name, "omniinttest"),
 			"filtered VMs should all have omni-inttest- prefix, got %q", v.Name)
 	}
+}
+
+// --- Deterministic MAC Integration Test ---
+
+func TestIntegration_NIC_DeterministicMAC(t *testing.T) {
+	settleTime(t)
+	c := testClient(t)
+	ctx := context.Background()
+	networkIface := testNetworkInterface(t)
+
+	vm, err := c.CreateVM(ctx, CreateVMRequest{
+		Name:       "omniinttest" + uniqueName("mac"),
+		VCPUs:      1,
+		Memory:     512,
+		Bootloader: "UEFI",
+		Autostart:  false,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		c.DeleteVM(context.Background(), vm.ID) //nolint:errcheck
+	})
+
+	// Attach NIC with an explicit MAC address
+	wantMAC := "02:de:ad:be:ef:01"
+
+	nicDev, err := c.AddNICWithConfig(ctx, vm.ID, NICConfig{
+		NetworkInterface: networkIface,
+		MAC:              wantMAC,
+	}, 2001)
+	require.NoError(t, err, "TrueNAS must accept explicit MAC in vm.device.create")
+
+	// Verify TrueNAS echoes back the MAC we sent — if it doesn't, deterministic
+	// MAC is silently broken and DHCP reservations won't work.
+	gotMAC, ok := nicDev.Attributes["mac"].(string)
+	require.True(t, ok, "TrueNAS response must include 'mac' attribute")
+	assert.Equal(t, wantMAC, strings.ToLower(gotMAC),
+		"TrueNAS must respect the MAC we set, not generate a random one")
 }

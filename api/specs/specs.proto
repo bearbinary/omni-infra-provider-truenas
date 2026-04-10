@@ -15,4 +15,5 @@ message MachineSpec {
   reserved 8;
   reserved "last_upgrade_snapshot";
   repeated string additional_zvol_paths = 9;  // Paths of additional data zvols for cleanup tracking
+  string nfs_dataset_path = 10;               // NFS dataset created for auto storage (per-cluster)
 }

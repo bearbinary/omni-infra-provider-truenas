@@ -489,6 +489,34 @@ func (c *Client) InterfaceSubnet(ctx context.Context, name string) (string, erro
 	return "", nil
 }
 
+// InterfaceIP returns the first IPv4 address for a network interface (e.g., "192.168.100.1").
+// Returns empty string if the interface has no IPv4 address configured.
+func (c *Client) InterfaceIP(ctx context.Context, name string) (string, error) {
+	filter := []any{
+		[]any{[]any{"name", "=", name}},
+		map[string]any{"get": true},
+	}
+
+	var iface struct {
+		Aliases []struct {
+			Type    string `json:"type"`
+			Address string `json:"address"`
+		} `json:"aliases"`
+	}
+
+	if err := c.call(ctx, "interface.query", filter, &iface); err != nil {
+		return "", fmt.Errorf("interface.query %q failed: %w", name, err)
+	}
+
+	for _, alias := range iface.Aliases {
+		if alias.Type == "INET" && alias.Address != "" {
+			return alias.Address, nil
+		}
+	}
+
+	return "", nil
+}
+
 func boolPtr(b bool) *bool {
 	return &b
 }

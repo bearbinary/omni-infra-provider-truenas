@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 
 ### Features
 - **Additional disk support (multi-disk VMs)** — Attach extra data disks beyond the root disk via `additional_disks` in MachineClass config. Each disk can target a different ZFS pool and independently toggle encryption. Enables dedicated etcd disks on fast SSD pools, bulk data disks on HDD pools, and is a prerequisite for node-local distributed storage (Longhorn). Max 16 additional disks per VM. Paths tracked in protobuf state for automatic cleanup on deprovision.
+- **Additional disk resize** — Additional disks grow automatically when the `size` in `additional_disks` config increases, matching the root disk resize behavior. Shrinking is prevented (ZFS limitation).
+- **MTU / jumbo frames for additional NICs** — Optional `mtu` field on `additional_nics` items. Passed to TrueNAS on NIC creation and applied as a Talos machine config patch using MAC-based interface matching. Set to 9000 for jumbo frames on iSCSI/NFS storage networks.
+- **Deterministic MAC addresses** — Primary NIC always gets a stable MAC derived from the machine request ID, so DHCP reservations survive reprovision. Additional NICs opt in via `deterministic_mac: true`.
+- **Node auto-replace circuit breaker** — VMs stuck in ERROR state are automatically deprovisioned after exceeding `MAX_ERROR_RECOVERIES` (default: 5) consecutive failed recoveries. Omni's reconciliation loop then provisions a fresh replacement. Configurable via env var; set to `-1` to disable.
 
 ### Removed
 - **Remove ZFS snapshot/rollback code** — Talos nodes are immutable; the correct recovery path is to replace a failed VM (Omni reprovisions automatically), not to roll back a zvol. Removed: `CreateSnapshot`, `ListSnapshots`, `DeleteSnapshot`, `RollbackSnapshot` client methods, `snapshotBeforeUpgrade` and `enforceSnapshotRetention` provisioner logic, `last_upgrade_snapshot` protobuf field, snapshot telemetry counters, and all related tests. The `Snapshot` type and pre-upgrade snapshot workflow introduced in v0.6.0–v0.8.0 are fully removed.

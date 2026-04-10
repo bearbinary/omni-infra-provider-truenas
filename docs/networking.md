@@ -417,3 +417,57 @@ VMs on different VLANs can't communicate at Layer 2 — full isolation without f
 3. **Same L2 required**: VIP uses gratuitous ARP — all CP nodes must be on the same bridge/VLAN
 4. **Bootstrap timing**: VIP is unavailable until etcd has quorum. On a fresh cluster, wait for all CP nodes to join.
 5. **ARP cache**: If VIP just moved between nodes, clients may have stale ARP. Wait 1-2 minutes or clear ARP: `arp -d 192.168.100.254`
+
+## Jumbo Frames (MTU 9000)
+
+Jumbo frames significantly improve throughput for iSCSI and NFS storage networks by reducing per-packet overhead. If your storage NIC is on a dedicated VLAN or bridge, you can set MTU 9000 on the additional NIC.
+
+### Prerequisites
+
+The entire path must support the same MTU — any mismatch causes dropped packets:
+
+1. **TrueNAS host interface/bridge** — set MTU 9000 on the bridge or VLAN interface in TrueNAS Network settings
+2. **Physical switch** — enable jumbo frames on the relevant switch ports
+3. **VM NIC** — set `mtu: 9000` in the MachineClass `additional_nics` config (the provider handles the rest)
+
+### MachineClass Configuration
+
+```yaml
+additional_nics:
+  - network_interface: br-storage   # Dedicated storage bridge with MTU 9000
+    mtu: 9000
+```
+
+The provider does two things when `mtu` is set:
+
+1. **TrueNAS side**: Passes `mtu: 9000` to the `vm.device.create` NIC attributes so the virtual NIC is created with the correct MTU
+2. **Talos side**: Generates a machine config patch that sets the MTU on the corresponding interface inside the VM, using the NIC's MAC address for reliable interface matching:
+
+```json
+{
+  "machine": {
+    "network": {
+      "interfaces": [
+        {
+          "deviceSelector": {"hardwareAddr": "00:a0:98:xx:xx:xx"},
+          "mtu": 9000
+        }
+      ]
+    }
+  }
+}
+```
+
+### Verifying MTU
+
+After the VM boots, verify from inside a Talos node:
+
+```bash
+# Check interface MTU
+talosctl -n <node-ip> get links
+
+# Test end-to-end with a large ping (requires the storage network to be routable)
+ping -M do -s 8972 <truenas-storage-ip>
+```
+
+> **Note:** Only set `mtu` on additional NICs used for storage networks. The primary NIC should use the default MTU (1500) unless your entire network supports jumbo frames.

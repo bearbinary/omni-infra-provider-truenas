@@ -113,3 +113,60 @@ func TestBuildAdvertisedSubnetsPatch_JSONStructure(t *testing.T) {
 	json.Unmarshal([]byte(expected), &want)
 	assert.Equal(t, want, got)
 }
+
+// --- MTU Config Patch Tests ---
+
+func TestBuildMTUPatch_SingleNIC(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildMTUPatch([]nicMTUConfig{
+		{mac: "00:a0:98:12:34:56", mtu: 9000},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	machine := patch["machine"].(map[string]any)
+	network := machine["network"].(map[string]any)
+	interfaces := network["interfaces"].([]any)
+
+	require.Len(t, interfaces, 1)
+
+	iface := interfaces[0].(map[string]any)
+	selector := iface["deviceSelector"].(map[string]any)
+	assert.Equal(t, "00:a0:98:12:34:56", selector["hardwareAddr"])
+	assert.Equal(t, float64(9000), iface["mtu"])
+}
+
+func TestBuildMTUPatch_MultipleNICs(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildMTUPatch([]nicMTUConfig{
+		{mac: "00:a0:98:11:11:11", mtu: 9000},
+		{mac: "00:a0:98:22:22:22", mtu: 1500},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	interfaces := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)
+	assert.Len(t, interfaces, 2)
+}
+
+func TestBuildMTUPatch_JSONStructure(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildMTUPatch([]nicMTUConfig{
+		{mac: "aa:bb:cc:dd:ee:ff", mtu: 9000},
+	})
+	require.NoError(t, err)
+
+	expected := `{"machine":{"network":{"interfaces":[{"deviceSelector":{"hardwareAddr":"aa:bb:cc:dd:ee:ff"},"mtu":9000}]}}}`
+
+	var got, want any
+	json.Unmarshal(data, &got)
+	json.Unmarshal([]byte(expected), &want)
+	assert.Equal(t, want, got)
+}

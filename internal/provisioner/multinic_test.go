@@ -93,6 +93,47 @@ func TestValidate_ValidNICTypes(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// --- MTU Validation ---
+
+func TestValidate_MTU_Valid(t *testing.T) {
+	d := Data{
+		AdditionalNICs: []AdditionalNIC{
+			{NetworkInterface: "br200", MTU: 9000},
+			{NetworkInterface: "br201", MTU: 1500},
+			{NetworkInterface: "br202", MTU: 576},  // Minimum
+			{NetworkInterface: "br203", MTU: 9216}, // Maximum
+			{NetworkInterface: "br204"},            // MTU 0 = default
+		},
+	}
+
+	err := d.Validate()
+	require.NoError(t, err)
+}
+
+func TestValidate_MTU_TooLow(t *testing.T) {
+	d := Data{
+		AdditionalNICs: []AdditionalNIC{
+			{NetworkInterface: "br200", MTU: 100},
+		},
+	}
+
+	err := d.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "mtu must be between 576 and 9216")
+}
+
+func TestValidate_MTU_TooHigh(t *testing.T) {
+	d := Data{
+		AdditionalNICs: []AdditionalNIC{
+			{NetworkInterface: "br200", MTU: 10000},
+		},
+	}
+
+	err := d.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "mtu must be between 576 and 9216")
+}
+
 // --- AdditionalNIC preserved through defaults ---
 
 func TestData_AdditionalNICsPreserved(t *testing.T) {

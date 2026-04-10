@@ -378,59 +378,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		return fmt.Errorf("failed to ensure omni-vms dataset: %w", err)
 	}
 
-	if data.Encrypted {
-		// Auto-generate a unique passphrase per zvol. The passphrase is stored as a
-		// ZFS user property (org.omni:passphrase) so the provider can retrieve it
-		// for unlock after TrueNAS reboots. This protects data at rest against
-		// physical disk theft while keeping key management invisible to the user.
-		passphrase, genErr := generatePassphrase()
-		if genErr != nil {
-			return genErr
-		}
-
-		omniProps = append(omniProps, client.UserProperty{Key: passphraseProperty, Value: passphrase})
-
-		if _, err := p.client.CreateEncryptedZvol(ctx, zvolPath, data.DiskSize, passphrase, omniProps); err != nil {
-			if !isAlreadyExists(err) {
-				return fmt.Errorf("failed to create encrypted zvol: %w", err)
-			}
-
-			// Encrypted zvol already exists — retrieve stored passphrase for unlock
-			stored, propErr := p.client.GetDatasetUserProperty(ctx, zvolPath, passphraseProperty)
-			if propErr != nil {
-				return fmt.Errorf("failed to read stored passphrase from zvol %q: %w", zvolPath, propErr)
-			}
-
-			if stored == "" {
-				return fmt.Errorf("encrypted zvol %q exists but has no stored passphrase — the zvol may have been created manually or by an older provider version", zvolPath)
-			}
-
-			passphrase = stored
-
-			if locked, lockErr := p.client.IsDatasetLocked(ctx, zvolPath); lockErr == nil && locked {
-				logger.Debug("unlocking encrypted zvol", zap.String("path", zvolPath))
-
-				if unlockErr := p.client.UnlockDataset(ctx, zvolPath, passphrase); unlockErr != nil {
-					return fmt.Errorf("failed to unlock encrypted zvol %q: %w", zvolPath, unlockErr)
-				}
-			}
-
-			if resizeErr := p.maybeResizeZvol(ctx, logger, zvolPath, data.DiskSize); resizeErr != nil {
-				return resizeErr
-			}
-		}
-
-		logger.Info("created encrypted zvol", zap.String("path", zvolPath))
-	} else {
-		if _, err := p.client.CreateZvol(ctx, zvolPath, data.DiskSize, omniProps); err != nil {
-			if !isAlreadyExists(err) {
-				return fmt.Errorf("failed to create zvol: %w", err)
-			}
-
-			if resizeErr := p.maybeResizeZvol(ctx, logger, zvolPath, data.DiskSize); resizeErr != nil {
-				return resizeErr
-			}
-		}
+	if err := p.ensureZvol(ctx, logger, zvolPath, data.DiskSize, data.Encrypted, omniProps); err != nil {
+		return err
 	}
 
 	state.ZvolPath = zvolPath
@@ -483,6 +432,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	// Create and attach additional data disks
+	state.AdditionalZvolPaths = nil // Reset to avoid duplicates on retry
+
 	for i, disk := range data.AdditionalDisks {
 		diskPool := disk.Pool
 		if diskPool == "" {
@@ -507,52 +458,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			return fmt.Errorf("failed to ensure omni-vms dataset on pool %q for additional disk %d: %w", diskPool, i, err)
 		}
 
-		if disk.Encrypted {
-			passphrase, genErr := generatePassphrase()
-			if genErr != nil {
-				return genErr
-			}
-
-			diskProps := client.OmniManagedProperties(requestID)
-			diskProps = append(diskProps, client.UserProperty{Key: passphraseProperty, Value: passphrase})
-
-			if _, err := p.client.CreateEncryptedZvol(ctx, additionalZvolPath, disk.Size, passphrase, diskProps); err != nil {
-				if !isAlreadyExists(err) {
-					return fmt.Errorf("failed to create encrypted additional disk %d: %w", i, err)
-				}
-
-				// Encrypted zvol already exists — retrieve stored passphrase and unlock if needed
-				stored, propErr := p.client.GetDatasetUserProperty(ctx, additionalZvolPath, passphraseProperty)
-				if propErr != nil {
-					return fmt.Errorf("failed to read stored passphrase from additional disk %d (%q): %w", i, additionalZvolPath, propErr)
-				}
-
-				if stored == "" {
-					return fmt.Errorf("encrypted additional disk %d (%q) exists but has no stored passphrase", i, additionalZvolPath)
-				}
-
-				if locked, lockErr := p.client.IsDatasetLocked(ctx, additionalZvolPath); lockErr == nil && locked {
-					logger.Debug("unlocking encrypted additional disk", zap.Int("index", i), zap.String("path", additionalZvolPath))
-
-					if unlockErr := p.client.UnlockDataset(ctx, additionalZvolPath, stored); unlockErr != nil {
-						return fmt.Errorf("failed to unlock encrypted additional disk %d (%q): %w", i, additionalZvolPath, unlockErr)
-					}
-				}
-
-				if resizeErr := p.maybeResizeZvol(ctx, logger, additionalZvolPath, disk.Size); resizeErr != nil {
-					return resizeErr
-				}
-			}
-		} else {
-			if _, err := p.client.CreateZvol(ctx, additionalZvolPath, disk.Size, client.OmniManagedProperties(requestID)); err != nil {
-				if !isAlreadyExists(err) {
-					return fmt.Errorf("failed to create additional disk %d: %w", i, err)
-				}
-
-				if resizeErr := p.maybeResizeZvol(ctx, logger, additionalZvolPath, disk.Size); resizeErr != nil {
-					return resizeErr
-				}
-			}
+		if err := p.ensureZvol(ctx, logger, additionalZvolPath, disk.Size, disk.Encrypted, client.OmniManagedProperties(requestID)); err != nil {
+			return fmt.Errorf("additional disk %d: %w", i, err)
 		}
 
 		if _, err := p.client.AddDiskWithOrder(ctx, vm.ID, additionalZvolPath, 1002+i); err != nil {
@@ -570,15 +477,21 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		)
 	}
 
-	// Attach primary NIC
-	nicDev, err := p.client.AddNIC(ctx, vm.ID, data.NetworkInterface)
+	// Attach primary NIC with a deterministic MAC derived from the request ID.
+	// This ensures the MAC survives reprovisioning, so DHCP reservations stay valid.
+	primaryMAC := DeterministicMAC(requestID, 0)
+
+	nicDev, err := p.client.AddNICWithConfig(ctx, vm.ID, client.NICConfig{
+		NetworkInterface: data.NetworkInterface,
+		MAC:              primaryMAC,
+	}, 2001)
 	if err != nil {
 		return fmt.Errorf("failed to attach primary NIC: %w", err)
 	}
 
 	// Log MAC address so users can create DHCP reservations in their router
 	if mac, ok := nicDev.Attributes["mac"].(string); ok && mac != "" {
-		logger.Info("VM NIC MAC address — use this for DHCP reservation in your router",
+		logger.Info("VM NIC MAC address (deterministic) — stable across reprovision for DHCP reservations",
 			zap.String("mac", mac),
 			zap.String("vm_name", vmName),
 			zap.String("network_interface", data.NetworkInterface),
@@ -587,10 +500,17 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	// Attach additional NICs
+	var mtuPatches []nicMTUConfig
+
 	for i, nic := range data.AdditionalNICs {
 		nicCfg := client.NICConfig{
 			NetworkInterface: nic.NetworkInterface,
 			Type:             nic.Type,
+			MTU:              nic.MTU,
+		}
+
+		if nic.DeterministicMAC {
+			nicCfg.MAC = DeterministicMAC(requestID, i+1)
 		}
 
 		dev, nicErr := p.client.AddNICWithConfig(ctx, vm.ID, nicCfg, 2002+i)
@@ -603,10 +523,33 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			mac = m
 		}
 
+		if nic.MTU > 0 && mac != "" {
+			mtuPatches = append(mtuPatches, nicMTUConfig{mac: mac, mtu: nic.MTU})
+		}
+
 		logger.Debug("attached additional NIC",
 			zap.Int("index", i),
 			zap.String("network_interface", nic.NetworkInterface),
 			zap.String("mac", mac),
+			zap.Bool("deterministic_mac", nic.DeterministicMAC),
+			zap.Int("mtu", nic.MTU),
+			zap.String("vm_name", vmName),
+		)
+	}
+
+	// Apply MTU config patches for NICs with custom MTU
+	if len(mtuPatches) > 0 {
+		patchData, patchErr := buildMTUPatch(mtuPatches)
+		if patchErr != nil {
+			return fmt.Errorf("failed to build MTU config patch: %w", patchErr)
+		}
+
+		if cpErr := pctx.CreateConfigPatch(ctx, "nic-mtu", patchData); cpErr != nil {
+			return fmt.Errorf("failed to apply MTU config patch: %w", cpErr)
+		}
+
+		logger.Info("applied MTU config patch",
+			zap.Int("nic_count", len(mtuPatches)),
 			zap.String("vm_name", vmName),
 		)
 	}
@@ -857,6 +800,62 @@ func (p *Provisioner) maybeResizeZvol(ctx context.Context, logger *zap.Logger, z
 	return nil
 }
 
+// ensureZvol creates a zvol (encrypted or plain), handling the "already exists" case
+// with passphrase retrieval, unlock, and resize. Used for both root and additional disks.
+func (p *Provisioner) ensureZvol(ctx context.Context, logger *zap.Logger, zvolPath string, sizeGiB int, encrypted bool, props []client.UserProperty) error {
+	if encrypted {
+		passphrase, genErr := generatePassphrase()
+		if genErr != nil {
+			return genErr
+		}
+
+		encProps := make([]client.UserProperty, len(props))
+		copy(encProps, props)
+		encProps = append(encProps, client.UserProperty{Key: passphraseProperty, Value: passphrase})
+
+		if _, err := p.client.CreateEncryptedZvol(ctx, zvolPath, sizeGiB, passphrase, encProps); err != nil {
+			if !isAlreadyExists(err) {
+				return fmt.Errorf("failed to create encrypted zvol %q: %w", zvolPath, err)
+			}
+
+			stored, propErr := p.client.GetDatasetUserProperty(ctx, zvolPath, passphraseProperty)
+			if propErr != nil {
+				return fmt.Errorf("failed to read stored passphrase from %q: %w", zvolPath, propErr)
+			}
+
+			if stored == "" {
+				return fmt.Errorf("encrypted zvol %q exists but has no stored passphrase — it may have been created manually or by an older provider version", zvolPath)
+			}
+
+			if locked, lockErr := p.client.IsDatasetLocked(ctx, zvolPath); lockErr == nil && locked {
+				logger.Debug("unlocking encrypted zvol", zap.String("path", zvolPath))
+
+				if unlockErr := p.client.UnlockDataset(ctx, zvolPath, stored); unlockErr != nil {
+					return fmt.Errorf("failed to unlock encrypted zvol %q: %w", zvolPath, unlockErr)
+				}
+			}
+
+			if resizeErr := p.maybeResizeZvol(ctx, logger, zvolPath, sizeGiB); resizeErr != nil {
+				return resizeErr
+			}
+		}
+
+		return nil
+	}
+
+	if _, err := p.client.CreateZvol(ctx, zvolPath, sizeGiB, props); err != nil {
+		if !isAlreadyExists(err) {
+			return fmt.Errorf("failed to create zvol %q: %w", zvolPath, err)
+		}
+
+		if resizeErr := p.maybeResizeZvol(ctx, logger, zvolPath, sizeGiB); resizeErr != nil {
+			return resizeErr
+		}
+	}
+
+	return nil
+}
+
 // swapCDROMForUpgrade updates the CDROM device to point to the new ISO.
 // This ensures that if the VM reboots from CDROM (before CDROM removal), it gets the correct Talos version.
 func (p *Provisioner) swapCDROMForUpgrade(ctx context.Context, logger *zap.Logger, state *specs.MachineSpec, pctx provision.Context[*resources.Machine]) {
@@ -965,6 +964,7 @@ func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, 
 	if vm.Status.State == "RUNNING" {
 		logger.Debug("VM is already running", zap.Int("vm_id", vm.ID))
 		p.TrackVMName(vmName)
+		p.clearVMErrors(vm.ID)
 
 		if telemetry.VMsProvisioned != nil {
 			telemetry.VMsProvisioned.Add(ctx, 1)
@@ -975,7 +975,33 @@ func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, 
 	}
 
 	if vm.Status.State == "ERROR" {
-		// VM in error state — attempt NVRAM reset (firmware mismatch recovery)
+		count := p.recordVMError(vm.ID)
+
+		if p.config.MaxErrorRecoveries > 0 && count > p.config.MaxErrorRecoveries {
+			logger.Error("VM exceeded maximum error recoveries — deprovisioning for replacement",
+				zap.Int("vm_id", vm.ID),
+				zap.Int("error_count", count),
+				zap.Int("max_recoveries", p.config.MaxErrorRecoveries),
+				zap.String("vm_name", vmName),
+			)
+
+			p.clearVMErrors(vm.ID)
+
+			if err := p.cleanupVM(ctx, logger, vm.ID); err != nil {
+				logger.Warn("failed to deprovision broken VM", zap.Int("vm_id", vm.ID), zap.Error(err))
+			}
+
+			// Reset state so the provisioner recreates the VM from scratch
+			err := provision.NewRetryInterval(5 * time.Second)
+			return &err
+		}
+
+		logger.Warn("VM in ERROR state — attempting recovery",
+			zap.Int("vm_id", vm.ID),
+			zap.Int("error_count", count),
+			zap.Int("max_recoveries", p.config.MaxErrorRecoveries),
+		)
+
 		p.resetNVRAMIfNeeded(ctx, logger, vm.ID)
 
 		retryErr := provision.NewRetryInterval(30 * time.Second)

@@ -52,6 +52,39 @@ func TestAddNIC_VLAN(t *testing.T) {
 	assert.Equal(t, "vlan666", dev.Attributes["nic_attach"])
 }
 
+func TestAddNICWithConfig_MTU(t *testing.T) {
+	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
+		assert.Equal(t, methodDeviceCreate, method)
+		assert.Contains(t, string(params), `"mtu":9000`)
+		assert.Contains(t, string(params), `"nic_attach":"br200"`)
+
+		return Device{ID: 10, VM: 42, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br200", "mtu": 9000}}, nil
+	})
+
+	dev, err := c.AddNICWithConfig(context.Background(), 42, NICConfig{
+		NetworkInterface: "br200",
+		MTU:              9000,
+	}, 2002)
+	require.NoError(t, err)
+	assert.Equal(t, float64(9000), dev.Attributes["mtu"])
+}
+
+func TestAddNICWithConfig_NoMTU(t *testing.T) {
+	var capturedParams string
+
+	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
+		capturedParams = string(params)
+
+		return Device{ID: 11, VM: 42, Attributes: map[string]any{"dtype": "NIC"}}, nil
+	})
+
+	_, err := c.AddNICWithConfig(context.Background(), 42, NICConfig{
+		NetworkInterface: "br200",
+	}, 2002)
+	require.NoError(t, err)
+	assert.NotContains(t, capturedParams, "mtu", "MTU should not be in params when zero")
+}
+
 func TestAddDisk(t *testing.T) {
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
 		assert.Equal(t, methodDeviceCreate, method)
