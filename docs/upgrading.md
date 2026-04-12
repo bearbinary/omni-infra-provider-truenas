@@ -27,6 +27,41 @@ For TrueNAS app deployments, update the image tag in the app configuration.
 
 ### v0.13.0
 
+**NFS auto-storage has been removed.** The `auto_storage` MachineClass field, `AUTO_STORAGE_ENABLED` and `NFS_HOST` environment variables, and all NFS provisioning code have been deleted.
+
+**Action required:**
+
+- **If you were using NFS auto-storage**: Migrate to Longhorn. Add `storage_disk_size` to your MachineClass to attach a data disk, then install Longhorn via Helm. See [Storage Guide](storage.md) for setup steps. Existing clusters with NFS already provisioned will continue working (the NFS provisioner and StorageClass are in-cluster resources, not managed by the provider after creation).
+- **If you were not using NFS auto-storage**: No action needed.
+
+**Behavior change: singleton enforcement is on by default.**
+
+Starting in this release, the provider refuses to start if another process is
+already running as the same `PROVIDER_ID`. It claims a lease via annotations
+on the `infra.ProviderStatus` resource and heartbeats every 15s. If you start
+a second copy, it will fail fast with an error naming the conflicting
+instance. See [Architecture › Singleton Enforcement](architecture.md#singleton-enforcement)
+and [Troubleshooting](troubleshooting.md#singleton-lease-acquire-failed--another-provider-instance-holds-the-singleton-lease).
+
+**Action required:**
+
+- **Kubernetes deployments**: if you are using a custom Deployment manifest
+  (not the Helm chart), set `strategy.type=Recreate` — or
+  `rollingUpdate: {maxSurge: 0, maxUnavailable: 1}` — so the old pod is fully
+  terminated before the new one starts. The shipped Helm chart already does
+  this. With the default `maxSurge=25%` rolling strategy, the new pod would
+  briefly overlap with the old and crashloop on the preflight check.
+- **Docker / systemd / TrueNAS app deployments**: no action needed. These run
+  one instance by design.
+- **Advanced sharding (rare)**: if you deliberately run multiple provider
+  instances behind the same `PROVIDER_ID` (uncommon — Omni handles scheduling
+  across distinct provider IDs natively), set
+  `PROVIDER_SINGLETON_ENABLED=false` to bypass the check.
+
+No MachineClass schema changes; no state migration required.
+
+### v0.13.0
+
 **MAC address change on first reprovision:**
 
 The primary NIC now uses a deterministic MAC address derived from the machine request ID. This means DHCP reservations survive future reprovisions. However, existing VMs have TrueNAS-generated random MACs — the first reprovision after upgrading to v0.13.0 will change each VM's MAC address one final time. After that, the MAC is stable.

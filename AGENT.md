@@ -196,7 +196,7 @@ EOF
 ### 4. Test Provisioning
 
 Create a single-node cluster using the MachineClass in Omni (UI or CLI). Watch:
-- Provider logs should show the 3 provision steps running
+- Provider logs should show the 4 provision steps running
 - TrueNAS UI > Virtualization should show a new VM appearing
 - Omni UI should show the machine enrolling after 2-5 minutes
 
@@ -214,12 +214,13 @@ disk_size: 10
 
 ### Worker Nodes
 
-More resources — runs application workloads and stores container images:
+More resources — runs application workloads and stores container images. Includes a storage disk for Longhorn persistent storage:
 
 ```yaml
 cpus: 4
 memory: 8192
 disk_size: 100
+storage_disk_size: 100
 ```
 
 ### Per-Class Overrides
@@ -269,6 +270,9 @@ These are included in every VM automatically — users do NOT need to add them:
 | `OTEL_EXPORTER_OTLP_INSECURE` | No | `true` | Use insecure gRPC for OTel |
 | `OTEL_SERVICE_NAME` | No | `omni-infra-provider-truenas` | OTel service name |
 | `PYROSCOPE_URL` | No | — | Pyroscope endpoint for continuous profiling |
+| `PROVIDER_SINGLETON_ENABLED` | No | `true` | Fail fast if another instance holds the singleton lease for this `PROVIDER_ID` |
+| `PROVIDER_SINGLETON_REFRESH_INTERVAL` | No | `15s` | Lease heartbeat cadence |
+| `PROVIDER_SINGLETON_STALE_AFTER` | No | `45s` | Stale-lease takeover threshold (must be ≥ 2× refresh) |
 
 ## Troubleshooting
 
@@ -280,6 +284,7 @@ These are included in every VM automatically — users do NOT need to add them:
 | `pool "X" not found` | Pool name wrong or doesn't exist | Check pool name with `midclt call pool.query`. Names are case-sensitive. |
 | `network interface target "X" not found` | Interface doesn't exist | Check with `midclt call vm.device.nic_attach_choices`. May need to create a bridge first. |
 | `OMNI_ENDPOINT is required` | Missing env var | Set the `OMNI_ENDPOINT` environment variable. |
+| `singleton lease acquire failed` / `another provider instance holds the singleton lease` | Two processes running with the same `PROVIDER_ID` | Stop the other instance (clean `SIGTERM` releases the lease immediately), or wait ~45s for the stale-heartbeat takeover. For k8s rolling deploys, use `strategy.type=Recreate`. See `docs/troubleshooting.md`. |
 
 ### VMs Created But Don't Join Omni
 

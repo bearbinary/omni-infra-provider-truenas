@@ -67,6 +67,21 @@ VMs restart with TrueNAS. The provider auto-recovers and reconnects to Omni. Kub
 
 No. Talos Linux has no SSH by design. Manage nodes through `kubectl`, `talosctl`, and the Omni UI.
 
+### Can I run multiple provider instances for HA?
+
+Not with the same `PROVIDER_ID`. The provider enforces a single-writer lease
+on startup: the second instance fails fast rather than racing on VM creation,
+zvol creation, and ISO upload. If you want redundancy, the standard pattern
+is to rely on Kubernetes / systemd to restart the single pod if it crashes —
+the lease TTL (default 45s) ensures a replacement instance can take over
+even if the previous one was killed ungracefully.
+
+If you genuinely need multiple active instances (e.g., one per TrueNAS host),
+give each one a **distinct** `PROVIDER_ID` and register them separately in
+Omni. Omni handles scheduling across provider IDs natively.
+
+See [Architecture › Singleton Enforcement](architecture.md#singleton-enforcement).
+
 ### How do I set up networking for VMs?
 
 Create a network bridge (e.g., `br0`) in TrueNAS for VM traffic. VMs attach to bridges, VLANs, or physical NICs. For production, configure DHCP reservations, MetalLB for LoadBalancer services, and optionally a VIP for the Kubernetes API. See the [Networking guide](networking.md) for router-specific instructions (UniFi, pfSense, OPNsense, Mikrotik).

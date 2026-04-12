@@ -20,9 +20,10 @@ Automatically provisions and manages Talos Linux virtual machines on TrueNAS SCA
 1. Watches Omni for MachineRequests (user scales a cluster)
 2. Generates a Talos Linux image schematic with extensions (qemu-guest-agent, nfs-utils, util-linux-tools)
 3. Downloads the Talos ISO from Image Factory (cached, SHA-256 deduplicated)
-4. Creates a VM on TrueNAS: zvol for disk, CDROM with ISO, NIC on bridge/VLAN
-5. VM boots Talos, joins Omni via SideroLink (outbound WireGuard)
-6. On removal: stops VM, deletes VM and zvol
+4. Creates a VM on TrueNAS: zvol for disk, CDROM with ISO, NICs on bridge/VLAN, optional additional disks
+5. Health-checks VM existence on TrueNAS (resets state for re-provision if VM deleted externally)
+6. VM boots Talos, joins Omni via SideroLink (outbound WireGuard)
+7. On removal: graceful ACPI shutdown, deletes VM and all zvols (root + additional)
 
 ## Configuration
 
@@ -36,17 +37,26 @@ All via environment variables:
 - DEFAULT_NETWORK_INTERFACE: Network interface for VM NICs
 - DEFAULT_BOOT_METHOD: UEFI or BIOS (default: UEFI)
 - CONCURRENCY: Max parallel workers (default: 4)
+- PROVIDER_SINGLETON_ENABLED: Fail-fast if another instance holds the lease (default: true)
+- PROVIDER_SINGLETON_REFRESH_INTERVAL: Lease heartbeat cadence (default: 15s)
+- PROVIDER_SINGLETON_STALE_AFTER: Stale-lease takeover threshold (default: 45s)
 
 ## MachineClass Config (configpatch)
 
 - cpus (int, required): Virtual CPUs, min 1
 - memory (int, required): Memory in MiB, min 1024
 - disk_size (int, required): Root disk in GiB, min 10
-- pool (string): ZFS pool override
-- network_interface (string): Network interface override
+- pool (string): ZFS pool name (top-level only, not a dataset path)
+- network_interface (string): Network interface for primary NIC (bridge, VLAN, or physical)
 - boot_method (string): UEFI or BIOS
 - architecture (string): amd64 or arm64
-- extensions (list): Additional Talos system extensions
+- dataset_prefix (string): Dataset path under pool for organizing VM storage (e.g., "previewk8/k8")
+- encrypted (bool): Enable ZFS AES-256-GCM encryption on root disk (passphrase auto-generated per zvol)
+- extensions (list): Additional Talos system extensions (merged with defaults)
+- additional_disks (list of objects): Extra data disks beyond root; each has size (required), pool, dataset_prefix, encrypted
+- additional_nics (list of objects): Extra NICs for network segmentation; each has network_interface (required), type (VIRTIO/E1000), mtu (576-9216)
+- advertised_subnets (string): Comma-separated CIDRs to pin etcd/kubelet (required for stable multi-NIC clusters)
+- storage_disk_size (int): Dedicated data disk in GiB for Longhorn persistent storage
 
 ## Deployment Options
 
@@ -72,6 +82,7 @@ Includes: Windows/macOS/Linux instructions, inline troubleshooting at each step,
 - internal/client/: TrueNAS JSON-RPC 2.0 client (transport, VM, storage, device ops)
 - internal/provisioner/: 3-step provision flow + deprovision
 - internal/cleanup/: Background stale resource cleanup
+- internal/singleton/: Distributed lease preventing duplicate provider instances
 - internal/resources/: COSI typed resources
 - internal/telemetry/: OpenTelemetry integration
 - api/specs/: Protobuf definitions
@@ -87,7 +98,7 @@ Includes: Windows/macOS/Linux instructions, inline troubleshooting at each step,
 - CHANGELOG.md: Curated release history (v0.1.0 through current)
 - docs/architecture.md: Detailed architecture with Mermaid diagrams
 - docs/networking.md: Networking guide — bridges, DHCP reservations, MetalLB, VIP, UniFi/pfSense/OPNsense/Mikrotik
-- docs/storage.md: CSI storage guide — NFS, iSCSI, democratic-csi, node-local options
+- docs/storage.md: Storage guide — Longhorn (recommended default) setup, democratic-csi as advanced alternative
 - docs/cni.md: CNI selection guide — Flannel, Cilium, Calico with Talos-specific setup
 - docs/troubleshooting.md: Common issues and solutions
 - docs/testing.md: Unit, integration, and E2E test setup
@@ -129,3 +140,6 @@ A: A single-node Kubernetes cluster needs approximately 4 CPU cores, 16 GB RAM, 
 
 Q: How do I set up networking for TrueNAS Kubernetes VMs?
 A: Create a network bridge (e.g., br0) in TrueNAS for VM traffic. VMs attach to bridges, VLANs, or physical NICs. For production, configure DHCP reservations, MetalLB for LoadBalancer services, and optionally a VIP for the Kubernetes API. See docs/networking.md for router-specific guides (UniFi, pfSense, OPNsense, Mikrotik).
+
+Q: Can I run two provider instances for HA?
+A: Not with the same PROVIDER_ID. The provider enforces a single-writer lease via annotations on the infra.ProviderStatus resource and fails fast on conflict. This prevents two processes from racing on VM creation, zvol creation, and ISO upload. If you need multiple active instances (e.g., one per TrueNAS host), give each a distinct PROVIDER_ID and register them separately in Omni — Omni handles scheduling across provider IDs natively. See docs/architecture.md#singleton-enforcement.

@@ -18,3 +18,8 @@ data:
   LOG_LEVEL: {{ .Values.logLevel | quote }}
   GRACEFUL_SHUTDOWN_TIMEOUT: {{ .Values.gracefulShutdownTimeout | quote }}
   HEALTH_LISTEN_ADDR: {{ .Values.healthListenAddr | quote }}
+  {{- with .Values.singleton }}
+  PROVIDER_SINGLETON_ENABLED: {{ .enabled | quote }}
+  PROVIDER_SINGLETON_REFRESH_INTERVAL: {{ .refreshInterval | quote }}
+  PROVIDER_SINGLETON_STALE_AFTER: {{ .staleAfter | quote }}
+  {{- end }}

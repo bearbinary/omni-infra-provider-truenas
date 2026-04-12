@@ -1,101 +1,163 @@
-# CSI Storage Guide
+# Storage Guide
 
-This guide covers persistent storage options for Kubernetes clusters running on TrueNAS via the Omni infrastructure provider. It helps you choose the right CSI driver based on your workload, complexity tolerance, and whether you want to leverage TrueNAS-managed storage or run distributed storage inside the cluster.
+This guide helps you choose and configure persistent storage for Kubernetes clusters running on TrueNAS via the Omni infrastructure provider.
 
-For step-by-step TrueNAS configuration (NFS shares, iSCSI service, SSH for democratic-csi), see the [TrueNAS Setup Guide](truenas-setup.md). For Talos Linux-specific CSI guidance, see the [Siderolabs Storage Documentation](https://docs.siderolabs.com/kubernetes-guides/csi/storage).
-
----
-
-## Storage Approaches
-
-There are two fundamentally different ways to provide persistent storage to your cluster:
-
-1. **NAS-backed storage** — TrueNAS serves storage (NFS exports or iSCSI targets) to the cluster over the network. Your data lives on TrueNAS ZFS pools with all the benefits that brings (snapshots, replication, RAID-Z, scrubbing). The cluster nodes don't need extra disks.
-
-2. **Node-local distributed storage** — Storage software runs inside the cluster and uses extra virtual disks attached to each VM. Data is replicated across nodes. TrueNAS is only involved as the hypervisor, not as a storage server.
+**Longhorn with a dedicated data disk is the default storage approach.** We chose Longhorn over NFS because NFS has significant networking complexity (firewall rules, port 2049 reachability, subnet auto-detection), many critical applications cannot run on NFS at all (see incompatibility list below), and NFS volumes cannot be snapshotted or backed up with standard Kubernetes tools like Velero CSI snapshots. Longhorn gives you block storage, built-in snapshots, S3 backup, and zero TrueNAS-side dependencies. NFS auto-storage remains available as an opt-in alternative for simple read-heavy workloads.
 
 ---
 
-## NAS-Backed Storage
+## Choosing a Storage System
 
-These options use TrueNAS as the storage backend. Your data is managed by TrueNAS ZFS and served to the cluster via NFS or iSCSI.
+### Software That Does Not Support NFS
 
-### NFS with nfs-subdir-external-provisioner
+Many popular Kubernetes workloads explicitly require block storage or are known to corrupt data on NFS. If you plan to run any of these, **you must use Longhorn** (or another block storage provider):
 
-> **Maintenance warning:** This project has not had a release since v4.0.2 (2022). Issues are being auto-closed by a stale bot. It is under `kubernetes-sigs` but effectively unmaintained. It works for simple setups, but consider democratic-csi (below) for active maintenance and better TrueNAS integration. If democratic-csi is also unavailable, manual NFS PVs are a zero-dependency fallback (see below).
+| Software | Why NFS Fails |
+|---|---|
+| **PostgreSQL** / CloudNativePG | NFS file-locking semantics cause WAL corruption, timeouts, and data loss under concurrent writes. [CloudNativePG docs explicitly recommend local/block storage.](https://cloudnative-pg.io/documentation/1.20/storage/) |
+| **Elasticsearch** / OpenSearch | Lucene relies on filesystem behavior NFS does not provide. [Elastic explicitly states NFS is not supported](https://discuss.elastic.co/t/why-nfs-is-to-be-avoided-for-data-directories/215240) -- data corruption and index failures will occur. |
+| **Redis Enterprise** | [Redis docs state NFS is not supported](https://redis.io/docs/latest/operate/kubernetes/recommendations/persistent-volumes/) -- requires block storage with EXT4/XFS. NFS locking is incompatible with Redis persistence. |
+| **MongoDB** | Data directories fail to persist correctly on NFS. Missing subdirectories and silent data loss reported in Kubernetes NFS deployments. |
+| **OpenBao / Vault** | Raft consensus storage requires consistent fsync semantics. NFS cannot guarantee the write ordering that Raft needs for safe leader election and log replication. Use block storage with integrated Raft, or Consul as the backend. |
+| **etcd** | Requires low-latency, fdatasync-safe storage. [NFS latency and locking cause leader election failures and cluster instability.](https://github.com/etcd-io/etcd/issues/19394) |
+| **Loki** (log aggregation) | [Grafana docs warn against NFS for Loki](https://grafana.com/docs/loki/latest/operations/storage/filesystem/) -- shared filesystem causes "a bad experience." Production Loki should use S3 or block storage. |
+| **Prometheus** | TSDB requires consistent block writes. NFS adds latency that causes scrape timeouts and compaction failures under load. |
+| **MySQL** / MariaDB | InnoDB requires `O_DIRECT` and `fsync` guarantees that NFS does not reliably provide, leading to silent corruption on crash recovery. |
+| **CockroachDB** / TiDB | Distributed SQL databases with Raft consensus -- same fsync requirements as etcd. NFS breaks replication consistency. |
 
-The simplest path to persistent storage. TrueNAS shares an NFS export, and the [nfs-subdir-external-provisioner](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner) dynamically creates subdirectories for each PersistentVolume.
+**General rule:** If the software uses a write-ahead log (WAL), Raft consensus, or Lucene indexing, it will not work reliably on NFS.
 
-**Pros:**
-- No Talos system extensions required (NFS client is built into the Talos kubelet image)
-- Minimal configuration — just an NFS share path and server IP
-- TrueNAS manages the storage, ZFS snapshots/replication work as normal
-- Easiest to set up and debug
+### When NFS Does Not Work (Infrastructure)
 
-**Cons:**
-- File-level storage (not block) — slower for database workloads
-- NFS locking and contention can be a bottleneck under heavy concurrent writes
-- No dynamic dataset creation on TrueNAS (all PVs share one export)
-- Effectively unmaintained — last release 2022
+Beyond software compatibility, NFS auto-storage requires the provider to have TrueNAS API access **and** the cluster nodes to reach TrueNAS on port 2049. It will not work in these scenarios:
 
-**Talos extensions required:** None
+- **Provider deployed to a remote Kubernetes cluster** -- The provider has WebSocket API access, but the cluster VMs may not have network access to TrueNAS port 2049 (NFS). The provider can create the share, but pods can't mount it.
+- **Provider deployed via Helm to a different site** -- Multi-site or edge deployments where the cluster is not on the same LAN as TrueNAS.
+- **Firewall blocks NFS** -- If a firewall sits between the cluster network and TrueNAS and does not allow NFS traffic (TCP 2049, plus portmapper on 111).
+- **TrueNAS NFS service disabled or unavailable** -- Some TrueNAS configurations intentionally disable NFS (e.g., iSCSI-only setups, or when the NFS service conflicts with other workloads).
+- **Air-gapped or restricted networks** -- Environments where cluster nodes cannot make outbound connections to the NAS.
+- **Shared TrueNAS with NFS conflicts** -- When other NFS consumers on the same TrueNAS box have specific export requirements that conflict with the provider's auto-created shares.
 
-**Setup summary:**
-1. Create an NFS share on TrueNAS (e.g., `/mnt/pool/k8s-nfs`)
-2. Ensure the NFS service is running and the share is accessible from the cluster network
-3. Install via Helm:
-   ```bash
-   helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner
-   helm install nfs-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \
-     --set nfs.server=<truenas-ip> \
-     --set nfs.path=/mnt/pool/k8s-nfs \
-     --set storageClass.defaultClass=true
-   ```
+In all of these cases, **use Longhorn** -- it runs entirely inside the cluster and has zero NAS-side dependencies.
 
-### democratic-csi (NFS or iSCSI)
+### Decision Matrix
 
-> **Maintenance note:** democratic-csi is actively maintained (commits through 2026) but is a single-maintainer project. It is the de facto standard CSI driver for TrueNAS in the homelab and self-hosted community (~1k GitHub stars). If democratic-csi becomes unmaintained, the fallback is manual NFS or iSCSI PVs (see below).
+| | **Longhorn (Recommended)** | **NFS (Auto Storage)** |
+|---|---|---|
+| **How it works** | Storage software runs inside the cluster, replicates data across VM disks | TrueNAS serves an NFS share; a provisioner creates subdirectories for each PV |
+| **TrueNAS dependency** | None -- self-contained | Requires API access + NFS port reachable from cluster |
+| **Extra VM disks needed** | Yes (one per worker node) | No |
+| **Storage type** | Block (better for databases) | File (NFS overhead on random I/O) |
+| **Data lives on** | Virtual disks inside VMs (replicated by Longhorn) | TrueNAS ZFS pool (snapshots, scrub, replication) |
+| **Setup complexity** | Medium -- Helm install + Talos config patch | Low -- one toggle in MachineClass |
+| **Access modes** | ReadWriteOnce (single node) | ReadWriteMany (multiple pods) |
+| **Survives TrueNAS outage** | Yes -- data is on local VM disks | No -- NFS mount goes offline |
+| **Snapshots & backup** | Kubernetes VolumeSnapshots, Velero CSI integration, backup to S3 | No CSI snapshot support — Velero can only do file-level restic/kopia backup, not crash-consistent snapshots |
+| **Project health** | Active CNCF incubating project | nfs-subdir-external-provisioner unmaintained since 2022 |
 
-[democratic-csi](https://github.com/democratic-csi/democratic-csi) is purpose-built for TrueNAS. It dynamically creates ZFS datasets (NFS) or zvols (iSCSI) on TrueNAS for each PersistentVolume, giving you per-PV isolation and ZFS-level snapshot support.
+**Choose Longhorn if:** You want reliable, self-contained storage that works regardless of your network topology or TrueNAS configuration, with proper snapshot and backup support. This is the right choice for most users.
 
-**Pros:**
-- Dynamic provisioning — each PV gets its own ZFS dataset or zvol
-- Supports NFS, iSCSI, and SMB protocols
+**Choose NFS if:** You only need shared read-heavy storage (media files, static assets), your cluster nodes can reach TrueNAS over NFS, and you don't need Kubernetes-native snapshots or database workloads.
+
+Both approaches can coexist in the same cluster -- install Longhorn alongside NFS and use StorageClass selectors per workload.
+
+---
+
+## Option 1: Longhorn (Recommended)
+
+[Longhorn](https://longhorn.io/) is a CNCF incubating project that provides Kubernetes-native distributed block storage. It runs entirely inside your cluster with no TrueNAS API dependency.
+
+### Requirements
+
+- Extra virtual disks attached to worker VMs (use `additional_disks` in MachineClass)
+- Talos machine config patches for Longhorn compatibility
+
+### Setup
+
+**1. Add a storage disk to your MachineClass:**
+
+```yaml
+providerdata: |
+  cpus: 4
+  memory: 8192
+  disk_size: 40
+  pool: default
+  network_interface: br100
+  storage_disk_size: 100  # GiB, dedicated to Longhorn
+```
+
+> `storage_disk_size` is a shorthand that adds a data disk to each VM. You can also use the full `additional_disks: [{size: 100}]` syntax if you need per-disk pool or encryption options.
+
+**2. Apply Talos machine config patches for Longhorn:**
+
+Longhorn needs specific Talos configuration. Apply this as a config patch in Omni:
+
+```yaml
+machine:
+  kubelet:
+    extraMounts:
+      - destination: /var/lib/longhorn
+        type: bind
+        source: /var/lib/longhorn
+        options:
+          - bind
+          - rshared
+          - rw
+  sysctls:
+    vm.overcommit_memory: "1"
+```
+
+See the [Longhorn Talos Linux support guide](https://longhorn.io/docs/1.9.0/advanced-resources/os-distro-specific/talos-linux-support/) for the latest configuration requirements.
+
+**3. Install Longhorn via Helm:**
+
+```bash
+helm repo add longhorn https://charts.longhorn.io
+helm repo update
+helm install longhorn longhorn/longhorn \
+  --namespace longhorn-system \
+  --create-namespace \
+  --set defaultSettings.defaultDataPath=/var/lib/longhorn
+```
+
+**4. Set as default StorageClass:**
+
+```bash
+kubectl patch storageclass longhorn -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+```
+
+### Why Longhorn
+
+- **No TrueNAS dependency** -- cluster storage is self-contained and works in any deployment topology
+- **Block storage** -- significantly better performance for databases (PostgreSQL, MySQL, etcd) and random I/O
+- **Built-in replication** across nodes, snapshots, and backup to S3
+- **Active CNCF project** with broad community support and regular releases
+- **Web UI** for monitoring volumes, replicas, and node health
+
+### Trade-offs
+
+- Requires extra VM disks (adds ZFS write amplification since Longhorn replicates on top of TrueNAS-managed zvols)
+- Storage capacity limited by total disk space across worker nodes
+- Doesn't leverage TrueNAS ZFS features (snapshots, replication, scrubbing) for cluster data
+- ReadWriteOnce only -- no shared volumes across pods on different nodes
+
+---
+
+## Advanced: democratic-csi
+
+For users who want per-PV ZFS dataset isolation with dynamic provisioning, [democratic-csi](https://github.com/democratic-csi/democratic-csi) is purpose-built for TrueNAS. Each PV gets its own ZFS dataset (NFS) or zvol (iSCSI).
+
+This is more complex to set up than Longhorn but gives you:
+- Per-PV ZFS dataset/zvol isolation
 - ZFS snapshots exposed as Kubernetes VolumeSnapshots
-- Purpose-built for FreeNAS/TrueNAS
-- Actively maintained
+- Both NFS and iSCSI protocols
 
-**Cons:**
-- More complex setup than simple NFS
-- Single-maintainer project — bus factor of 1
-- Two driver modes with different trade-offs (see below)
+| Mode | Auth | Notes |
+|---|---|---|
+| SSH-based (`freenas-nfs`, `freenas-iscsi`) | SSH to TrueNAS | Stable, battle-tested. Requires SSH access with root/sudo. |
+| API-based (`freenas-api-nfs`, `freenas-api-iscsi`) | REST API | Experimental. 1 GB minimum volume size. REST v2.0 compatibility with TrueNAS 25.04+ should be verified. |
 
-**Driver modes:**
-
-| Mode | Auth Method | Maturity | Notes |
-|---|---|---|---|
-| SSH-based (`freenas-nfs`, `freenas-iscsi`) | SSH to TrueNAS | Stable | Requires SSH access with root/sudo. Executes ZFS commands directly. Most battle-tested. |
-| API-based (`freenas-api-nfs`, `freenas-api-iscsi`) | REST API | Experimental | Uses TrueNAS REST v2.0 API. No SSH needed. 1 GB minimum volume size. |
-
-> **Compatibility note:** The API-based drivers use the TrueNAS REST v2.0 API. TrueNAS SCALE 25.04+ (Fangtooth) has transitioned to a JSON-RPC 2.0 API internally — the REST API may still work via a compatibility layer, but this should be verified on your specific version. The SSH-based drivers are unaffected since they execute ZFS commands directly.
-
-**Talos extensions required:**
-- iSCSI mode: `iscsi-tools` system extension
-- NFS mode: None (built into kubelet)
-
-**Setup summary:**
-1. Choose your protocol (NFS or iSCSI) and driver mode (SSH or API)
-2. For SSH mode: enable SSH on TrueNAS and create a dedicated user with sudo access
-3. For iSCSI: enable the iSCSI service on TrueNAS and install the `iscsi-tools` Talos extension
-4. Install via Helm following the [democratic-csi documentation](https://github.com/democratic-csi/democratic-csi#installation)
-
-### iSCSI (Manual or via democratic-csi)
-
-iSCSI provides block-level storage, which is significantly faster than NFS for database workloads and anything doing heavy random I/O.
-
-**Talos extensions required:** `iscsi-tools`
-
-To add the `iscsi-tools` extension to your Talos nodes, include it in your machine config or Omni config patch:
+**iSCSI mode** requires the `iscsi-tools` Talos extension:
 
 ```yaml
 machine:
@@ -104,139 +166,21 @@ machine:
       - image: ghcr.io/siderolabs/iscsi-tools:latest
 ```
 
-You can use iSCSI manually (create targets on TrueNAS, configure initiators on each node) or let democratic-csi handle it dynamically.
-
-### Manual NFS PVs (Fallback)
-
-If neither nfs-subdir-external-provisioner nor democratic-csi is viable, you can create PVs manually against TrueNAS NFS shares with zero external dependencies. No dynamic provisioning — you create each PV/PVC pair by hand.
-
-```yaml
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: my-app-data
-spec:
-  capacity:
-    storage: 50Gi
-  accessModes:
-    - ReadWriteOnce
-  nfs:
-    server: <truenas-ip>
-    path: /mnt/pool/k8s-nfs/my-app-data
-  persistentVolumeReclaimPolicy: Retain
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: my-app-data
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 50Gi
-  volumeName: my-app-data
-```
-
-Create the directory on TrueNAS first (`/mnt/pool/k8s-nfs/my-app-data`), then apply the manifests. This approach has no moving parts beyond TrueNAS NFS itself and works regardless of which CSI drivers are available or maintained.
-
----
-
-## Node-Local Distributed Storage (Not Recommended)
-
-These options run storage software inside the Kubernetes cluster itself. They require extra virtual disks attached to each VM — TrueNAS acts only as the hypervisor, not as a storage server.
-
-> **Why not recommended?** In a TrueNAS VM environment, these drivers treat virtual disks as if they were real physical drives. This adds a redundant replication and management layer on top of storage that TrueNAS is already managing via ZFS — resulting in double write amplification and no benefit from ZFS features like snapshots, replication, or scrubbing. They're documented here for completeness, but NAS-backed storage (above) is a better fit for this environment.
-
-> **Note:** Attaching extra disks to VMs requires the multi-disk VM support feature (see [backlog](backlog.md)). Until that feature lands, you would need to manually add disks to VMs via the TrueNAS UI.
-
-### Longhorn
-
-[Longhorn](https://longhorn.io/) is a lightweight, Kubernetes-native distributed block storage system. It replicates data across nodes and provides snapshots and backups.
-
-**Pros:**
-- Simple to install and operate
-- Built-in replication, snapshots, and backup to S3
-- Good UI for monitoring storage
-- Active CNCF project (incubating)
-
-**Cons:**
-- Requires extra virtual disks on each VM
-- Storage capacity limited by total disk space across nodes
-- No NAS integration — doesn't leverage TrueNAS ZFS features
-- Not ideal for very large clusters
-
-**Talos extensions required:** None (uses standard Linux block devices)
-
-**Talos-specific setup:** See the [Longhorn Talos Linux support guide](https://longhorn.io/docs/1.9.0/advanced-resources/os-distro-specific/talos-linux-support/).
-
-### Rook/Ceph
-
-[Rook](https://rook.io/) deploys [Ceph](https://ceph.io/) inside Kubernetes, providing block, file, and object storage on a distributed cluster.
-
-**Pros:**
-- Enterprise-grade, battle-tested at scale
-- Provides block, file (CephFS), and object (S3-compatible) storage
-- Self-healing, auto-rebalancing
-- Multi-tenant capable
-
-**Cons:**
-- Complex to operate and troubleshoot
-- Slow on small clusters (3-5 nodes) — Ceph has significant overhead
-- Requires extra disks and substantial resources (RAM, CPU)
-- Overkill for homelab and small deployments
-
-**Talos extensions required:** None
-
-**When to consider:** Large clusters (10+ nodes) where you need enterprise storage features, multi-tenancy, or S3-compatible object storage.
-
-### Mayastor (OpenEBS) — Not Recommended
-
-[Mayastor](https://github.com/openebs/Mayastor) is a Rust-based storage engine using NVMe-oF for ultra-low latency. It is designed for bare-metal NVMe stacks, not virtualized environments like TrueNAS.
-
-**Why not recommended:** Mayastor expects direct access to NVMe devices. In a TrueNAS VM environment, your "disks" are virtual zvols — Mayastor adds NVMe-oF overhead on top of virtual block devices that are already managed by ZFS. The performance advantage it's designed for (kernel-bypass NVMe) doesn't apply here.
-
-**Cons:**
-- Designed for bare-metal NVMe, not virtual disks
-- Complex setup — requires Huge Pages, Pod Security patches, node labels
-- Requires disabling `nvme_tcp` module check (built into Talos kernel)
-- Smaller community than Longhorn or Ceph
-
----
-
-## Recommendation Matrix
-
-| Use Case | Recommended | Why |
-|---|---|---|
-| NAS-backed storage | `democratic-csi` | Dynamic provisioning, per-PV ZFS datasets, VolumeSnapshots, actively maintained |
-| Node-local replicated storage | Longhorn | Simple to operate, built-in replication and S3 backup, active CNCF project |
-| Distributed block/file/object | Rook/Ceph (not recommended) | Shards and replicates data across disks — redundant with ZFS RAID-Z. Fine to experiment with, but adds complexity for no benefit in this environment |
-
-**democratic-csi** is the best option when you want TrueNAS to manage your data — each PV gets its own ZFS dataset or zvol with full ZFS benefits (snapshots, replication, scrubbing). Use NFS mode for general workloads, iSCSI mode for databases.
-
-**Longhorn** is the best option when you want storage replicated across cluster nodes independent of the NAS. It adds write amplification on top of ZFS (virtual disks on virtual disks), but gives you node-level redundancy and doesn't depend on a single-maintainer CSI driver. Requires multi-disk VM support (see [backlog](backlog.md)).
-
-If neither works for your situation, manual NFS PVs (see above) are a zero-dependency fallback.
+See the [democratic-csi documentation](https://github.com/democratic-csi/democratic-csi) for setup instructions.
 
 ---
 
 ## Talos Extension Requirements
 
-| CSI Driver | Extensions Needed | Notes |
-|---|---|---|
-| NFS (any) | None | NFS client built into Talos kubelet image |
-| iSCSI (any) | `iscsi-tools` | Install via Talos system extension |
-| Longhorn | None | Uses standard Linux block devices |
-| Rook/Ceph | None | Uses standard Linux block devices |
-| Mayastor | None | Requires Huge Pages and kernel config |
+| Storage Option | Extensions Needed |
+|---|---|
+| Longhorn | None (uses standard block devices) |
+| democratic-csi (iSCSI) | `iscsi-tools` |
 
 ---
 
 ## Further Reading
 
-- [Siderolabs CSI Storage Guide](https://docs.siderolabs.com/kubernetes-guides/csi/storage) — Talos-specific CSI documentation
-- [democratic-csi](https://github.com/democratic-csi/democratic-csi) — TrueNAS-native CSI driver
-- [nfs-subdir-external-provisioner](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner) — Simple NFS dynamic provisioner
-- [Longhorn](https://longhorn.io/) — Kubernetes-native distributed block storage
-- [Rook/Ceph](https://rook.io/) — Enterprise distributed storage orchestrator
-- [Mayastor](https://openebs.io/docs/concepts/mayastor) — High-performance NVMe-oF storage
+- [Longhorn Talos Support](https://longhorn.io/docs/1.9.0/advanced-resources/os-distro-specific/talos-linux-support/) -- Longhorn on Talos Linux
+- [Siderolabs CSI Storage Guide](https://docs.siderolabs.com/kubernetes-guides/csi/storage) -- Talos-specific CSI documentation
+- [democratic-csi](https://github.com/democratic-csi/democratic-csi) -- TrueNAS-native CSI driver

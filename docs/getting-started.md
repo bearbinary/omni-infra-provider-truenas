@@ -280,8 +280,11 @@ spec:
       cpus: 2
       memory: 4096
       disk_size: 40
+      storage_disk_size: 100
 EOF
 ```
+
+> **What's `storage_disk_size`?** This adds a 100 GiB data disk to each worker VM for [Longhorn](https://longhorn.io/) persistent storage. Without it, your cluster won't have a StorageClass and PVCs will stay Pending. See the [Storage Guide](storage.md) for details.
 
 ### Create the Cluster in Omni
 
@@ -453,11 +456,9 @@ brew install helm  # or your OS equivalent
 | [Jellyfin](https://jellyfin.org/) | Media server | Helm chart available |
 
 ### Set Up Persistent Storage
-Your apps will need persistent storage for databases, file uploads, and configuration. The recommended driver is **[democratic-csi](https://github.com/democratic-csi/democratic-csi)** — it's purpose-built for TrueNAS and creates a separate ZFS dataset for each volume.
+Your apps will need persistent storage for databases, file uploads, and configuration. We recommend **[Longhorn](https://longhorn.io/)** -- it runs entirely inside your cluster with no TrueNAS dependency, provides block storage for better database performance, and is an active CNCF project. Add a data disk to your worker MachineClass (`storage_disk_size: 100`) and install Longhorn via Helm.
 
-The simplest starting option is **manual NFS** — create an NFS share on TrueNAS and point your pods at it. No extra drivers needed since Talos includes the NFS client out of the box.
-
-For the full comparison of storage options (democratic-csi, NFS, iSCSI, Longhorn), see the **[Storage Guide](storage.md)**.
+For setup steps and trade-offs, see the **[Storage Guide](storage.md)**.
 
 ### Clean Up
 To delete the test deployment:

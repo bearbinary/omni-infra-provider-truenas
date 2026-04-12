@@ -19,8 +19,6 @@ type ProviderConfig struct {
 	GracefulShutdownTimeout time.Duration // How long to wait for ACPI shutdown before force (default: 30s, 0=force immediately)
 	PollInterval            time.Duration // How often to poll VM state during graceful shutdown (default: 2s)
 	MaxErrorRecoveries      int           // Max consecutive ERROR state recoveries before deprovisioning a VM (default: 5, negative=disable)
-	AutoStorageEnabled      bool          // Deploy NFS provisioner + StorageClass by default (default: true)
-	NFSHost                 string        // TrueNAS IP for NFS mounts (defaults to TRUENAS_HOST)
 }
 
 // Provisioner implements the Omni provision.Provisioner interface for TrueNAS.
@@ -28,7 +26,6 @@ type Provisioner struct {
 	client   *client.Client
 	config   ProviderConfig
 	isoGroup singleflight.Group
-	nfsGroup singleflight.Group // Dedup concurrent NFS share creation per cluster
 
 	// Track active resources for cleanup
 	mu             sync.RWMutex
@@ -130,7 +127,6 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 		provision.NewStep("createSchematic", p.stepCreateSchematic),
 		provision.NewStep("uploadISO", p.stepUploadISO),
 		provision.NewStep("createVM", p.stepCreateVM),
-		provision.NewStep("configureStorage", p.stepConfigureStorage),
 		provision.NewStep("healthCheck", p.stepHealthCheck),
 	}
 }

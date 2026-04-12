@@ -135,9 +135,67 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
+      "title": "Singleton & Storage",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
+      "collapsed": false
+    },
+    {
+      "title": "Singleton Lease Refresh Errors",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 32 },
+      "targets": [
+        { "expr": "truenas_singleton_refresh_errors_total{job=~\"$job\"}", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 3 }] } }
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "textMode": "auto" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Singleton Takeovers",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 32 },
+      "targets": [
+        { "expr": "truenas_singleton_takeovers_total{job=~\"$job\"}", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }] } }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "NFS Shares Created",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 32 },
+      "targets": [
+        { "expr": "truenas_nfs_shares_created_total{job=~\"$job\"}", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue", "value": null }] } }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "Additional Data Disks",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 32 },
+      "targets": [
+        { "expr": "truenas_vms_additional_disks{job=~\"$job\"}", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue", "value": null }] } }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
       "title": "ISO Management",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
       "collapsed": false
     },
     {

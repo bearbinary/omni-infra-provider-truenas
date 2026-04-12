@@ -485,6 +485,10 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		)
 	}
 
+	if telemetry.AdditionalDisksTotal != nil && len(data.AdditionalDisks) > 0 {
+		telemetry.AdditionalDisksTotal.Record(ctx, int64(len(data.AdditionalDisks)))
+	}
+
 	// Attach primary NIC with a deterministic MAC derived from the request ID.
 	// This ensures the MAC survives reprovisioning, so DHCP reservations stay valid.
 	// Collision detection is scoped to the same network segment (bridge/VLAN) because
@@ -539,32 +543,32 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			MTU:              nic.MTU,
 		}
 
-		if nic.DeterministicMAC {
-			nicMAC := DeterministicMAC(requestID, i+1)
+		// Always assign a deterministic MAC — matches primary NIC behavior so
+		// DHCP reservations survive reprovisioning on every interface.
+		nicMAC := DeterministicMAC(requestID, i+1)
 
-			nicSegmentMACs, segErr := p.client.NICMACsOnSegment(ctx, nic.NetworkInterface)
-			if segErr != nil {
-				logger.Warn("could not query segment MACs for collision detection — proceeding without",
+		nicSegmentMACs, segErr := p.client.NICMACsOnSegment(ctx, nic.NetworkInterface)
+		if segErr != nil {
+			logger.Warn("could not query segment MACs for collision detection — proceeding without",
+				zap.String("network_interface", nic.NetworkInterface),
+				zap.Error(segErr),
+			)
+		} else {
+			resolved, nicCollided := ResolveDeterministicMAC(requestID, i+1, nicSegmentMACs)
+			if nicCollided {
+				logger.Warn("deterministic MAC collision on segment — resolved with alternate hash",
+					zap.Int("index", i),
+					zap.String("original_mac", nicMAC),
+					zap.String("resolved_mac", resolved),
 					zap.String("network_interface", nic.NetworkInterface),
-					zap.Error(segErr),
+					zap.String("vm_name", vmName),
 				)
-			} else {
-				resolved, nicCollided := ResolveDeterministicMAC(requestID, i+1, nicSegmentMACs)
-				if nicCollided {
-					logger.Warn("deterministic MAC collision on segment — resolved with alternate hash",
-						zap.Int("index", i),
-						zap.String("original_mac", nicMAC),
-						zap.String("resolved_mac", resolved),
-						zap.String("network_interface", nic.NetworkInterface),
-						zap.String("vm_name", vmName),
-					)
-				}
-
-				nicMAC = resolved
 			}
 
-			nicCfg.MAC = nicMAC
+			nicMAC = resolved
 		}
+
+		nicCfg.MAC = nicMAC
 
 		dev, nicErr := p.client.AddNICWithConfig(ctx, vm.ID, nicCfg, 2002+i)
 		if nicErr != nil {

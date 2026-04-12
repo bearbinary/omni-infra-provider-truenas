@@ -80,6 +80,14 @@ var (
 
 	// Deprovision step durations
 	DeprovisionStepDuration metric.Float64Histogram
+
+	// Singleton lease
+	SingletonLeaseHeld     metric.Int64Gauge
+	SingletonRefreshErrors metric.Int64Counter
+	SingletonTakeovers     metric.Int64Counter
+
+	// Storage disks
+	AdditionalDisksTotal metric.Int64Gauge
 )
 
 func initMetrics() {
@@ -204,5 +212,21 @@ func initMetrics() {
 	)
 	HostVMsRunning, _ = meter.Int64Gauge("truenas.host.vms_running",
 		metric.WithDescription("Number of running VMs"),
+	)
+
+	// Singleton lease
+	SingletonLeaseHeld, _ = meter.Int64Gauge("truenas.singleton.lease_held",
+		metric.WithDescription("Whether this instance holds the singleton lease (1=held, 0=not held)"),
+	)
+	SingletonRefreshErrors, _ = meter.Int64Counter("truenas.singleton.refresh_errors",
+		metric.WithDescription("Total singleton lease refresh failures"),
+	)
+	SingletonTakeovers, _ = meter.Int64Counter("truenas.singleton.takeovers",
+		metric.WithDescription("Total singleton lease takeovers (stale lease acquired from another instance)"),
+	)
+
+	// Storage disks
+	AdditionalDisksTotal, _ = meter.Int64Gauge("truenas.vms.additional_disks",
+		metric.WithDescription("Total additional data disks across all provisioned VMs"),
 	)
 }

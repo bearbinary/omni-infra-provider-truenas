@@ -15,7 +15,13 @@ make test        # quick
 make test-v      # verbose
 ```
 
-147 tests covering the TrueNAS API client, provisioner, cleanup, and telemetry: VM CRUD, device attachment, storage operations, error handling, SHA-256 dedup logic, rate limiting, reconnect, chaos testing, and full E2E flows.
+Unit tests cover the TrueNAS API client, provisioner, cleanup, telemetry, and
+the singleton lease package: VM CRUD, device attachment, storage operations,
+error handling, SHA-256 dedup logic, rate limiting, reconnect, chaos testing,
+singleton lease acquire/refresh/steal/release, and full E2E flows. The
+singleton tests run against an in-memory cosi-runtime state with an
+error-injecting wrapper (`flakyState`) for exercising the refresh loop's
+transient-error recovery and abandonment thresholds.
 
 ---
 

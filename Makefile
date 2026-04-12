@@ -16,6 +16,9 @@ test-v:
 test-integration:  ## Run client integration tests against a real TrueNAS
 	go test -tags=integration ./internal/client/... -v -count=1 -timeout=120s
 
+test-singleton:  ## Run singleton integration tests against a real Omni (requires OMNI_ENDPOINT + OMNI_SERVICE_ACCOUNT_KEY)
+	go test -v -count=1 -timeout=120s -run "TestIntegration_" ./internal/singleton/
+
 test-e2e:  ## Run all integration + cleanup tests against a real TrueNAS
 	go test -tags=integration ./internal/... -v -count=1 -timeout=300s -p 1
 

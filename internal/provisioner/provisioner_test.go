@@ -94,13 +94,12 @@ func TestProvisionSteps_ReturnsCorrectSteps(t *testing.T) {
 	p := NewProvisioner(nil, ProviderConfig{DefaultPool: "tank"})
 	steps := p.ProvisionSteps()
 
-	assert.Len(t, steps, 5, "should return exactly 5 provision steps")
+	assert.Len(t, steps, 4, "should return exactly 4 provision steps")
 
 	expectedNames := []string{
 		"createSchematic",
 		"uploadISO",
 		"createVM",
-		"configureStorage",
 		"healthCheck",
 	}
 

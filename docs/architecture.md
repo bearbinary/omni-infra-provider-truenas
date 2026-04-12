@@ -31,7 +31,7 @@ flowchart LR
 
     subgraph Core["internal/"]
         Client[client/<br/>JSON-RPC 2.0 transport<br/>VM · Device · Storage ops]
-        Provisioner[provisioner/<br/>3 provision steps<br/>+ deprovision]
+        Provisioner[provisioner/<br/>4 provision steps<br/>+ deprovision]
         Cleanup[cleanup/<br/>stale ISO · orphan VM<br/>background cleanup]
         Resources[resources/<br/>COSI typed resources]
         Telemetry[telemetry/<br/>OTel · metrics]
@@ -137,6 +137,53 @@ flowchart TD
     NIC -->|no| Warn[Log warning: MachineClass must specify network_interface]
     Warn --> Ready
 ```
+
+## Singleton Enforcement
+
+The provider is stateless and the Omni SDK does not elect a leader across
+instances with the same `PROVIDER_ID` — every process that registers sees
+every `MachineRequest` and would race on VM/zvol/ISO operations. To prevent
+this, the provider claims a lease on the `infra.ProviderStatus` resource via
+two metadata annotations:
+
+- `bearbinary.com/singleton-instance-id` — UUID generated per process start
+- `bearbinary.com/singleton-heartbeat` — RFC3339 timestamp refreshed on a
+  configurable interval (default 15s)
+
+These annotations survive the SDK's own `ProviderStatus` update because the
+SDK only rewrites the `.Value` field of the spec, leaving metadata alone.
+
+```mermaid
+sequenceDiagram
+    participant A as Instance A<br/>(existing)
+    participant S as Omni State<br/>(ProviderStatus)
+    participant B as Instance B<br/>(new)
+
+    A->>S: Acquire: Create + annotations
+    loop every RefreshInterval
+        A->>S: CAS-update heartbeat
+    end
+
+    B->>S: Acquire: Get ProviderStatus
+    S-->>B: Fresh heartbeat owned by A
+    B--xB: Exit non-zero<br/>(LeaseHeldError)
+
+    Note over A: SIGTERM received
+    A->>S: Release: clear annotations
+    A-->>A: Process exits
+
+    B->>S: Retry on restart: Acquire
+    S-->>B: Unclaimed
+    B->>S: CAS-update with B's id
+    Note over B: Takes over as leader
+```
+
+If the current leader is killed ungracefully (`kill -9`), its heartbeat goes
+stale after `PROVIDER_SINGLETON_STALE_AFTER` (default 45s). The next instance
+that tries to acquire sees the stale heartbeat and takes over.
+
+The feature is on by default and can be disabled via
+`PROVIDER_SINGLETON_ENABLED=false` for debugging or advanced sharding setups.
 
 ## Background Cleanup
 

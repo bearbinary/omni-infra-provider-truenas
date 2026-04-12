@@ -9,13 +9,13 @@ Tracked improvements for future releases.
 - **Error Reporting** — User-friendly error messages for Omni UI (v0.4.0)
 - **Rate Limiting** — Semaphore-based API call limiter (v0.5.0)
 - **Resource Pre-checks** — Pool free space check before zvol creation (v0.5.0)
-- **Disk Resize** — Online zvol grow when MachineClass disk_size increases (v0.6.0)
+- **Disk Resize** — Online zvol grows when MachineClass disk_size increases (v0.6.0)
 - **Comprehensive QA** — 147 tests: e2e, contract, chaos, stress, telemetry integration (v0.7.0)
 - **NVRAM Firmware Recovery** — Auto-detect ERROR state VMs, reset NVRAM, restart (v0.8.0)
 - **Host Health Monitoring** — OTEL gauges for CPU, memory, pool space/health, disks, running VMs (v0.9.0)
-- **Automatic Pool Selection** — Select healthy pool with most free space when not explicit (v0.9.0)
+- **Automatic Pool Selection** — Select a healthy pool with most free space when not explicit (v0.9.0)
 - **Prometheus Alerting Rules** — 7 rules: VM errors, API latency, pool space/health, provision speed (v0.9.0)
-- **Grafana Dashboard** — Pre-built dashboard auto-loaded with all provider metrics (v0.9.0)
+- **Grafana Dashboard** — Pre-built dashboard autoloaded with all provider metrics (v0.9.0)
 - **VM Resource Monitoring** — Per-VM runtime stats via host monitor (v0.9.0)
 - **Docker Image Signing + SBOM** — Cosign keyless signing + SPDX SBOM on every release (v0.9.1)
 - **ZFS Encryption at Rest** — AES-256-GCM encrypted zvols with auto-unlock on reboot (v0.10.0)
@@ -23,15 +23,15 @@ Tracked improvements for future releases.
 - **Multiple Pool Support** — Per-machine pool selection via `pool` field in MachineClass config, with docs and tests (v0.10.0)
 - **CSI Storage Guide** — NFS, iSCSI, democratic-csi, and node-local storage comparison ([docs/storage.md](storage.md)) (v0.10.0)
 - **Zvol Tagging** — All provider-managed zvols tagged with `org.omni:managed`, `org.omni:provider`, `org.omni:request-id` (v0.10.0)
-- **Pool Validation** — Clear error messages when pool doesn't exist or dataset path used instead of pool name (v0.11.0)
+- **Pool Validation** — Clear error messages when pool doesn't exist or a dataset path used instead of pool name (v0.11.0)
 - **MAC Address Logging** — VM NIC MAC logged for DHCP reservation setup (v0.11.0)
 - **Networking Guide** — Complete docs for UniFi, pfSense, OPNsense, Mikrotik, MetalLB, VIP, DHCP reservations ([docs/networking.md](networking.md)) (v0.11.0)
-- **Control Plane VIP** — Documented as Omni config patch in [networking guide](networking.md) (v0.11.0)
+- **Control Plane VIP** — Documented as an Omni config patch in [networking guide](networking.md) (v0.11.0)
 - **Static IP / DHCP Reservations** — Documented router-side DHCP reservation workflow for all platforms (v0.11.0)
 - **Multiple NIC Support** — Additional NICs via `additional_nics` in MachineClass config (v0.11.0, VLAN attr removed in v0.12.0 — TrueNAS 25.10 rejects VM-level tagging)
 - **Memory Overcommit Pre-Check** — Blocks VMs requesting >80% of host RAM (v0.12.0)
 - **Machine UUID / Infra ID** — Provider-generated SMBIOS UUID v7 passed to `vm.create` for Omni correlation. Fixes ghost "Provisioned/Waiting" entries (v0.12.0)
-- **TrueNAS Version Check** — Fails at startup on SCALE < 25.04 with clear error (v0.12.0)
+- **TrueNAS Version Check** — Fails at startup on SCALE < 25.04 with a clear error (v0.12.0)
 - **Graceful VM Shutdown** — ACPI signal with configurable timeout before force-stop (v0.12.0)
 - **Advertised Subnets Config Patch** — Generates Talos config patches for multi-NIC etcd/kubelet pinning. Auto-detects primary NIC subnet when not explicitly set (v0.12.0)
 - **HTTP Health Endpoint** — `/healthz` and `/readyz` on port 8081 for proper K8s probes (v0.12.0)
@@ -44,10 +44,19 @@ Tracked improvements for future releases.
 - **Additional Disk Support** — Multi-disk VMs via `additional_disks` in MachineClass config. Per-disk pool and encryption. Prerequisite for Longhorn (v0.13.0)
 - **Disk Resize for Additional Disks** — Additional disks resize on re-provision when config size increases, matching root disk behavior (v0.13.0)
 - **Additional Disk Integration Tests** — 8 integration tests: multi-disk create/attach, deprovision cleanup, non-existent pool, encrypted lifecycle, dataset prefix hierarchy, resize grow/no-shrink, pool space check (v0.13.0)
-- **MTU / Jumbo Frames** — Optional `mtu` field on `additional_nics`, passed to TrueNAS and applied as Talos config patch via MAC-based matching (v0.13.0)
-- **Deterministic MAC Addresses** — Primary NIC always gets a deterministic MAC derived from request ID. Additional NICs opt in via `deterministic_mac`. DHCP reservations survive reprovision (v0.13.0)
+- **MTU / Jumbo Frames** — Optional `mtu` field on `additional_nics`, passed to TrueNAS and applied as a Talos config patch via MAC-based matching (v0.13.0)
+- **Deterministic MAC Addresses** — All NICs (primary and additional) get a deterministic MAC derived from the machine request ID. DHCP reservations survive reprovision on every interface (v0.13.0, per-NIC `deterministic_mac` opt-in removed in favor of always-on)
 - **Node Auto-Replace Circuit Breaker** — VMs stuck in ERROR state auto-deprovisioned after `MAX_ERROR_RECOVERIES` (default 5) consecutive failures. Counter resets on RUNNING (v0.13.0)
 - **Backup Guide** — Control plane backup via Omni, workload/PVC backup via Velero ([docs/backup.md](backup.md)) (v0.13.0)
+- **Auto NFS Storage** — New `configureStorage` provision step creates a per-cluster NFS share on TrueNAS and injects a Talos config patch with `nfs-subdir-external-provisioner` + default `StorageClass`. Opt-in via `auto_storage: true` (MachineClass) or `AUTO_STORAGE_ENABLED=true` (global, default: false). NFS shares created with `maproot_user=root` to avoid root squashing. NFS server IP auto-detected from TrueNAS interface or set via `NFS_HOST`. See [docs/storage.md](storage.md) for NFS vs Longhorn trade-offs (v0.13.0)
+- **Per-Disk Dataset Prefix** — `additional_disks[].dataset_prefix` overrides the MachineClass-level `dataset_prefix` per disk, enabling different dataset hierarchies per pool (e.g. `etcd-data` on SSD, `bulk` on HDD) (v0.13.0)
+- **Helm Chart** — `deploy/helm/omni-infra-provider-truenas/` for deploying the provider as a Kubernetes workload (remote WebSocket). Supports `existingSecret` for pre-created credentials; configurable via `values.yaml` or `--set`
+- **Singleton Enforcement** — Distributed lease on `infra.ProviderStatus` annotations prevents two instances with the same `PROVIDER_ID` from racing on VM/zvol/ISO operations. The Omni SDK has no built-in leader election, so two instances would both receive every `MachineRequest` and execute provisioning steps concurrently. The lease: fail-fast on conflict with clear error (names the conflicting instance-id + heartbeat age), stale-heartbeat takeover after `PROVIDER_SINGLETON_STALE_AFTER` (default 45s), SIGTERM release for fast successor handoff, refresh-loop abandonment after `maxConsecutiveRefreshErrors` consecutive failures (cancels root ctx). Opt-out via `PROVIDER_SINGLETON_ENABLED=false`. New package `internal/singleton/` with 16 unit tests including concurrent acquire, transient-error recovery, abandonment, stale boundary, and steal detection (90.9% statement coverage). Helm chart already uses `strategy.type=Recreate` so rolling-deploy overlap is a non-issue there. See `docs/architecture.md#singleton-enforcement`, `docs/troubleshooting.md`, `docs/upgrading.md` (unreleased)
+- **Storage Default Flip & Longhorn Recommendation** — Auto NFS storage now defaults to off (`AUTO_STORAGE_ENABLED=false`). Longhorn is the recommended storage solution. New `storage_disk_size` convenience field in MachineClass schema adds a data disk when `auto_storage: true` — simplifies the Omni UI to a single integer instead of a nested `additional_disks` array. All example MachineClasses in docs updated to include `storage_disk_size: 100` on workers. Storage guide ([docs/storage.md](storage.md)) rewritten with Longhorn-first decision matrix, NFS incompatibility list (10 systems: PostgreSQL, Elasticsearch, Redis, MongoDB, OpenBao, etcd, Loki, Prometheus, MySQL, CockroachDB), and infrastructure scenarios where NFS fails (unreleased)
+- **NFS Permission Fix** — NFS shares now created with `maproot_user=root, maproot_group=root` and dataset permissions set to 777 via `filesystem.setperm`. Fixes `permission denied` when nfs-subdir-external-provisioner tried to create PV subdirectories (root squashing blocked writes). New `SetDatasetPermissions` client method. Tests for both (unreleased)
+- **Longhorn Install Script** — `scripts/install-longhorn.sh <cluster>` one-command Longhorn setup: applies Talos config patch via omnictl, Helm installs Longhorn, sets default StorageClass, verifies with test PVC. Idempotent (detects existing installs). `scripts/test-storage.sh` validates NFS storage with 8 automated tests (unreleased)
+- **Helm Chart: Auto Storage Config** — `autoStorage.enabled` and `autoStorage.nfsHost` added to Helm values + configmap template (unreleased)
+- **Velero CSI Snapshots & DR Runbook** — Extended [backup guide](backup.md) with Velero CSI snapshot integration (Longhorn + democratic-csi VolumeSnapshotClass setup, `--features=EnableCSI`, data movement to S3) and 5 disaster recovery scenarios (single node failure, control plane loss, total cluster loss, data corruption, NFS outage) with step-by-step procedures and recovery time expectations. User-configured — not provider-automated (unreleased)
 
 ## Upstream Issues
 
@@ -55,24 +64,6 @@ Tracked improvements for future releases.
 - **Teardown stuck when machine never joined Omni** — SDK's `reconcileTearingDown` never calls `Deprovision` if machine state was destroyed before the check. Filed: [siderolabs/omni#2642](https://github.com/siderolabs/omni/issues/2642)
 - **Provision steps not re-run on Talos upgrade** — SDK returns early for `PROVISIONED` machines, so upgrade hooks (CDROM swap) never fire. Filed: [siderolabs/omni#2646](https://github.com/siderolabs/omni/issues/2646)
 - **Pressure-based autoscaling patterns** — Discussion on how infra providers should handle autoscaling. [siderolabs/omni#2647](https://github.com/siderolabs/omni/discussions/2647)
-
----
-
-## Storage Integration
-
-### CSI Storage Auto-Configuration
-Auto-configure persistent storage for provisioned clusters via Omni config patches. The recommended driver is **democratic-csi** (actively maintained, single-maintainer). See [Storage Guide](storage.md) for driver comparison and maintenance status.
-
-> **Note:** democratic-csi's API-based drivers use the TrueNAS REST v2.0 API, while SCALE 25.04+ uses JSON-RPC internally. The SSH-based drivers (which execute ZFS commands directly) are unaffected. Verify REST API compatibility on your version before choosing API-based drivers.
-
-Implementation:
-- For democratic-csi NFS mode: auto-create NFS share on TrueNAS, generate Helm values, inject as cluster config patch
-- For democratic-csi iSCSI mode: auto-enable iSCSI service, include `iscsi-tools` Talos extension in machine config
-- Configure a default StorageClass so PVCs work out of the box
-- Fallback: manual NFS PVs (documented in [Storage Guide](storage.md#manual-nfs-pvs-fallback)) require no auto-configuration
-
-### Longhorn Support
-Now that multi-disk VM support has landed (v0.13.0), document and test Longhorn deployment on TrueNAS-hosted clusters. Longhorn requires additional virtual disks attached to worker nodes for its storage pool. See [Storage Guide](storage.md) for trade-offs vs democratic-csi.
 
 ---
 
@@ -89,27 +80,24 @@ The SDK's `reconcileTearingDown` never calls `Deprovision` if machine state was 
 
 ---
 
-## CI/CD & Release
-
-### Nightly Cassette Drift Detection
-Connect the TrueNAS box to GitHub Actions via Tailscale or Cloudflare Tunnel so the nightly E2E workflow can re-record cassettes from live TrueNAS and detect API drift automatically. Opens an issue when cassette responses differ from what's committed.
-
-### Velero CSI Snapshots
-Extend the [backup guide](backup.md) with Velero CSI snapshot integration. Any CSI driver that implements the Kubernetes `VolumeSnapshot` API can use this — for TrueNAS-backed storage, that means democratic-csi. This would allow Velero to take ZFS-native snapshots of PVs via the CSI snapshot API instead of file-system-level copies, improving backup speed and consistency for large volumes.
-
-### ~~Helm Chart~~ (Done)
-Helm chart in `deploy/helm/omni-infra-provider-truenas/` for deploying the provider as a Kubernetes workload (connecting to TrueNAS remotely via WebSocket). Supports `existingSecret` for pre-created credentials, configurable via `values.yaml` or `--set` flags.
-
----
-## Future Work
 ### Automatic Autoscaling Setup
 Guide and tooling for pressure-based autoscaling of TrueNAS-provisioned clusters. Uses the [Kubernetes Cluster Autoscaler](https://github.com/kubernetes/autoscaler) with a generic gRPC autoscaler that adds/removes nodes from an Omni MachineSet based on cluster pressure and resource usage. See proof-of-concept: [rothgar/omni-node-autoscaler](https://github.com/rothgar/omni-node-autoscaler). Upstream discussion: [siderolabs/omni#2647 (comment)](https://github.com/siderolabs/omni/discussions/2647#discussioncomment-16508705).
 
 Implementation:
 - Document how to deploy the Cluster Autoscaler + gRPC autoscaler alongside TrueNAS-provisioned clusters
-- Provide example Omni MachineSet and autoscaler config tuned for homelab scale (conservative scale-down delays, min/max node counts)
+- Provide an example Omni MachineSet and autoscaler config tuned for a homelab scale (conservative scale-down delays, min/max node counts)
 - Test with this provider to validate the full loop: pressure → gRPC autoscaler → Omni MachineSet resize → provider provisions/deprovisions VM
 - Consider shipping a Helm values template or config patch that wires up the autoscaler with sensible defaults
+
+---
+
+## CI/CD & Release
+
+### Nightly Cassette Drift Detection
+Connect the TrueNAS box to GitHub Actions via Tailscale or Cloudflare Tunnel so the nightly E2E workflow can re-record cassettes from live TrueNAS and detect API drift automatically.
+Opens an issue when cassette responses differ from what's committed.
+
+---
 
 ## Might Implement
 

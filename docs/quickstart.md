@@ -136,4 +136,5 @@ These fields go in the MachineClass `configpatch`:
 | `network_interface` | string | Yes | — | Bridge, VLAN, or physical interface |
 | `type` | string | No | `VIRTIO` | `VIRTIO` or `E1000` |
 | `mtu` | int | No | host default | MTU size (set to `9000` for jumbo frames) |
-| `deterministic_mac` | bool | No | `false` | Derive a stable MAC from machine request ID |
+
+All NICs (primary and additional) get a deterministic MAC derived from the machine request ID, so DHCP reservations survive reprovisioning.

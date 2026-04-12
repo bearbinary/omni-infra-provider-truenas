@@ -50,11 +50,18 @@ func (c *Client) AddCDROM(ctx context.Context, vmID int, isoPath string) (*Devic
 }
 
 // NICConfig describes a NIC to attach to a VM.
+//
+// MTU intentionally lives on this struct but is NEVER passed to TrueNAS —
+// TrueNAS 25.10's `vm.device.create` rejects it with "Extra inputs are not
+// permitted". MTU is instead applied inside the guest via the Talos machine
+// config patch emitted by buildMTUPatch (MAC-matched interface selector).
+// The field is kept here so the provisioner can thread the desired MTU
+// through to the patch builder without a parallel parameter.
 type NICConfig struct {
 	NetworkInterface    string `json:"network_interface" yaml:"network_interface"`                               // Bridge, VLAN, or physical interface
 	Type                string `json:"type,omitempty" yaml:"type,omitempty"`                                     // VIRTIO (default) or E1000
 	MAC                 string `json:"mac,omitempty" yaml:"mac,omitempty"`                                       // Explicit MAC address (empty = TrueNAS auto-generates)
-	MTU                 int    `json:"mtu,omitempty" yaml:"mtu,omitempty"`                                       // MTU size (0 = host default)
+	MTU                 int    `json:"mtu,omitempty" yaml:"mtu,omitempty"`                                       // MTU size — guest-side only, not sent to TrueNAS
 	TrustGuestRxFilters bool   `json:"trust_guest_rx_filters,omitempty" yaml:"trust_guest_rx_filters,omitempty"` // Enable for promiscuous mode (required for nested VLAN tagging)
 }
 
@@ -84,9 +91,9 @@ func (c *Client) AddNICWithConfig(ctx context.Context, vmID int, cfg NICConfig, 
 		"nic_attach": cfg.NetworkInterface,
 	}
 
-	if cfg.MTU > 0 {
-		attrs["mtu"] = cfg.MTU
-	}
+	// MTU is deliberately omitted: TrueNAS 25.10 rejects it on vm.device.create
+	// ("Extra inputs are not permitted"). MTU is applied inside the guest via
+	// a Talos config patch matched on this NIC's MAC address — see buildMTUPatch.
 
 	if cfg.MAC != "" {
 		attrs["mac"] = cfg.MAC

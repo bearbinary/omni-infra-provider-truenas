@@ -20,7 +20,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/bearbinary/omni-infra-provider-truenas?style=flat&color=blue)](https://github.com/bearbinary/omni-infra-provider-truenas/releases/latest)
 [![Docker Image](https://img.shields.io/badge/ghcr.io-omni--infra--provider--truenas-blue?logo=docker&logoColor=white)](https://ghcr.io/bearbinary/omni-infra-provider-truenas)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=bearbinary_omni-infra-provider-truenas&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=bearbinary_omni-infra-provider-truenas)
-[![Tests](https://img.shields.io/badge/tests-147-brightgreen?logo=testcafe&logoColor=white)](docs/testing.md)
+[![Tests](https://img.shields.io/badge/tests-572-brightgreen?logo=testcafe&logoColor=white)](docs/testing.md)
 
 <br />
 
@@ -55,6 +55,7 @@
 - **Multi-arch support** — `amd64` and `arm64` VM images via [Talos Image Factory](https://factory.talos.dev/)
 - **Flexible networking** — bridges, VLANs, or physical NICs
 - **Startup health checks** — validates pool, NIC, and API connectivity before accepting work
+- **Persistent storage** — Longhorn-ready with dedicated data disks (`storage_disk_size`). See [storage guide](docs/storage.md)
 - **Background cleanup** — automatically removes stale ISOs and orphan VMs/zvols
 - **OpenTelemetry observability** — traces, metrics, and profiling (optional)
 
@@ -193,6 +194,7 @@ All configuration is via environment variables. A `.env` file is loaded automati
 | `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `TRUENAS_MAX_CONCURRENT_CALLS` | `8` | Max concurrent JSON-RPC calls to TrueNAS |
 | `GRACEFUL_SHUTDOWN_TIMEOUT` | `30` | Seconds to wait for ACPI shutdown before force-stop on deprovision |
+| `MAX_ERROR_RECOVERIES` | `5` | Max consecutive ERROR recoveries before auto-replacing a VM (`-1` to disable) |
 | `HEALTH_LISTEN_ADDR` | `:8081` | Address for the HTTP health endpoint (`/healthz`, `/readyz`) |
 
 ### Provider Identity (Optional)
@@ -203,6 +205,18 @@ All configuration is via environment variables. A `.env` file is loaded automati
 | `PROVIDER_NAME` | `TrueNAS` | Display name in Omni UI |
 | `PROVIDER_DESCRIPTION` | `TrueNAS SCALE infrastructure provider` | Description in Omni UI |
 | `OMNI_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for Omni connection |
+
+### Singleton Enforcement (Optional)
+
+Prevents two processes with the same `PROVIDER_ID` from racing on VM/zvol/ISO
+operations. On by default; see [`docs/architecture.md`](docs/architecture.md#singleton-enforcement)
+and [`docs/troubleshooting.md`](docs/troubleshooting.md#singleton-lease-acquire-failed--another-provider-instance-holds-the-singleton-lease).
+
+| Variable | Default | Description |
+|---|---|---|
+| `PROVIDER_SINGLETON_ENABLED` | `true` | Claim a distributed lease on startup; fail fast if another instance holds it |
+| `PROVIDER_SINGLETON_REFRESH_INTERVAL` | `15s` | How often to refresh the lease heartbeat |
+| `PROVIDER_SINGLETON_STALE_AFTER` | `45s` | Heartbeat age at which another instance may take over (must be `>= 2x` refresh) |
 
 ### Observability (Optional)
 
@@ -294,7 +308,7 @@ spec:
       pool: "fast-nvme"
 EOF
 
-# Workers on bulk HDD pool
+# Workers on bulk HDD pool (with storage disk for Longhorn)
 cat <<'EOF' | omnictl apply -f -
 metadata:
   namespace: default
@@ -310,6 +324,7 @@ spec:
       memory: 8192
       disk_size: 100
       pool: "bulk-hdd"
+      storage_disk_size: 100
 EOF
 ```
 
@@ -341,7 +356,9 @@ These fields go in the MachineClass `configpatch` (CLI) or the provider config f
 | `advertised_subnets` | string | No | — | Comma-separated CIDRs to pin etcd/kubelet (required for multi-NIC) |
 | `encrypted` | bool | No | `false` | Enable ZFS AES-256-GCM encryption (passphrase auto-generated per zvol) |
 | `extensions` | list | No | — | Additional Talos extensions (merged with defaults) |
-| `additional_nics` | list | No | — | Extra NICs for network segmentation (see schema for format) |
+| `additional_disks` | list | No | — | Extra data disks beyond root (each: `size` required, optional `pool`, `dataset_prefix`, `encrypted`) |
+| `additional_nics` | list | No | — | Extra NICs for network segmentation (each: `network_interface` required, optional `type`, `mtu`) |
+| `storage_disk_size` | int | No | — | Dedicated data disk (GiB) for Longhorn persistent storage |
 
 #### Understanding `pool` vs `dataset_prefix`
 
@@ -392,7 +409,7 @@ This creates VMs at `default/previewk8/omni-vms/...` — right alongside your ex
 Every VM automatically includes these extensions:
 
 - `siderolabs/qemu-guest-agent` — hypervisor-to-guest communication
-- `siderolabs/nfs-utils` — NFS client support
+- `siderolabs/nfs-utils` — NFS client support (for manual NFS mounts or democratic-csi)
 - `siderolabs/util-linux-tools` — mount/block device operations
 
 Add more via the `extensions` field in MachineClass config:
@@ -425,11 +442,17 @@ internal/
 │   └── jsonrpc.go              # JSON-RPC 2.0 protocol implementation
 ├── provisioner/
 │   ├── provisioner.go          # Provisioner struct, infra.Provisioner interface
-│   ├── steps.go                # 3 provision steps (schematic → ISO → VM)
+│   ├── steps.go                # 4 provision steps (schematic → ISO → VM → health)
 │   ├── deprovision.go          # VM teardown and cleanup
-│   └── data.go                 # MachineClass config parsing
+│   └── data.go                 # MachineClass config parsing + validation
+├── singleton/
+│   └── singleton.go            # Distributed lease preventing duplicate instances
 ├── cleanup/
 │   └── cleanup.go              # Background stale ISO / orphan VM cleanup
+├── health/
+│   └── health.go               # HTTP health endpoint (/healthz, /readyz)
+├── monitor/
+│   └── monitor.go              # Host health monitoring (OTEL gauges)
 ├── resources/
 │   ├── machine.go              # COSI Machine typed resource
 │   └── meta/meta.go            # Provider ID constant
@@ -454,6 +477,7 @@ flowchart LR
     A[MachineRequest] --> B["createSchematic\n\nGenerate Talos image\nschematic with extensions"]
     B --> C["uploadISO\n\nDownload from Image Factory\nSHA-256 dedup · upload to pool"]
     C --> D["createVM\n\nCreate zvol · create VM\nattach devices · start + poll"]
+    D --> E["healthCheck\n\nVerify VM exists\non TrueNAS"]
 ```
 
 ---
@@ -465,7 +489,7 @@ All Docker images are signed with [cosign](https://docs.sigstore.dev/cosign/over
 ### Verify Docker Image
 
 ```bash
-cosign verify --certificate-identity-regexp="https://github.com/bearbinary/omni-infra-provider-truenas" --certificate-oidc-issuer="https://token.actions.githubusercontent.com" ghcr.io/bearbinary/omni-infra-provider-truenas:v0.9.2
+cosign verify --certificate-identity-regexp="https://github.com/bearbinary/omni-infra-provider-truenas" --certificate-oidc-issuer="https://token.actions.githubusercontent.com" ghcr.io/bearbinary/omni-infra-provider-truenas:v0.13.0
 ```
 
 ### Verify Binary
@@ -495,7 +519,7 @@ make generate           # Regenerate protobuf from specs.proto
 
 Integration and E2E tests require a real TrueNAS SCALE instance. See [`docs/testing.md`](docs/testing.md) for setup instructions.
 
-For detailed system design, see [`docs/architecture.md`](docs/architecture.md). For networking (bridges, DHCP, MetalLB, VIP, UniFi), see [`docs/networking.md`](docs/networking.md). For storage (NFS, iSCSI, CSI), see [`docs/storage.md`](docs/storage.md). For common issues, see [`docs/troubleshooting.md`](docs/troubleshooting.md). For version upgrades, see [`docs/upgrading.md`](docs/upgrading.md).
+For detailed system design, see [`docs/architecture.md`](docs/architecture.md). For networking (bridges, DHCP, MetalLB, VIP, UniFi), see [`docs/networking.md`](docs/networking.md). For persistent storage (Longhorn setup), see [`docs/storage.md`](docs/storage.md). For common issues, see [`docs/troubleshooting.md`](docs/troubleshooting.md). For version upgrades, see [`docs/upgrading.md`](docs/upgrading.md).
 
 ### Binary Releases
 

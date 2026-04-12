@@ -201,6 +201,47 @@ func TestData_EmptyAdditionalDisks(t *testing.T) {
 	assert.Nil(t, d.AdditionalDisks)
 }
 
+func TestStorageDiskSize_ExpandsToAdditionalDisk(t *testing.T) {
+	t.Parallel()
+
+	cfg := ProviderConfig{DefaultPool: "tank", DefaultNetworkInterface: "br0"}
+
+	d := Data{StorageDiskSize: 100}
+	d.ApplyDefaults(cfg)
+
+	assert.Len(t, d.AdditionalDisks, 1)
+	assert.Equal(t, 100, d.AdditionalDisks[0].Size)
+	assert.Equal(t, 0, d.StorageDiskSize, "should be zeroed after expansion")
+}
+
+func TestStorageDiskSize_PrependsToExistingDisks(t *testing.T) {
+	t.Parallel()
+
+	cfg := ProviderConfig{DefaultPool: "tank", DefaultNetworkInterface: "br0"}
+
+	d := Data{
+		StorageDiskSize: 50,
+		AdditionalDisks: []AdditionalDisk{{Size: 200, Pool: "hdd"}},
+	}
+	d.ApplyDefaults(cfg)
+
+	assert.Len(t, d.AdditionalDisks, 2)
+	assert.Equal(t, 50, d.AdditionalDisks[0].Size, "storage disk should be first")
+	assert.Equal(t, 200, d.AdditionalDisks[1].Size, "existing disk should be second")
+	assert.Equal(t, "hdd", d.AdditionalDisks[1].Pool, "existing disk pool preserved")
+}
+
+func TestStorageDiskSize_ZeroDoesNotExpand(t *testing.T) {
+	t.Parallel()
+
+	cfg := ProviderConfig{DefaultPool: "tank", DefaultNetworkInterface: "br0"}
+
+	d := Data{StorageDiskSize: 0}
+	d.ApplyDefaults(cfg)
+
+	assert.Nil(t, d.AdditionalDisks)
+}
+
 func TestExtensionMerge(t *testing.T) {
 	t.Parallel()
 	t.Run("defaults only", func(t *testing.T) {

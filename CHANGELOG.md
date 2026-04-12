@@ -2,29 +2,40 @@
 
 All notable changes to this project are documented here.
 
-## [v0.13.0] — Multi-Disk VMs, Deterministic MACs, Circuit Breaker & Storage
+## [v0.13.0] — Multi-Disk VMs, Singleton Lease, Deterministic MACs, Circuit Breaker & Storage
+
+### Breaking / Behavior Changes
+- **Longhorn is now the only supported storage path** — NFS auto-storage has been fully removed (see Removed section below). Add a dedicated data disk via `storage_disk_size` in your MachineClass, then install Longhorn via Helm. See [`docs/storage.md`](docs/storage.md) for setup steps.
+- **Deterministic MAC addresses are now always on for additional NICs** — the per-NIC `deterministic_mac` opt-in field on `additional_nics` has been removed. All NICs (primary and additional) now unconditionally receive a stable MAC derived from the machine request ID so DHCP reservations survive reprovisioning on every interface, not just the primary. Existing `MachineClass` configs with `deterministic_mac: true` still work (the field is silently ignored via unknown-field warning); configs with `deterministic_mac: false` will start getting deterministic MACs on next reprovision.
+
+### Bug Fixes
+- **Drop `mtu` from NIC device create** — TrueNAS 25.10 rejects `mtu` on `vm.device.create` with `[EINVAL] vm_device_create.attributes.NIC.mtu: Extra inputs are not permitted`, which blocked provisioning of any additional NIC whose MachineClass set an `mtu` value (typical for jumbo-frame storage networks). `NICConfig.MTU` is now ignored on the hypervisor call — MTU is still applied inside the guest via the existing MAC-matched Talos config patch (`buildMTUPatch`), which is the correct layer for it. Same shape as the v0.12.0 `vlan` attribute removal.
 
 ### Features
+- **Singleton enforcement via distributed lease** — The provider now claims an exclusive lease on startup via annotations on the `infra.ProviderStatus` resource, preventing two processes with the same `PROVIDER_ID` from racing on VM creation, zvol creation, and ISO upload. The Omni SDK has no built-in leader election, so two instances with the same ID would both receive every `MachineRequest` and execute provisioning steps concurrently against TrueNAS — typically resulting in duplicate VM names, failed zvol creates, and half-provisioned machines. The lease fails fast when a fresh heartbeat is observed from another instance (surfacing duplicate-provider misconfigurations loudly) and takes over automatically when the prior holder is ungracefully killed and its heartbeat goes stale (default: 45s). Opt-out via `PROVIDER_SINGLETON_ENABLED=false` for debugging or advanced sharding. Tunable via `PROVIDER_SINGLETON_REFRESH_INTERVAL` (default 15s) and `PROVIDER_SINGLETON_STALE_AFTER` (default 45s). See `docs/architecture.md#singleton-enforcement` and `docs/troubleshooting.md` for operational details. Kubernetes rolling deploys should use `strategy.type=Recreate` or `maxSurge=0` to avoid overlap windows.
 - **Additional disk support (multi-disk VMs)** — Attach extra data disks beyond the root disk via `additional_disks` in MachineClass config. Each disk can target a different ZFS pool and independently toggle encryption. Enables dedicated etcd disks on fast SSD pools, bulk data disks on HDD pools, and is a prerequisite for node-local distributed storage (Longhorn). Max 16 additional disks per VM. Paths tracked in protobuf state for automatic cleanup on deprovision.
 - **Additional disk resize** — Additional disks grow automatically when the `size` in `additional_disks` config increases, matching the root disk resize behavior. Shrinking is prevented (ZFS limitation).
-- **MTU / jumbo frames for additional NICs** — Optional `mtu` field on `additional_nics` items. Passed to TrueNAS on NIC creation and applied as a Talos machine config patch using MAC-based interface matching. Set to 9000 for jumbo frames on iSCSI/NFS storage networks.
+- **`storage_disk_size` convenience field** — New MachineClass schema field that adds a dedicated data disk for persistent storage (Longhorn). Setting `storage_disk_size: 100` is equivalent to `additional_disks: [{size: 100}]` but simpler in the Omni UI.
+- **MTU / jumbo frames for additional NICs** — Optional `mtu` field on `additional_nics` items. Applied as a Talos machine config patch using MAC-based interface matching. Set to 9000 for jumbo frames on storage networks.
 - **Deterministic MAC addresses** — All NICs (primary and additional) get a stable MAC derived from the machine request ID, so DHCP reservations survive reprovision. Collision detection queries the same network segment before attaching.
 - **Node auto-replace circuit breaker** — VMs stuck in ERROR state are automatically deprovisioned after exceeding `MAX_ERROR_RECOVERIES` (default: 5) consecutive failed recoveries. Omni's reconciliation loop then provisions a fresh replacement. Configurable via env var; set to `-1` to disable.
+- **Longhorn install script** — `scripts/install-longhorn.sh <cluster>` one-command Longhorn setup: applies Talos config patch via omnictl, Helm installs Longhorn, sets default StorageClass, verifies with test PVC. Idempotent.
 
 ### Observability
 - Add `truenas.vms.auto_replaced` metric — counts VMs deprovisioned by the circuit breaker
-- Add "VMs Auto-Replaced" stat panel to provisioning Grafana dashboard
+- Add ”VMs Auto-Replaced” stat panel to provisioning Grafana dashboard
 - Add `TrueNASVMAutoReplaced` Prometheus alert rule — fires when circuit breaker triggers, severity: warning
-- Add `configureStorage` to provision step duration breakdown in Grafana dashboard
 
 ### Removed
+- **Remove NFS auto-storage** — The `configureStorage` provision step, `auto_storage` MachineClass field, `AUTO_STORAGE_ENABLED` / `NFS_HOST` env vars, NFS client methods (`CreateNFSShare`, `GetNFSShareByPath`, `DeleteNFSShare`, `EnsureNFSService`, `SetDatasetPermissions`), NFS config patch builder, and all related tests have been fully removed. NFS had too many issues in Kubernetes: networking complexity (port 2049 reachability, firewall rules), broad application incompatibility (PostgreSQL, Redis, Elasticsearch, and any WAL/Raft-based system corrupt data on NFS), no support for Kubernetes-native VolumeSnapshots, and the underlying provisioner (nfs-subdir-external-provisioner) has been unmaintained since 2022. Use Longhorn with `storage_disk_size` instead — it's self-contained, supports snapshots, and works in any network topology.
 - **Remove ZFS snapshot/rollback code** — Talos nodes are immutable; the correct recovery path is to replace a failed VM (Omni reprovisions automatically), not to roll back a zvol. Removed: `CreateSnapshot`, `ListSnapshots`, `DeleteSnapshot`, `RollbackSnapshot` client methods, `snapshotBeforeUpgrade` and `enforceSnapshotRetention` provisioner logic, `last_upgrade_snapshot` protobuf field, snapshot telemetry counters, and all related tests. The `Snapshot` type and pre-upgrade snapshot workflow introduced in v0.6.0–v0.8.0 are fully removed.
 
 ### Documentation
+- Rewrite storage guide (`docs/storage.md`) — Longhorn as recommended default, NFS removed as provider-managed option, democratic-csi as advanced alternative
+- Add Velero CSI snapshot integration to backup guide (`docs/backup.md`) — VolumeSnapshotClass setup for Longhorn and democratic-csi, CSI Snapshot Data Movement for off-site S3
+- Add disaster recovery runbook to backup guide — 5 scenarios with step-by-step procedures and recovery time table
 - Add backup & disaster recovery guide (`docs/backup.md`) — control plane backup via Omni, workload/PVC backup via Velero to remote S3
 - Add jumbo frames / MTU guide to networking docs (`docs/networking.md`)
-- Add maintenance/trust caveats to storage guide for nfs-subdir-external-provisioner and democratic-csi
-- Add manual NFS PVs fallback section to storage guide
 - Remove snapshot rollback documentation from upgrading guide
 
 ## [v0.12.0] — VM Identity Fix, Per-Zvol Encryption, Health Endpoint & Hardening
@@ -222,6 +233,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.13.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.0
 [v0.12.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.12.0
 [v0.11.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.11.1
 [v0.10.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.10.0

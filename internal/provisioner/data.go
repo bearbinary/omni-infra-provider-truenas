@@ -11,11 +11,12 @@ import (
 // Fields map to the schema.json that is reported to Omni.
 
 // AdditionalNIC describes an extra NIC to attach to the VM beyond the primary.
+// All NICs (primary and additional) receive a deterministic MAC derived from
+// the machine request ID so DHCP reservations survive reprovisioning.
 type AdditionalNIC struct {
-	NetworkInterface string `yaml:"network_interface"`           // Required: bridge, VLAN, or physical interface
-	Type             string `yaml:"type,omitempty"`              // VIRTIO (default) or E1000
-	MTU              int    `yaml:"mtu,omitempty"`               // MTU size (default: 0 = use host default, typically 1500). Set to 9000 for jumbo frames.
-	DeterministicMAC bool   `yaml:"deterministic_mac,omitempty"` // Derive a stable MAC from the machine request ID (survives reprovision) //nolint:tagliatelle
+	NetworkInterface string `yaml:"network_interface"` // Required: bridge, VLAN, or physical interface
+	Type             string `yaml:"type,omitempty"`    // VIRTIO (default) or E1000
+	MTU              int    `yaml:"mtu,omitempty"`     // MTU size (default: 0 = use host default, typically 1500). Set to 9000 for jumbo frames.
 }
 
 // AdditionalDisk describes an extra disk to attach to the VM beyond the root disk.
@@ -54,19 +55,9 @@ type Data struct {
 	// Comma-separated CIDRs, e.g., "192.168.100.0/24" or "192.168.100.0/24,fd00::/64"
 	AdvertisedSubnets string `yaml:"advertised_subnets,omitempty"`
 
-	// Auto-storage: deploy NFS provisioner + default StorageClass so PVCs work out of the box.
-	// nil = use global default (true), explicit false = disabled for this MachineClass.
-	AutoStorage *bool `yaml:"auto_storage,omitempty"`
-}
-
-// IsAutoStorageEnabled returns whether auto storage should be configured.
-// Uses the per-MachineClass setting if explicit, otherwise falls back to the global default.
-func (d *Data) IsAutoStorageEnabled(globalDefault bool) bool {
-	if d.AutoStorage != nil {
-		return *d.AutoStorage
-	}
-
-	return globalDefault
+	// StorageDiskSize adds a dedicated data disk (in GiB) for persistent storage (Longhorn).
+	// Equivalent to additional_disks: [{size: N}].
+	StorageDiskSize int `yaml:"storage_disk_size,omitempty"`
 }
 
 // ApplyDefaults fills in zero values from the provider config.
@@ -101,6 +92,14 @@ func (d *Data) ApplyDefaults(cfg ProviderConfig) {
 
 	if d.Architecture == "" {
 		d.Architecture = "amd64"
+	}
+
+	// Expand storage_disk_size into additional_disks[0].
+	// This is a convenience shorthand for adding a dedicated data disk (e.g., for Longhorn).
+	if d.StorageDiskSize > 0 {
+		storageDisk := AdditionalDisk{Size: d.StorageDiskSize}
+		d.AdditionalDisks = append([]AdditionalDisk{storageDisk}, d.AdditionalDisks...)
+		d.StorageDiskSize = 0 // consumed — prevent double-expansion
 	}
 }
 
@@ -170,6 +169,10 @@ func validateSafeName(field, value string) error {
 
 // Validate checks the Data config for logical errors.
 func (d *Data) Validate() error {
+	if d.StorageDiskSize < 0 {
+		return fmt.Errorf("storage_disk_size must be >= 0, got %d", d.StorageDiskSize)
+	}
+
 	// Validate names used in filesystem paths to prevent path traversal
 	if err := validateSafeName("pool", d.Pool); err != nil {
 		return err

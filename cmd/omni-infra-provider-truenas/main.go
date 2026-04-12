@@ -18,6 +18,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/siderolabs/omni/client/pkg/client"
+	"github.com/siderolabs/omni/client/pkg/client/omni"
 	"github.com/siderolabs/omni/client/pkg/infra"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.uber.org/zap"
@@ -29,6 +30,7 @@ import (
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/monitor"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/provisioner"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/singleton"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
 
@@ -153,8 +155,6 @@ func run() error {
 		DefaultBootMethod:       defaultBootMethod,
 		GracefulShutdownTimeout: time.Duration(envInt("GRACEFUL_SHUTDOWN_TIMEOUT", 30)) * time.Second,
 		MaxErrorRecoveries:      envInt("MAX_ERROR_RECOVERIES", 5),
-		AutoStorageEnabled:      envBool("AUTO_STORAGE_ENABLED", true),
-		NFSHost:                 envString("NFS_HOST", os.Getenv("TRUENAS_HOST")),
 	})
 
 	// Create infra provider
@@ -204,21 +204,116 @@ func run() error {
 		zap.String("default_network_interface", defaultNetworkInterface),
 	)
 
+	// Build the Omni client ourselves (rather than letting infra.Provider.Run
+	// build it) so the singleton lease can access the COSI state before ip.Run
+	// starts. ip.Run accepts our state via infra.WithState.
 	clientOptions := []client.Option{
 		client.WithInsecureSkipTLSVerify(envBool("OMNI_INSECURE_SKIP_VERIFY", false)),
+		// Matches the SDK's internal behavior when it builds the client itself:
+		// the infra provider ID is sent as gRPC metadata on every call.
+		client.WithOmniClientOptions(omni.WithProviderID(meta.ProviderID)),
 	}
 
 	if !omniServiceAccountKey.IsEmpty() {
 		clientOptions = append(clientOptions, client.WithServiceAccount(omniServiceAccountKey.Reveal()))
 	}
 
+	omniClient, err := client.New(omniEndpoint, clientOptions...)
+	if err != nil {
+		return fmt.Errorf("failed to create Omni client: %w", err)
+	}
+	defer func() { _ = omniClient.Close() }()
+
+	omniState := omniClient.Omni().State()
+
+	// Acquire the singleton lease before ip.Run so we fail fast if another
+	// instance is already serving this provider ID. Races on provision steps
+	// (VM create, zvol create, ISO upload) across two processes are
+	// effectively impossible to recover from, so we'd rather crashloop loudly.
+	var lease *singleton.Lease
+
+	if envBool("PROVIDER_SINGLETON_ENABLED", true) {
+		lease, err = singleton.New(omniState, singleton.Config{
+			ProviderID:      meta.ProviderID,
+			RefreshInterval: envDuration("PROVIDER_SINGLETON_REFRESH_INTERVAL", singleton.DefaultRefreshInterval),
+			StaleAfter:      envDuration("PROVIDER_SINGLETON_STALE_AFTER", singleton.DefaultStaleAfter),
+			OnRefreshError: func() {
+				if telemetry.SingletonRefreshErrors != nil {
+					telemetry.SingletonRefreshErrors.Add(ctx, 1)
+				}
+			},
+		}, logger)
+		if err != nil {
+			return fmt.Errorf("failed to build singleton lease: %w", err)
+		}
+
+		if err := lease.Acquire(ctx); err != nil {
+			return fmt.Errorf("singleton lease acquire failed: %w", err)
+		}
+
+		// Track lease acquisition
+		if telemetry.SingletonLeaseHeld != nil {
+			telemetry.SingletonLeaseHeld.Record(ctx, 1)
+		}
+
+		if lease.WasTakeover() && telemetry.SingletonTakeovers != nil {
+			telemetry.SingletonTakeovers.Add(ctx, 1)
+		}
+
+		defer func() {
+			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer releaseCancel()
+			lease.Release(releaseCtx)
+
+			if telemetry.SingletonLeaseHeld != nil {
+				telemetry.SingletonLeaseHeld.Record(releaseCtx, 0)
+			}
+		}()
+
+		go func() {
+			if runErr := lease.Run(ctx); runErr != nil {
+				logger.Error("singleton lease refresh loop exited with error", zap.Error(runErr))
+			}
+		}()
+
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-lease.Lost():
+				logger.Error("singleton lease lost — cancelling root context to shut down")
+
+				if telemetry.SingletonLeaseHeld != nil {
+					telemetry.SingletonLeaseHeld.Record(ctx, 0)
+				}
+
+				cancel()
+			}
+		}()
+	} else {
+		logger.Warn("singleton enforcement disabled via PROVIDER_SINGLETON_ENABLED=false — " +
+			"running multiple instances with the same PROVIDER_ID will cause provisioning races")
+	}
+
 	return ip.Run(ctx, logger,
-		infra.WithOmniEndpoint(omniEndpoint),
-		infra.WithClientOptions(clientOptions...),
+		infra.WithState(omniState),
 		infra.WithEncodeRequestIDsIntoTokens(),
 		infra.WithConcurrency(uint(concurrency)),
 		infra.WithHealthCheckFunc(newHealthCheck(tnClient, defaultPool, defaultNetworkInterface)),
 	)
+}
+
+func envDuration(key string, defaultVal time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return defaultVal
+	}
+
+	return d
 }
 
 func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenasclient.Client, pool, networkInterface string) error {

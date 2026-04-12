@@ -52,21 +52,28 @@ func TestAddNIC_VLAN(t *testing.T) {
 	assert.Equal(t, "vlan666", dev.Attributes["nic_attach"])
 }
 
-func TestAddNICWithConfig_MTU(t *testing.T) {
+// TrueNAS 25.10's vm.device.create rejects `mtu` on NIC attributes with
+// "Extra inputs are not permitted". MTU must never be forwarded to the
+// hypervisor — it's applied guest-side via a Talos config patch matched on
+// the NIC's MAC. These tests assert that NICConfig.MTU is silently ignored
+// by the client regardless of whether the caller sets it.
+func TestAddNICWithConfig_MTUNotSentToTrueNAS(t *testing.T) {
+	var capturedParams string
+
 	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
 		assert.Equal(t, methodDeviceCreate, method)
-		assert.Contains(t, string(params), `"mtu":9000`)
+		capturedParams = string(params)
 		assert.Contains(t, string(params), `"nic_attach":"br200"`)
 
-		return Device{ID: 10, VM: 42, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br200", "mtu": 9000}}, nil
+		return Device{ID: 10, VM: 42, Attributes: map[string]any{"dtype": "NIC", "nic_attach": "br200"}}, nil
 	})
 
-	dev, err := c.AddNICWithConfig(context.Background(), 42, NICConfig{
+	_, err := c.AddNICWithConfig(context.Background(), 42, NICConfig{
 		NetworkInterface: "br200",
 		MTU:              9000,
 	}, 2002)
 	require.NoError(t, err)
-	assert.Equal(t, float64(9000), dev.Attributes["mtu"])
+	assert.NotContains(t, capturedParams, "mtu", "MTU must not be sent to TrueNAS — it's applied guest-side via Talos config patch")
 }
 
 func TestAddNICWithConfig_NoMTU(t *testing.T) {

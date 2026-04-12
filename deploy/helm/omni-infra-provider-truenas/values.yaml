@@ -41,6 +41,18 @@ gracefulShutdownTimeout: 30
 # -- HTTP health endpoint address (/healthz, /readyz)
 healthListenAddr: ":8081"
 
+## @section Singleton Enforcement
+# -- Prevents two instances with the same PROVIDER_ID from racing on provisioning.
+# The chart already uses strategy.type=Recreate so rolling-deploy overlap is not a
+# concern. Leave enabled unless you have an advanced sharding setup or need to
+# bypass the check for debugging.
+singleton:
+  enabled: true
+  # -- How often the lease heartbeat is refreshed.
+  refreshInterval: "15s"
+  # -- Age at which another instance may take over (must be >= 2 * refreshInterval).
+  staleAfter: "45s"
+
 ## @section Secrets
 # -- Secrets — set via --set or a values file (do not commit real credentials)
 secrets:

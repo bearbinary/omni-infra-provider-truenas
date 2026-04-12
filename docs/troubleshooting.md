@@ -47,6 +47,44 @@ The `OMNI_ENDPOINT` environment variable is not set.
 - Set it to your Omni instance URL (e.g., `https://omni.example.com`)
 - If using `.env`, make sure the file is in the working directory or mounted into the container
 
+### "singleton lease acquire failed" / "another provider instance holds the singleton lease"
+
+Two processes are trying to run as the same `PROVIDER_ID`. The provider refuses
+to start when it detects a fresh heartbeat from another instance because
+running two provisioners in parallel causes races on VM creation, zvol
+creation, and ISO upload.
+
+**Expected fields in the error:**
+
+- `instance %q` — the random UUID of the process that currently holds the lease
+- `heartbeat N ago at ...` — how long ago the other instance last refreshed
+- `provider %q` — your `PROVIDER_ID`
+
+**Diagnosis:**
+
+1. Find the other instance. Match the `singleton_instance_id` log field across
+   your running processes (`kubectl logs`, `journalctl -u`, `docker logs`,
+   etc.). If no other process has that instance-id, it is almost certainly a
+   stale pod that was `kill -9`'d before it could release.
+2. If the other instance is legitimate, stop it cleanly (`SIGTERM`) — the
+   outgoing process clears the lease annotation so the successor can acquire
+   immediately without waiting for `PROVIDER_SINGLETON_STALE_AFTER` to elapse.
+3. If the other instance was killed ungracefully and the heartbeat is frozen,
+   the successor will take over automatically once `PROVIDER_SINGLETON_STALE_AFTER`
+   (default 45s) passes.
+
+**Kubernetes rolling deploys:** use `strategy.type=Recreate` or
+`strategy.rollingUpdate.{maxSurge: 0, maxUnavailable: 1}` so the old pod is
+fully terminated before the new one starts. With the default `maxSurge=25%`
+strategy the new pod can start while the old pod is still in its
+`terminationGracePeriodSeconds`, and the new pod will crashloop on the
+preflight check.
+
+**Debugging / advanced sharding:** to bypass the check entirely, set
+`PROVIDER_SINGLETON_ENABLED=false`. Only do this when you are certain that no
+two instances are servicing the same provider ID — the provider will log a
+warning on startup as a reminder.
+
 ## Provisioning Issues
 
 ### Omni shows "Provisioning" forever with no error

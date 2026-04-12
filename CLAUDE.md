@@ -30,9 +30,10 @@ make generate         # Regenerate protobuf from api/specs/specs.proto
 
 Uses the standard Omni VM provider pattern with `infra.NewProvider()` + `provision.Step`:
 
-- **Entry point**: `cmd/omni-infra-provider-truenas/main.go` — env var config, auto-detects transport (Unix socket or WebSocket), `infra.NewProvider()` registration with health check
+- **Entry point**: `cmd/omni-infra-provider-truenas/main.go` — env var config, auto-detects transport (Unix socket or WebSocket), builds the Omni client, acquires the singleton lease, registers via `infra.NewProvider()` with health check
 - **TrueNAS JSON-RPC client**: `internal/client/` — Transport interface with Unix socket (zero-auth) and WebSocket (API key) implementations. VM CRUD, device attachment, storage operations via JSON-RPC 2.0 methods.
-- **Provisioner**: `internal/provisioner/` — 3 provision steps (`createSchematic`, `uploadISO`, `createVM`) + `Deprovision()`
+- **Provisioner**: `internal/provisioner/` — 4 provision steps (`createSchematic`, `uploadISO`, `createVM`, `healthCheck`) + `Deprovision()`
+- **Singleton lease**: `internal/singleton/` — distributed lease on `infra.ProviderStatus` annotations. Prevents two processes with the same `PROVIDER_ID` from racing on provisioning. Fail-fast on conflict; stale-heartbeat takeover after `PROVIDER_SINGLETON_STALE_AFTER` (default 45s). SDK has no built-in leader election — we must do this ourselves.
 - **COSI resources**: `internal/resources/machine.go` — Machine typed resource backed by protobuf `api/specs/specs.proto`
 - **Provider metadata**: `internal/resources/meta/meta.go` — `ProviderID = "truenas"`
 
@@ -49,6 +50,7 @@ Uses the standard Omni VM provider pattern with `infra.NewProvider()` + `provisi
 1. `createSchematic` — Generate Talos image factory schematic with qemu-guest-agent extension
 2. `uploadISO` — Download Talos nocloud ISO from Image Factory, upload to TrueNAS (SHA-256 dedup via singleflight)
 3. `createVM` — Create zvol, VM, attach CDROM+DISK+NIC, start VM, poll for RUNNING
+4. `healthCheck` — Verify VM still exists on TrueNAS; reset state for re-provision if deleted externally.
 
 ### Configuration
 All via environment variables (`.env` file loaded automatically). Key ones: `OMNI_ENDPOINT`, `OMNI_SERVICE_ACCOUNT_KEY`, `TRUENAS_HOST` (remote only), `TRUENAS_API_KEY` (remote only), `DEFAULT_POOL`, `DEFAULT_NETWORK_INTERFACE`. See `.env.example`.
@@ -64,7 +66,7 @@ All via environment variables (`.env` file loaded automatically). Key ones: `OMN
 - **`docs/architecture.md`** — Detailed architecture with Mermaid diagrams (system context, provision sequence, transport detection)
 - **`docs/troubleshooting.md`** — Common issues and solutions (startup failures, provisioning, debugging)
 - **`docs/testing.md`** — Unit, integration, and E2E test setup
-- **`docs/storage.md`** — CSI storage options guide: NAS-backed (NFS, iSCSI, democratic-csi) vs node-local (Longhorn, Ceph, Mayastor) with recommendations
+- **`docs/storage.md`** — Storage guide: Longhorn (recommended default) setup, decision matrix vs NFS/democratic-csi, trade-offs.
 - **`docs/cni.md`** — CNI selection guide: Flannel (default), Cilium, Calico with Talos-specific setup steps
 - **`docs/networking.md`** — Networking guide: bridges, DHCP reservations, MetalLB, VIP, UniFi/pfSense/OPNsense/Mikrotik setup
 - **`docs/backlog.md`** — Feature roadmap and backlog items

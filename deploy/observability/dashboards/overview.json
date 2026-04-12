@@ -82,9 +82,26 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
-      "title": "CPU Cores",
+      "title": "Singleton Lease",
       "type": "stat",
       "gridPos": { "h": 4, "w": 3, "x": 12, "y": 1 },
+      "targets": [
+        { "expr": "truenas_singleton_lease_held{job=~\"$job\"}", "legendFormat": "" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "NOT HELD" }, "1": { "text": "HELD" } } }]
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" }
+    },
+    {
+      "title": "CPU Cores",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 1 },
       "targets": [
         { "expr": "truenas_host_cpu_cores{job=~\"$job\"}", "legendFormat": "" }
       ],
@@ -95,7 +112,7 @@
     {
       "title": "Host Memory",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 1 },
+      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 1 },
       "targets": [
         { "expr": "truenas_host_memory_total_bytes{job=~\"$job\"}", "legendFormat": "" }
       ],
@@ -106,7 +123,7 @@
     {
       "title": "Total Disks",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 1 },
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 1 },
       "targets": [
         { "expr": "truenas_host_disks_total{job=~\"$job\"}", "legendFormat": "" }
       ],
@@ -117,7 +134,7 @@
     {
       "title": "Provider Version",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 1 },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 5 },
       "targets": [
         { "expr": "count(truenas_host_cpu_cores{job=~\"$job\", service_version=~\"$version\"}) or vector(0)", "legendFormat": "$version" }
       ],
