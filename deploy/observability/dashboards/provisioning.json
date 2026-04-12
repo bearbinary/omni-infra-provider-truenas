@@ -55,7 +55,6 @@
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"createSchematic\",job=~\"$job\"}[5m]))", "legendFormat": "createSchematic" },
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"uploadISO\",job=~\"$job\"}[5m]))", "legendFormat": "uploadISO" },
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"createVM\",job=~\"$job\"}[5m]))", "legendFormat": "createVM" },
-        { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"configureStorage\",job=~\"$job\"}[5m]))", "legendFormat": "configureStorage" },
         { "expr": "histogram_quantile(0.95, rate(truenas_provision_step_duration_seconds_bucket{step=\"healthCheck\",job=~\"$job\"}[5m]))", "legendFormat": "healthCheck" }
       ],
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } } },
@@ -135,7 +134,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
-      "title": "Singleton & Storage",
+      "title": "Singleton & Disks",
       "type": "row",
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
       "collapsed": false
@@ -167,22 +166,9 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" }
     },
     {
-      "title": "NFS Shares Created",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 32 },
-      "targets": [
-        { "expr": "truenas_nfs_shares_created_total{job=~\"$job\"}", "legendFormat": "" }
-      ],
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue", "value": null }] } }
-      },
-      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
-    },
-    {
       "title": "Additional Data Disks",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 32 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 32 },
       "targets": [
         { "expr": "truenas_vms_additional_disks{job=~\"$job\"}", "legendFormat": "" }
       ],

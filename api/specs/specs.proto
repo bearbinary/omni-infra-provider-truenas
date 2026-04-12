@@ -12,8 +12,7 @@ message MachineSpec {
   int32 vm_id = 5;
   string zvol_path = 6;
   int32 cdrom_device_id = 7;
-  reserved 8;
-  reserved "last_upgrade_snapshot";
+  reserved 8, 10;
+  reserved "last_upgrade_snapshot", "nfs_dataset_path";
   repeated string additional_zvol_paths = 9;  // Paths of additional data zvols for cleanup tracking
-  string nfs_dataset_path = 10;               // NFS dataset created for auto storage (per-cluster)
 }
