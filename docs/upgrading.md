@@ -41,7 +41,7 @@ already running as the same `PROVIDER_ID`. It claims a lease via annotations
 on the `infra.ProviderStatus` resource and heartbeats every 15s. If you start
 a second copy, it will fail fast with an error naming the conflicting
 instance. See [Architecture › Singleton Enforcement](architecture.md#singleton-enforcement)
-and [Troubleshooting](troubleshooting.md#singleton-lease-acquire-failed--another-provider-instance-holds-the-singleton-lease).
+and [Troubleshooting](troubleshooting.md#singleton-lease-acquire-failed-another-provider-instance-holds-the-singleton-lease).
 
 **Action required:**
 

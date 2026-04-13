@@ -111,7 +111,7 @@ showmount -e <truenas-ip>
 # Should show: /mnt/tank/k8s-nfs <your-subnet>
 ```
 
-You can now use this share with [democratic-csi](storage.md#democratic-csi-nfs-or-iscsi), [manual NFS PVs](storage.md#manual-nfs-pvs-fallback), or the nfs-subdir-external-provisioner.
+You can now use this share with [democratic-csi](storage.md#advanced-democratic-csi) or manual NFS PV definitions.
 
 ---
 

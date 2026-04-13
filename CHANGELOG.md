@@ -14,7 +14,7 @@ All notable changes to this project are documented here.
 ## [v0.13.0] — Multi-Disk VMs, Singleton Lease, Deterministic MACs, Circuit Breaker & Storage
 
 ### Breaking / Behavior Changes
-- **Longhorn is now the only supported storage path** — NFS auto-storage has been fully removed (see Removed section below). Add a dedicated data disk via `storage_disk_size` in your MachineClass, then install Longhorn via Helm. See [`docs/storage.md`](docs/storage.md) for setup steps.
+- **Longhorn is now the only supported storage path** — NFS auto-storage has been fully removed (see Removed section below). Add a dedicated data disk via `storage_disk_size` in your MachineClass, then install Longhorn via Helm. See [`docs/storage.md`](storage.md) for setup steps.
 - **Deterministic MAC addresses are now always on for additional NICs** — the per-NIC `deterministic_mac` opt-in field on `additional_nics` has been removed. All NICs (primary and additional) now unconditionally receive a stable MAC derived from the machine request ID so DHCP reservations survive reprovisioning on every interface, not just the primary. Existing `MachineClass` configs with `deterministic_mac: true` still work (the field is silently ignored via unknown-field warning); configs with `deterministic_mac: false` will start getting deterministic MACs on next reprovision.
 
 ### Bug Fixes
