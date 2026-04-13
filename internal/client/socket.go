@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"sync"
@@ -235,22 +236,34 @@ func (t *socketTransport) doCall(ctx context.Context, method string, params any,
 	t.conn.SetWriteDeadline(deadline) //nolint:errcheck
 	t.conn.SetReadDeadline(deadline)  //nolint:errcheck
 
+	reqBytes, _ := json.Marshal(req)
+	log.Printf("[socket-debug] >>> %s %s (id=%s)", method, string(reqBytes), reqID)
+
 	if err := t.conn.WriteJSON(req); err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 
 	for {
-		var resp jsonRPC2Response
-		if err := t.conn.ReadJSON(&resp); err != nil {
+		_, raw, err := t.conn.ReadMessage()
+		if err != nil {
 			return fmt.Errorf("failed to read response: %w", err)
 		}
 
-		// Skip messages that don't match our request ID (e.g., job updates)
+		log.Printf("[socket-debug] <<< %.500s", string(raw))
+
+		var resp jsonRPC2Response
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return fmt.Errorf("failed to unmarshal response: %w (raw: %.200s)", err, string(raw))
+		}
+
+		// Skip messages that don't match our request ID (e.g., job updates, notifications)
 		if resp.ID != reqID {
+			log.Printf("[socket-debug] skipping message with id=%q (waiting for %s)", resp.ID, reqID)
 			continue
 		}
 
 		if resp.Error != nil {
+			log.Printf("[socket-debug] ERROR from %s: code=%d msg=%s", method, resp.Error.Code, resp.Error.Message)
 			return &APIError{
 				Code:    resp.Error.Code,
 				Message: resp.Error.Message,
