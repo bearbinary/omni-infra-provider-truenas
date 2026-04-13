@@ -25,11 +25,15 @@ import (
 
 // Config holds telemetry configuration.
 type Config struct {
-	OTELEndpoint   string // OTLP gRPC endpoint (e.g., "otel-collector:4317")
-	OTELInsecure   bool   // Disable TLS for OTLP exporter
-	PyroscopeURL   string // Pyroscope server URL (e.g., "http://pyroscope:4040")
-	ServiceName    string // Defaults to "omni-infra-provider-truenas"
-	ServiceVersion string // Injected at build time
+	OTELEndpoint   string            // OTLP gRPC endpoint (e.g., "otel-collector:4317" or Grafana Cloud OTLP endpoint)
+	OTELInsecure   bool              // Disable TLS for OTLP exporter (false for Grafana Cloud)
+	OTELHeaders    map[string]string // Extra headers for OTLP exporter (e.g., Authorization for Grafana Cloud)
+	OTELProtocol   string            // "grpc" (default) or "http/protobuf"
+	PyroscopeURL   string            // Pyroscope server URL (e.g., "http://pyroscope:4040" or Grafana Cloud endpoint)
+	PyroscopeUser  string            // Basic auth user (Grafana Cloud instance ID)
+	PyroscopePass  string            // Basic auth password (Grafana Cloud API token)
+	ServiceName    string            // Defaults to "omni-infra-provider-truenas"
+	ServiceVersion string            // Injected at build time
 }
 
 // Init initializes OpenTelemetry and Pyroscope. Returns a shutdown function
@@ -104,6 +108,12 @@ func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(c
 		logOpts = append(logOpts, otlploggrpc.WithInsecure())
 	}
 
+	if len(cfg.OTELHeaders) > 0 {
+		traceOpts = append(traceOpts, otlptracegrpc.WithHeaders(cfg.OTELHeaders))
+		metricOpts = append(metricOpts, otlpmetricgrpc.WithHeaders(cfg.OTELHeaders))
+		logOpts = append(logOpts, otlploggrpc.WithHeaders(cfg.OTELHeaders))
+	}
+
 	// Traces
 	traceExporter, err := otlptracegrpc.New(ctx, traceOpts...)
 	if err != nil {
@@ -144,9 +154,11 @@ func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(c
 
 func initPyroscope(cfg Config) (func(context.Context) error, error) {
 	profiler, err := pyroscope.Start(pyroscope.Config{
-		ApplicationName: cfg.ServiceName,
-		ServerAddress:   cfg.PyroscopeURL,
-		Tags:            map[string]string{"version": cfg.ServiceVersion},
+		ApplicationName:   cfg.ServiceName,
+		ServerAddress:     cfg.PyroscopeURL,
+		BasicAuthUser:     cfg.PyroscopeUser,
+		BasicAuthPassword: cfg.PyroscopePass,
+		Tags:              map[string]string{"version": cfg.ServiceVersion},
 		ProfileTypes: []pyroscope.ProfileType{
 			pyroscope.ProfileCPU,
 			pyroscope.ProfileAllocObjects,

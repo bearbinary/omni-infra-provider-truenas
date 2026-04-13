@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## [v0.13.1] — Grafana Cloud Observability
+
+### Features
+- **Grafana Cloud observability support** — OTEL exporters now accept `OTEL_EXPORTER_OTLP_HEADERS` for authenticated endpoints (e.g., Grafana Cloud OTLP gateway). Pyroscope client supports `PYROSCOPE_BASIC_AUTH_USER` and `PYROSCOPE_BASIC_AUTH_PASSWORD` for Grafana Cloud Profiles. Both local dev stacks and Grafana Cloud work with the same provider binary — just different env vars.
+
+### Housekeeping
+- Reserve removed proto field `nfs_dataset_path` (field 10) to prevent accidental reuse
+- Remove stale `configureStorage` and NFS panels from Grafana provisioning dashboard
+
 ## [v0.13.0] — Multi-Disk VMs, Singleton Lease, Deterministic MACs, Circuit Breaker & Storage
 
 ### Breaking / Behavior Changes
@@ -233,6 +242,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.13.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.1
 [v0.13.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.0
 [v0.12.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.12.0
 [v0.11.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.11.1

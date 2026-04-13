@@ -88,7 +88,11 @@ func run() error {
 	telemetryShutdown, err := telemetry.Init(ctx, telemetry.Config{
 		OTELEndpoint:   os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		OTELInsecure:   envBool("OTEL_EXPORTER_OTLP_INSECURE", true),
+		OTELHeaders:    parseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+		OTELProtocol:   envString("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc"),
 		PyroscopeURL:   os.Getenv("PYROSCOPE_URL"),
+		PyroscopeUser:  os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
+		PyroscopePass:  os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
 		ServiceName:    envString("OTEL_SERVICE_NAME", "omni-infra-provider-truenas"),
 		ServiceVersion: version,
 	})
@@ -427,6 +431,28 @@ func isSupportedTrueNASVersion(ver string) bool {
 
 	// Can't parse — assume supported (don't block on unexpected format)
 	return true
+}
+
+// parseHeaders parses the OTEL_EXPORTER_OTLP_HEADERS format: "key=value,key2=value2".
+func parseHeaders(raw string) map[string]string {
+	if raw == "" {
+		return nil
+	}
+
+	headers := make(map[string]string)
+
+	for _, pair := range strings.Split(raw, ",") {
+		k, v, ok := strings.Cut(pair, "=")
+		if ok && k != "" {
+			headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+
+	if len(headers) == 0 {
+		return nil
+	}
+
+	return headers
 }
 
 func envString(key, defaultVal string) string {
