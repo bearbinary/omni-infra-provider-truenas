@@ -15,6 +15,9 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -29,6 +32,7 @@ type Config struct {
 	OTELInsecure   bool              // Disable TLS for OTLP exporter (false for Grafana Cloud)
 	OTELHeaders    map[string]string // Extra headers for OTLP exporter (e.g., Authorization for Grafana Cloud)
 	OTELProtocol   string            // "grpc" (default) or "http/protobuf"
+	OTELConsole    bool              // If true, also emit traces/metrics/logs to stdout (verbose — opt-in for local debugging)
 	PyroscopeURL   string            // Pyroscope server URL (e.g., "http://pyroscope:4040" or Grafana Cloud endpoint)
 	PyroscopeUser  string            // Basic auth user (Grafana Cloud instance ID)
 	PyroscopePass  string            // Basic auth password (Grafana Cloud API token)
@@ -120,7 +124,21 @@ func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(c
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
 
-	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(traceExporter), sdktrace.WithResource(res))
+	traceOpts2 := []sdktrace.TracerProviderOption{
+		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithResource(res),
+	}
+
+	if cfg.OTELConsole {
+		consoleTraceExporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create console trace exporter: %w", err)
+		}
+
+		traceOpts2 = append(traceOpts2, sdktrace.WithBatcher(consoleTraceExporter))
+	}
+
+	tp := sdktrace.NewTracerProvider(traceOpts2...)
 	otel.SetTracerProvider(tp)
 	shutdownFuncs = append(shutdownFuncs, tp.Shutdown)
 
@@ -130,10 +148,23 @@ func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(c
 		return nil, fmt.Errorf("failed to create metric exporter: %w", err)
 	}
 
-	mp := sdkmetric.NewMeterProvider(
+	metricProviderOpts := []sdkmetric.Option{
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(15*time.Second))),
 		sdkmetric.WithResource(res),
-	)
+	}
+
+	if cfg.OTELConsole {
+		consoleMetricExporter, err := stdoutmetric.New()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create console metric exporter: %w", err)
+		}
+
+		metricProviderOpts = append(metricProviderOpts,
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(consoleMetricExporter, sdkmetric.WithInterval(60*time.Second))),
+		)
+	}
+
+	mp := sdkmetric.NewMeterProvider(metricProviderOpts...)
 	otel.SetMeterProvider(mp)
 	shutdownFuncs = append(shutdownFuncs, mp.Shutdown)
 
@@ -143,7 +174,21 @@ func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(c
 		return nil, fmt.Errorf("failed to create log exporter: %w", err)
 	}
 
-	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)), sdklog.WithResource(res))
+	logProviderOpts := []sdklog.LoggerProviderOption{
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
+		sdklog.WithResource(res),
+	}
+
+	if cfg.OTELConsole {
+		consoleLogExporter, err := stdoutlog.New(stdoutlog.WithPrettyPrint())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create console log exporter: %w", err)
+		}
+
+		logProviderOpts = append(logProviderOpts, sdklog.WithProcessor(sdklog.NewBatchProcessor(consoleLogExporter)))
+	}
+
+	lp := sdklog.NewLoggerProvider(logProviderOpts...)
 	global.SetLoggerProvider(lp)
 	shutdownFuncs = append(shutdownFuncs, lp.Shutdown)
 

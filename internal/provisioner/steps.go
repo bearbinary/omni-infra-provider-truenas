@@ -61,10 +61,19 @@ func generatePassphrase() (string, error) {
 }
 
 // Default extensions included in every TrueNAS VM.
+//
+// iscsi-tools is required for Longhorn (the default storage) — Longhorn uses
+// iSCSI internally to attach replicas to pods. It's also needed for democratic-csi
+// iSCSI mode. Adding it by default avoids a "PVC stuck Pending" failure mode that
+// only surfaces after the user tries to use persistent storage.
+//
+// nfs-utils was previously included, but was removed in v0.14.0 alongside the
+// provider-managed NFS auto-storage. Users who want democratic-csi in NFS mode or
+// manual NFS mounts can add it to their MachineClass `extensions` field.
 var defaultExtensions = []string{
 	"siderolabs/qemu-guest-agent",
-	"siderolabs/nfs-utils",
 	"siderolabs/util-linux-tools",
+	"siderolabs/iscsi-tools",
 }
 
 // stepCreateSchematic generates a Talos image factory schematic ID.

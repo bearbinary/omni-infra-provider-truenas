@@ -23,7 +23,7 @@ An open-source infrastructure provider that bridges [Sidero Omni](https://omni.s
 - **ZFS-native storage** — zvols for VM disks, per-zvol encryption, SHA-256 deduplicated ISO caching
 - **Flexible networking** — bridges, VLANs, multi-NIC, jumbo frames (MTU 9000)
 - **Self-healing** — auto-replace VMs stuck in ERROR state after configurable recovery attempts
-- **Dual transport** — Unix socket (zero-auth on TrueNAS) or WebSocket (API key for remote)
+- **WebSocket JSON-RPC 2.0** — authenticated WebSocket connection with TrueNAS API key
 - **Observability** — OpenTelemetry traces, Prometheus metrics, Grafana dashboards, Pyroscope profiling
 
 ## How It Works
@@ -38,7 +38,7 @@ flowchart TD
 ```
 
 1. **Omni creates a MachineRequest** — user scales a cluster or creates a MachineSet
-2. **Provider generates a Talos schematic** — OS image with extensions (qemu-guest-agent, nfs-utils)
+2. **Provider generates a Talos schematic** — OS image with default extensions (qemu-guest-agent, util-linux-tools, iscsi-tools)
 3. **Provider downloads the Talos ISO** — from Image Factory, cached on TrueNAS
 4. **Provider creates a VM** — zvol for disk, CDROM with ISO, NIC on your bridge
 5. **VM boots Talos, joins Omni** — via SideroLink (outbound WireGuard tunnel)
@@ -60,19 +60,20 @@ flowchart TD
 
 === "TrueNAS App (Recommended)"
 
-    Deploy directly on your TrueNAS server — the Unix socket is mounted automatically, no API key needed.
+    Deploy directly on your TrueNAS server. Create an API key at **Credentials > Local Users > root > API Keys**.
 
     ```yaml
     services:
       omni-infra-provider-truenas:
         image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
         restart: unless-stopped
-        volumes:
-          - /var/run/middleware:/var/run/middleware:ro
         network_mode: host
         environment:
           OMNI_ENDPOINT: "https://omni.example.com"
           OMNI_SERVICE_ACCOUNT_KEY: "<your-key>"
+          TRUENAS_HOST: "localhost"
+          TRUENAS_API_KEY: "<truenas-api-key>"
+          TRUENAS_INSECURE_SKIP_VERIFY: "true"
           DEFAULT_POOL: "default"
           DEFAULT_NETWORK_INTERFACE: "br0"
     ```

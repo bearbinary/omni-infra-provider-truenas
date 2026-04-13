@@ -1,10 +1,7 @@
 # Omni TrueNAS Provider — Docker Compose
 #
-# Requires TrueNAS SCALE 25.04+ (JSON-RPC 2.0 API). REST v2.0 is NOT supported.
-#
-# Transport auto-detection:
-#   - If /var/run/middleware is mounted: uses Unix socket (no API key needed)
-#   - Otherwise: uses WebSocket (requires TRUENAS_HOST + TRUENAS_API_KEY)
+# Requires TrueNAS SCALE 25.10+ (Goldeye). Connects via JSON-RPC 2.0 over
+# WebSocket. TRUENAS_HOST and TRUENAS_API_KEY are required.
 
 services:
   omni-infra-provider-truenas:
@@ -13,20 +10,17 @@ services:
     env_file:
       - path: .env
         required: false
-    volumes:
-      # Mount the TrueNAS middleware socket for zero-config auth.
-      # Remove this line if running on a different host (and set TRUENAS_HOST + TRUENAS_API_KEY instead).
-      - /var/run/middleware:/var/run/middleware:ro
     environment:
       # --- Required: Omni ---
       OMNI_ENDPOINT: "${OMNI_ENDPOINT:-https://omni.example.com}"
       OMNI_SERVICE_ACCOUNT_KEY: "${OMNI_SERVICE_ACCOUNT_KEY}"
       OMNI_INSECURE_SKIP_VERIFY: "${OMNI_INSECURE_SKIP_VERIFY:-false}"
 
-      # --- TrueNAS (only needed for remote/WebSocket transport) ---
-      TRUENAS_HOST: "${TRUENAS_HOST:-}"
-      TRUENAS_API_KEY: "${TRUENAS_API_KEY:-}"
-      # Set to "true" only if TrueNAS uses a self-signed certificate
+      # --- Required: TrueNAS WebSocket ---
+      # Create an API key at TrueNAS UI > Credentials > Local Users > root > API Keys
+      TRUENAS_HOST: "${TRUENAS_HOST}"
+      TRUENAS_API_KEY: "${TRUENAS_API_KEY}"
+      # Set to "true" for self-signed certs (recommended when TRUENAS_HOST=localhost)
       TRUENAS_INSECURE_SKIP_VERIFY: "${TRUENAS_INSECURE_SKIP_VERIFY:-false}"
 
       # --- Provider ---

@@ -11,14 +11,14 @@ Automatically provisions and manages Talos Linux virtual machines on TrueNAS SCA
 - Author: Bear Binary
 - Requires: TrueNAS SCALE 25.04+ (Fangtooth), Sidero Omni instance
 - API: TrueNAS JSON-RPC 2.0 (NOT REST v2.0)
-- Transports: Unix socket (zero-auth, on TrueNAS) or WebSocket (API key, remote)
+- Transport: WebSocket JSON-RPC 2.0 (API key required; Unix socket dropped in v0.14.0 because TrueNAS 25.10 removed implicit local auth)
 - Container: ghcr.io/bearbinary/omni-infra-provider-truenas
 - Architectures: amd64, arm64
 
 ## What It Does
 
 1. Watches Omni for MachineRequests (user scales a cluster)
-2. Generates a Talos Linux image schematic with extensions (qemu-guest-agent, nfs-utils, util-linux-tools)
+2. Generates a Talos Linux image schematic with default extensions (qemu-guest-agent, util-linux-tools, iscsi-tools)
 3. Downloads the Talos ISO from Image Factory (cached, SHA-256 deduplicated)
 4. Creates a VM on TrueNAS: zvol for disk, CDROM with ISO, NICs on bridge/VLAN, optional additional disks
 5. Health-checks VM existence on TrueNAS (resets state for re-provision if VM deleted externally)
@@ -60,7 +60,7 @@ All via environment variables:
 
 ## Deployment Options
 
-1. TrueNAS App (recommended): Docker container with Unix socket mounted, no API key
+1. TrueNAS App (recommended): Docker container on the TrueNAS host with TRUENAS_HOST=localhost and a TrueNAS API key
 2. Kubernetes: Helm chart in deploy/helm/omni-infra-provider-truenas/
 3. Docker Compose: Remote deployment via WebSocket in deploy/docker-compose.yaml
 
@@ -130,7 +130,7 @@ Q: What is Talos Linux?
 A: Talos Linux is an immutable, minimal operating system purpose-built for Kubernetes. It has no SSH, no shell, and no package manager — managed entirely via API. VMs created by this provider run Talos and join Omni clusters automatically via SideroLink (WireGuard).
 
 Q: How does transport auto-detection work?
-A: The provider checks for a Unix socket at /var/run/middleware/middlewared.sock first (zero-auth, used when running as a TrueNAS app). If not found, it connects via WebSocket (wss://<host>/websocket) using an API key. Unix socket is preferred for security.
+A: The provider connects to TrueNAS via WebSocket (wss://<host>/websocket) using a JSON-RPC 2.0 API key. When running as a TrueNAS app, set TRUENAS_HOST=localhost and TRUENAS_INSECURE_SKIP_VERIFY=true. Unix socket auth was dropped in v0.14.0 because TrueNAS 25.10 requires authentication on every call.
 
 Q: What ZFS features does this provider use?
 A: VM disks are created as ZFS zvols on your specified pool. ISOs are cached on the pool filesystem with SHA-256 deduplication. You can target different pools per MachineClass (e.g., NVMe for control plane, HDD for workers).

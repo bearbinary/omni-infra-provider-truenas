@@ -109,16 +109,16 @@ sequenceDiagram
     P-->>Omni: Machine deprovisioned
 ```
 
-## Transport Auto-Detection
+## Transport
 
 ```mermaid
 flowchart TD
-    Start([Provider starts]) --> Check{Unix socket exists?<br/>/var/run/middleware/middlewared.sock}
-    Check -->|Yes| Socket[Unix Socket Transport<br/>Zero-auth · lowest latency]
-    Check -->|No| WSCheck{TRUENAS_HOST +<br/>TRUENAS_API_KEY set?}
-    WSCheck -->|Yes| WS[WebSocket Transport<br/>API key auth · TLS]
-    WSCheck -->|No| Fail([Startup failure:<br/>no transport available])
+    Start([Provider starts]) --> Check{TRUENAS_HOST +<br/>TRUENAS_API_KEY set?}
+    Check -->|Yes| WS[WebSocket JSON-RPC 2.0<br/>API key auth · TLS]
+    Check -->|No| Fail([Startup failure:<br/>TRUENAS_HOST / TRUENAS_API_KEY required])
 ```
+
+TrueNAS 25.10 (Goldeye) requires authentication on every JSON-RPC call — including local Unix socket connections. The Unix socket transport was removed in v0.14.0 because there is no longer a zero-auth path. When running as a TrueNAS app, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`.
 
 ## Startup Health Checks
 

@@ -48,15 +48,13 @@ func testClient(t *testing.T) *Client {
 
 	host := os.Getenv("TRUENAS_TEST_HOST")
 	apiKey := os.Getenv("TRUENAS_TEST_API_KEY")
-	socketPath := os.Getenv("TRUENAS_TEST_SOCKET")
 
 	// Live or Record mode
-	if host != "" || socketPath != "" {
+	if host != "" {
 		c, err := New(Config{
 			Host:               host,
 			APIKey:             apiKey,
 			InsecureSkipVerify: true,
-			SocketPath:         socketPath,
 		})
 		if err != nil {
 			t.Fatalf("failed to create TrueNAS client: %v", err)

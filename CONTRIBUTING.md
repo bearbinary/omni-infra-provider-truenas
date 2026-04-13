@@ -28,7 +28,6 @@ Use the [Bug Report](https://github.com/bearbinary/omni-infra-provider-truenas/i
 - TrueNAS SCALE version
 - Provider version / Docker image tag
 - Deployment method (TrueNAS app, Kubernetes, Docker Compose)
-- Transport (Unix socket or WebSocket)
 - Logs (set `LOG_LEVEL=debug` for verbose output)
 
 ## Requesting Features

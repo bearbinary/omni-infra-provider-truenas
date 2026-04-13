@@ -77,19 +77,21 @@ services:
   omni-infra-provider-truenas:
     image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
     restart: unless-stopped
-    volumes:
-      - /var/run/middleware:/var/run/middleware:ro
     network_mode: host
     environment:
       OMNI_ENDPOINT: "https://<omni-url>"
       OMNI_SERVICE_ACCOUNT_KEY: "<key-from-step-3-above>"
+      TRUENAS_HOST: "localhost"
+      TRUENAS_API_KEY: "<truenas-api-key>"
+      TRUENAS_INSECURE_SKIP_VERIFY: "true"
       DEFAULT_POOL: "<pool-name>"
       DEFAULT_NETWORK_INTERFACE: "<interface-name>"
 ```
 
-**Step 3:** Replace the four placeholder values:
+**Step 3:** Replace the placeholder values:
 - `OMNI_ENDPOINT`: Their Omni URL (e.g., `https://omni.example.com`)
 - `OMNI_SERVICE_ACCOUNT_KEY`: The key from the service account creation step
+- `TRUENAS_API_KEY`: Create at TrueNAS UI > Credentials > Local Users > root > API Keys
 - `DEFAULT_POOL`: Their ZFS pool name (e.g., `default`, `tank`)
 - `DEFAULT_NETWORK_INTERFACE`: Their network interface (e.g., `br0`, `vlan100`)
 
@@ -242,8 +244,10 @@ extensions:
 
 These are included in every VM automatically — users do NOT need to add them:
 - `siderolabs/qemu-guest-agent`
-- `siderolabs/nfs-utils`
 - `siderolabs/util-linux-tools`
+- `siderolabs/iscsi-tools` (required by Longhorn, the default storage)
+
+Users who need NFS client support (for democratic-csi NFS mode) can add `siderolabs/nfs-utils` to their MachineClass `extensions` field.
 
 ## All Environment Variables
 
@@ -251,10 +255,9 @@ These are included in every VM automatically — users do NOT need to add them:
 |---|---|---|---|
 | `OMNI_ENDPOINT` | Yes | — | Omni instance URL |
 | `OMNI_SERVICE_ACCOUNT_KEY` | Yes | — | Omni infra provider service account key |
-| `TRUENAS_HOST` | Remote only | — | TrueNAS hostname or IP (WebSocket transport) |
-| `TRUENAS_API_KEY` | Remote only | — | TrueNAS API key (WebSocket transport) |
-| `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification for self-signed certs |
-| `TRUENAS_SOCKET_PATH` | No | `/var/run/middleware/middlewared.sock` | Override Unix socket path |
+| `TRUENAS_HOST` | **Yes** | — | TrueNAS hostname or IP (use `localhost` when running as a TrueNAS app) |
+| `TRUENAS_API_KEY` | **Yes** | — | TrueNAS API key (Credentials > Local Users > root > API Keys) |
+| `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification (recommended `true` for `localhost`) |
 | `PROVIDER_ID` | No | `truenas` | Provider ID registered with Omni |
 | `PROVIDER_NAME` | No | `TrueNAS` | Display name in Omni UI |
 | `PROVIDER_DESCRIPTION` | No | `TrueNAS SCALE infrastructure provider` | Description in Omni UI |
@@ -345,8 +348,8 @@ A: Sidero Omni is a SaaS (or self-hosted) Kubernetes management platform by Side
 Q: What is Talos Linux?
 A: Talos Linux is an immutable, minimal operating system purpose-built for Kubernetes. It has no SSH, no shell, and no package manager — managed entirely via API. VMs created by this provider run Talos and join Omni clusters automatically via SideroLink (WireGuard).
 
-Q: How does transport auto-detection work?
-A: The provider checks for a Unix socket at /var/run/middleware/middlewared.sock first (zero-auth, used when running as a TrueNAS app). If not found, it connects via WebSocket (wss://<host>/websocket) using an API key. Unix socket is preferred for security.
+Q: How does the provider connect to TrueNAS?
+A: The provider connects via WebSocket (wss://<host>/websocket) using a JSON-RPC 2.0 API key. When running as a TrueNAS app, set TRUENAS_HOST=localhost and TRUENAS_INSECURE_SKIP_VERIFY=true. Unix socket support was removed in v0.14.0 because TrueNAS 25.10 requires authentication on every call.
 
 Q: What ZFS features does this provider use?
 A: VM disks are created as ZFS zvols on your specified pool. ISOs are cached on the pool filesystem with SHA-256 deduplication. You can target different pools per MachineClass (e.g., NVMe for control plane, HDD for workers).

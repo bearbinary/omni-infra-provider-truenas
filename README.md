@@ -50,7 +50,7 @@
 ### Key Features
 
 - **Zero-touch VM lifecycle** — provision, start, stop, and destroy VMs automatically in response to Omni MachineRequests
-- **Dual transport** — Unix socket (zero-auth, for TrueNAS apps) or WebSocket (API key, for remote hosts)
+- **WebSocket JSON-RPC 2.0** — connects to TrueNAS via authenticated WebSocket with API key
 - **ZFS-native storage** — zvols for VM disks, automatic ISO caching with SHA-256 deduplication
 - **Multi-arch support** — `amd64` and `arm64` VM images via [Talos Image Factory](https://factory.talos.dev/)
 - **Flexible networking** — bridges, VLANs, or physical NICs
@@ -84,14 +84,9 @@ When machines are removed, the provider stops the VM, deletes it, and cleans up 
 
 ## Transport
 
-This provider communicates with TrueNAS via **JSON-RPC 2.0** — the same protocol used by TrueNAS's own CLI (`midclt`) and web UI.
+This provider communicates with TrueNAS via **JSON-RPC 2.0 over WebSocket** — the same protocol used by TrueNAS's own CLI (`midclt`) and web UI.
 
-Two transports are supported, auto-detected in priority order:
-
-| Transport | When Used | Auth |
-|---|---|---|
-| **Unix socket** | Running as a TrueNAS app (socket mounted) | None required — trusted local process |
-| **WebSocket** | Running remotely (k8s, Docker on another host) | API key required |
+All deployments require `TRUENAS_HOST` and `TRUENAS_API_KEY`. TrueNAS 25.10 removed implicit authentication on the Unix socket, so an API key is required whether the provider runs on the TrueNAS host or elsewhere.
 
 > The legacy REST v2.0 API (`/api/v2.0/`) is **not supported**. TrueNAS deprecated it in 25.04 and will remove it in 26.x.
 
@@ -115,7 +110,7 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 
 ### Option 1: TrueNAS App (Recommended)
 
-Deploy directly on your TrueNAS server. The middleware Unix socket is mounted automatically — **no API key needed**.
+Deploy directly on your TrueNAS server. Create an API key in the TrueNAS UI under **Credentials > Local Users > root > API Keys**.
 
 > If this app is available in your TrueNAS app catalog, install it from **Apps > Discover** for a guided setup with a config form. The [`truenas-app/`](truenas-app/) directory contains the full app definition with `questions.yaml` for the TrueNAS UI. For manual installation, use the compose config below.
 
@@ -125,12 +120,13 @@ services:
   omni-infra-provider-truenas:
     image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
     restart: unless-stopped
-    volumes:
-      - /var/run/middleware:/var/run/middleware:ro
     network_mode: host
     environment:
       OMNI_ENDPOINT: "https://omni.example.com"
       OMNI_SERVICE_ACCOUNT_KEY: "<your-key>"
+      TRUENAS_HOST: "localhost"
+      TRUENAS_API_KEY: "<your-truenas-api-key>"
+      TRUENAS_INSECURE_SKIP_VERIFY: "true"
       DEFAULT_POOL: "default"
       DEFAULT_NETWORK_INTERFACE: "br0"
 ```
@@ -176,12 +172,9 @@ All configuration is via environment variables. A `.env` file is loaded automati
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRUENAS_HOST` | — | TrueNAS hostname (WebSocket transport only) |
-| `TRUENAS_API_KEY` | — | TrueNAS API key (WebSocket transport only) |
+| `TRUENAS_HOST` | — | **Required.** TrueNAS hostname or IP (e.g., `truenas.local`, `localhost` when running as a TrueNAS app) |
+| `TRUENAS_API_KEY` | — | **Required.** TrueNAS API key (Credentials > Local Users > root > API Keys) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for self-signed certs |
-| `TRUENAS_SOCKET_PATH` | `/var/run/middleware/middlewared.sock` | Override Unix socket path |
-
-> Not required when running on TrueNAS with the Unix socket mounted.
 
 ### Provider Defaults
 
@@ -409,8 +402,10 @@ This creates VMs at `default/previewk8/omni-vms/...` — right alongside your ex
 Every VM automatically includes these extensions:
 
 - `siderolabs/qemu-guest-agent` — hypervisor-to-guest communication
-- `siderolabs/nfs-utils` — NFS client support (for manual NFS mounts or democratic-csi)
 - `siderolabs/util-linux-tools` — mount/block device operations
+- `siderolabs/iscsi-tools` — iSCSI initiator (required by Longhorn; also used by democratic-csi iSCSI mode)
+
+If you need NFS client support (for democratic-csi NFS mode or manual NFS mounts), add `siderolabs/nfs-utils` to your MachineClass `extensions` field.
 
 Add more via the `extensions` field in MachineClass config:
 
@@ -433,9 +428,8 @@ cmd/omni-infra-provider-truenas/
 internal/
 ├── client/                     # TrueNAS JSON-RPC 2.0 client
 │   ├── transport.go            # Transport interface
-│   ├── socket.go               # Unix socket transport (zero-auth)
-│   ├── ws.go                   # WebSocket transport (API key auth)
-│   ├── truenas.go              # Client constructor, auto-detection
+│   ├── ws.go                   # WebSocket transport (JSON-RPC 2.0, API key auth)
+│   ├── truenas.go              # Client constructor
 │   ├── vm.go                   # VM CRUD operations
 │   ├── device.go               # Device attachment (CDROM, DISK, NIC)
 │   ├── storage.go              # ZFS storage operations (zvols, ISOs)

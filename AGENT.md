@@ -77,19 +77,21 @@ services:
   omni-infra-provider-truenas:
     image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
     restart: unless-stopped
-    volumes:
-      - /var/run/middleware:/var/run/middleware:ro
     network_mode: host
     environment:
       OMNI_ENDPOINT: "https://<omni-url>"
       OMNI_SERVICE_ACCOUNT_KEY: "<key-from-step-3-above>"
+      TRUENAS_HOST: "localhost"
+      TRUENAS_API_KEY: "<truenas-api-key>"
+      TRUENAS_INSECURE_SKIP_VERIFY: "true"
       DEFAULT_POOL: "<pool-name>"
       DEFAULT_NETWORK_INTERFACE: "<interface-name>"
 ```
 
-**Step 3:** Replace the four placeholder values:
+**Step 3:** Replace the placeholder values:
 - `OMNI_ENDPOINT`: Their Omni URL (e.g., `https://omni.example.com`)
 - `OMNI_SERVICE_ACCOUNT_KEY`: The key from the service account creation step
+- `TRUENAS_API_KEY`: Create in the TrueNAS UI at **Credentials > Local Users > root > API Keys**
 - `DEFAULT_POOL`: Their ZFS pool name (e.g., `default`, `tank`)
 - `DEFAULT_NETWORK_INTERFACE`: Their network interface (e.g., `br0`, `vlan100`)
 
@@ -243,8 +245,10 @@ extensions:
 
 These are included in every VM automatically — users do NOT need to add them:
 - `siderolabs/qemu-guest-agent`
-- `siderolabs/nfs-utils`
 - `siderolabs/util-linux-tools`
+- `siderolabs/iscsi-tools` (required by Longhorn)
+
+If you need NFS client support (for democratic-csi NFS mode), add `siderolabs/nfs-utils` to the MachineClass `extensions` field.
 
 ## All Environment Variables
 
@@ -255,7 +259,9 @@ These are included in every VM automatically — users do NOT need to add them:
 | `TRUENAS_HOST` | Remote only | — | TrueNAS hostname or IP (WebSocket transport) |
 | `TRUENAS_API_KEY` | Remote only | — | TrueNAS API key (WebSocket transport) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification for self-signed certs |
-| `TRUENAS_SOCKET_PATH` | No | `/var/run/middleware/middlewared.sock` | Override Unix socket path |
+| `TRUENAS_HOST` | **Yes** | — | TrueNAS hostname or IP (use `localhost` when running as a TrueNAS app) |
+| `TRUENAS_API_KEY` | **Yes** | — | TrueNAS API key (Credentials > Local Users > root > API Keys) |
+| `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification (recommended `true` for `localhost`) |
 | `PROVIDER_ID` | No | `truenas` | Provider ID registered with Omni |
 | `PROVIDER_NAME` | No | `TrueNAS` | Display name in Omni UI |
 | `PROVIDER_DESCRIPTION` | No | `TrueNAS SCALE infrastructure provider` | Description in Omni UI |

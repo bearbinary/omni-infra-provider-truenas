@@ -23,19 +23,20 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 
 === "TrueNAS App (Recommended)"
 
-    Deploy directly on your TrueNAS server. The middleware Unix socket is mounted automatically — **no API key needed**.
+    Deploy directly on your TrueNAS server. Create an API key at **Credentials > Local Users > root > API Keys**.
 
     ```yaml
     services:
       omni-infra-provider-truenas:
         image: ghcr.io/bearbinary/omni-infra-provider-truenas:latest
         restart: unless-stopped
-        volumes:
-          - /var/run/middleware:/var/run/middleware:ro
         network_mode: host
         environment:
           OMNI_ENDPOINT: "https://omni.example.com"
           OMNI_SERVICE_ACCOUNT_KEY: "<your-key>"
+          TRUENAS_HOST: "localhost"
+          TRUENAS_API_KEY: "<truenas-api-key>"
+          TRUENAS_INSECURE_SKIP_VERIFY: "true"
           DEFAULT_POOL: "default"
           DEFAULT_NETWORK_INTERFACE: "br0"
     ```
@@ -75,13 +76,12 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRUENAS_HOST` | — | TrueNAS hostname (WebSocket transport only) |
-| `TRUENAS_API_KEY` | — | TrueNAS API key (WebSocket transport only) |
-| `TRUENAS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for self-signed certs |
-| `TRUENAS_SOCKET_PATH` | `/var/run/middleware/middlewared.sock` | Override Unix socket path |
+| `TRUENAS_HOST` | — | **Required.** TrueNAS hostname or IP (use `localhost` when running as a TrueNAS app) |
+| `TRUENAS_API_KEY` | — | **Required.** TrueNAS API key (Credentials > Local Users > root > API Keys) |
+| `TRUENAS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for self-signed certs (recommended `true` for `localhost`) |
 
 !!! note
-    Not required when running on TrueNAS with the Unix socket mounted.
+    TrueNAS 25.10 removed implicit Unix socket authentication, so an API key is required in all deployments.
 
 ### Provider Defaults
 

@@ -221,7 +221,7 @@ ssh -i ~/.ssh/csi-truenas csi@<truenas-ip> "sudo zfs list"
 If running the provider **outside** TrueNAS (Kubernetes deployment, remote Docker), you need an API key for the WebSocket connection.
 
 !!! note
-    Skip this if running the provider directly on TrueNAS — the Unix socket is mounted automatically and requires no authentication.
+    Create this in the TrueNAS UI at **Credentials > Local Users > root > API Keys** — required even when running the provider on the TrueNAS host (as of v0.14.0 / TrueNAS 25.10).
 
 1. Go to **Credentials > API Keys**
 2. Click **Add**

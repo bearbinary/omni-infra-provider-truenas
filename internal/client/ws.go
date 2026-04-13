@@ -28,8 +28,22 @@ const (
 	reconnectCooldown    = 30 * time.Second // Minimum time between reconnect bursts
 )
 
+// normalizeParams ensures params are sent as a JSON array (TrueNAS middleware expects positional params).
+func normalizeParams(params any) any {
+	if params == nil {
+		return []any{}
+	}
+
+	switch params.(type) {
+	case []any, []map[string]any, []string, []int:
+		return params
+	default:
+		return []any{params}
+	}
+}
+
 // wsTransport implements Transport over a WebSocket connection to TrueNAS.
-// Used for remote deployments where the Unix socket is not available.
+// Used for all deployments (local and remote) since TrueNAS 25.10.
 // Requires an API key for authentication.
 //
 // TrueNAS uses a DDP-like WebSocket protocol (not pure JSON-RPC 2.0):

@@ -15,7 +15,9 @@ This infrastructure provider connects your TrueNAS SCALE server to Omni, enablin
 
 ## Zero-Config Auth
 
-When installed as a TrueNAS app, the middleware Unix socket is mounted automatically. **No TrueNAS API key is required.** The provider authenticates the same way TrueNAS's own tools do — as a trusted local process.
+## TrueNAS API Key
+
+Create a TrueNAS API key at **Credentials > Local Users > root > API Keys**. The provider connects to `https://localhost` over WebSocket and authenticates with this key. (TrueNAS 25.10 requires authentication on every JSON-RPC call — the previous zero-auth Unix socket path is no longer available.)
 
 ## Prerequisites
 

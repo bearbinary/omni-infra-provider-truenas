@@ -74,6 +74,9 @@ spec:
               - rw
       sysctls:
         vm.overcommit_memory: "1"
+      kernel:
+        modules:
+          - name: iscsi_tcp
 EOF
 
     if [[ $? -eq 0 ]]; then

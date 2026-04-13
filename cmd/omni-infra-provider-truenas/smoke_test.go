@@ -50,7 +50,6 @@ func TestSmoke_MissingOmniEndpoint(t *testing.T) {
 	// Cannot use t.Parallel — t.Setenv mutates process env
 	t.Setenv("OMNI_ENDPOINT", "")
 	t.Setenv("TRUENAS_HOST", "")
-	t.Setenv("TRUENAS_SOCKET_PATH", "")
 
 	err := run()
 
@@ -59,17 +58,16 @@ func TestSmoke_MissingOmniEndpoint(t *testing.T) {
 }
 
 // TestSmoke_MissingTrueNASConnection verifies the binary fails cleanly when
-// neither Unix socket nor WebSocket host is configured.
+// TRUENAS_HOST is not configured.
 func TestSmoke_MissingTrueNASConnection(t *testing.T) {
 	// Cannot use t.Parallel — t.Setenv mutates process env
 	t.Setenv("OMNI_ENDPOINT", "https://fake.example.com")
 	t.Setenv("TRUENAS_HOST", "")
-	t.Setenv("TRUENAS_SOCKET_PATH", "/nonexistent/socket.sock")
 
 	err := run()
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot connect", "should fail with clear connection error")
+	assert.Contains(t, err.Error(), "TRUENAS_HOST is required", "should fail with clear config error")
 }
 
 // TestSmoke_VersionParser verifies the TrueNAS version parser handles edge cases.

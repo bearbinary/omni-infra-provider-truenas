@@ -21,7 +21,6 @@ A clear description of what's happening and what you expected instead.
 - **TrueNAS SCALE version**: (e.g., 25.04.0)
 - **Provider version / image tag**: (e.g., v0.7.0 or `ghcr.io/bearbinary/omni-infra-provider-truenas:latest`)
 - **Deployment method**: TrueNAS App / Kubernetes / Docker Compose / Binary
-- **Transport**: Unix socket / WebSocket
 - **Omni version**: (if known)
 
 ## Logs

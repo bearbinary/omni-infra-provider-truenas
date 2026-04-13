@@ -14,8 +14,8 @@ image:
 omniEndpoint: "https://omni.example.com"
 
 ## @section TrueNAS Connection
-# -- TrueNAS host (WebSocket transport, since Unix socket is not available in K8s).
-# This provider requires TrueNAS SCALE 25.04+ (JSON-RPC 2.0). REST v2.0 is NOT supported.
+# -- TrueNAS host — the provider connects via WebSocket JSON-RPC 2.0.
+# Requires TrueNAS SCALE 25.10+ (Goldeye). REST v2.0 is NOT supported.
 truenasHost: "truenas.local"
 
 # -- Set to true only if TrueNAS uses a self-signed certificate.

@@ -81,7 +81,7 @@
         "maxLength": 253,
         "pattern": "^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$"
       },
-      "description": "Additional Talos system extensions (e.g., siderolabs/iscsi-tools). qemu-guest-agent, nfs-utils, and util-linux-tools are always included."
+      "description": "Additional Talos system extensions (e.g., siderolabs/nfs-utils for democratic-csi NFS mode, siderolabs/drbd). Defaults qemu-guest-agent, util-linux-tools, and iscsi-tools are always included."
     },
     "additional_disks": {
       "type": "array",

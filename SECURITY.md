@@ -31,6 +31,6 @@ This policy covers the `omni-infra-provider-truenas` codebase and its Docker ima
 ## Security Considerations
 
 - **API keys**: The provider handles Omni service account keys and TrueNAS API keys. These are passed via environment variables and never logged.
-- **Transport security**: WebSocket connections use TLS by default. Unix socket transport relies on filesystem permissions.
+- **Transport security**: WebSocket connections use TLS by default. The provider validates TrueNAS certificates unless `TRUENAS_INSECURE_SKIP_VERIFY=true` is set explicitly (recommended only for `localhost`).
 - **Container security**: The Docker image runs as a non-root user (UID 65534) with a read-only filesystem and all capabilities dropped.
 - **No secrets in images**: Credentials are injected at runtime, never baked into the container image.

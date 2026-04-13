@@ -2,9 +2,9 @@
 //
 // This client does NOT support the legacy REST v2.0 API. It requires TrueNAS SCALE 25.04+.
 //
-// Two transports are supported, auto-detected in this order:
-//  1. Unix socket (/var/run/middleware/middlewared.sock) — no API key required, most secure
-//  2. WebSocket (wss://<host>/websocket) — requires API key
+// Connects via WebSocket (wss://<host>/websocket) with API key authentication.
+// TrueNAS 25.10 removed implicit authentication on the Unix socket, so all
+// transports now require an API key — there's no longer a zero-auth path.
 package client
 
 import (
@@ -30,20 +30,14 @@ type Client struct {
 
 // Config holds TrueNAS connection parameters.
 type Config struct {
-	// Host is the TrueNAS hostname or IP (e.g., "truenas.local" or "192.168.1.100").
-	// Not used when connecting via Unix socket.
+	// Host is the TrueNAS hostname or IP (e.g., "truenas.local" or "192.168.1.100"). Required.
 	Host string
 
-	// APIKey is the TrueNAS API key. Required for WebSocket transport.
-	// Not needed when connecting via Unix socket.
+	// APIKey is the TrueNAS API key. Required.
 	APIKey string
 
 	// InsecureSkipVerify disables TLS certificate verification for WebSocket connections.
 	InsecureSkipVerify bool
-
-	// SocketPath overrides the default Unix socket path.
-	// Defaults to /var/run/middleware/middlewared.sock.
-	SocketPath string
 
 	// MaxConcurrentCalls limits concurrent API calls to TrueNAS.
 	// Prevents overwhelming the middleware during large scale-ups.
@@ -53,36 +47,16 @@ type Config struct {
 
 const defaultMaxConcurrentCalls = 8
 
-// DefaultSocketPath is the standard location of the TrueNAS middleware Unix socket.
-const DefaultSocketPath = "/var/run/middleware/middlewared.sock"
-
-// New creates a new TrueNAS API client.
-// It auto-detects the best available transport:
-//  1. Unix socket (if available) — zero-config, no API key needed
-//  2. WebSocket — requires Host and APIKey
+// New creates a new TrueNAS API client that connects via WebSocket.
+// Host and APIKey are both required. TrueNAS 25.10 removed implicit
+// authentication on the Unix socket, so an API key is required in all cases.
 func New(cfg Config) (*Client, error) {
-	socketPath := cfg.SocketPath
-	if socketPath == "" {
-		socketPath = DefaultSocketPath
-	}
-
-	// Try Unix socket first (most secure, no API key needed)
-	if socketAvailable(socketPath) {
-		t, err := newSocketTransport(socketPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect via unix socket: %w", err)
-		}
-
-		return newClient(t, cfg.MaxConcurrentCalls), nil
-	}
-
-	// Fall back to WebSocket
 	if cfg.Host == "" {
-		return nil, fmt.Errorf("no unix socket at %s and TRUENAS_HOST not set — cannot connect to TrueNAS", socketPath)
+		return nil, fmt.Errorf("TRUENAS_HOST is required")
 	}
 
 	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("WebSocket transport requires TRUENAS_API_KEY")
+		return nil, fmt.Errorf("TRUENAS_API_KEY is required")
 	}
 
 	t, err := newWSTransport(cfg.Host, NewSecretString(cfg.APIKey), cfg.InsecureSkipVerify)

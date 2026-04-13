@@ -30,16 +30,15 @@ make generate         # Regenerate protobuf from api/specs/specs.proto
 
 Uses the standard Omni VM provider pattern with `infra.NewProvider()` + `provision.Step`:
 
-- **Entry point**: `cmd/omni-infra-provider-truenas/main.go` — env var config, auto-detects transport (Unix socket or WebSocket), builds the Omni client, acquires the singleton lease, registers via `infra.NewProvider()` with health check
-- **TrueNAS JSON-RPC client**: `internal/client/` — Transport interface with Unix socket (zero-auth) and WebSocket (API key) implementations. VM CRUD, device attachment, storage operations via JSON-RPC 2.0 methods.
+- **Entry point**: `cmd/omni-infra-provider-truenas/main.go` — env var config, builds the Omni client, acquires the singleton lease, registers via `infra.NewProvider()` with health check
+- **TrueNAS JSON-RPC client**: `internal/client/` — WebSocket transport with API key auth. VM CRUD, device attachment, storage operations via JSON-RPC 2.0 methods. TrueNAS 25.10 removed implicit Unix socket auth, so WebSocket is the only supported transport.
 - **Provisioner**: `internal/provisioner/` — 4 provision steps (`createSchematic`, `uploadISO`, `createVM`, `healthCheck`) + `Deprovision()`
 - **Singleton lease**: `internal/singleton/` — distributed lease on `infra.ProviderStatus` annotations. Prevents two processes with the same `PROVIDER_ID` from racing on provisioning. Fail-fast on conflict; stale-heartbeat takeover after `PROVIDER_SINGLETON_STALE_AFTER` (default 45s). SDK has no built-in leader election — we must do this ourselves.
 - **COSI resources**: `internal/resources/machine.go` — Machine typed resource backed by protobuf `api/specs/specs.proto`
 - **Provider metadata**: `internal/resources/meta/meta.go` — `ProviderID = "truenas"`
 
-### Transport auto-detection
-1. Unix socket (`/var/run/middleware/middlewared.sock`) — most secure, no API key needed, used when running as TrueNAS app
-2. WebSocket (`wss://<host>/websocket`) — for remote deployments, requires API key
+### Transport
+WebSocket (`wss://<host>/websocket`) — JSON-RPC 2.0 with API key auth. Required in all deployments. TrueNAS 25.10 removed implicit Unix socket authentication, so the socket transport was dropped in v0.14.0.
 
 ### Key SDK packages
 - `github.com/siderolabs/omni/client/pkg/infra` — Provider registration and lifecycle

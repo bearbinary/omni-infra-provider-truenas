@@ -1,13 +1,13 @@
 {# TrueNAS App Catalog — Docker Compose Jinja2 Template #}
 {# Rendered by the TrueNAS catalog system using ix_values + questions.yaml #}
 {# #}
-{# This provider uses JSON-RPC 2.0 via the Unix socket. REST v2.0 is NOT supported. #}
-{# The middleware socket is mounted for zero-config auth (no API key needed). #}
+{# This provider uses JSON-RPC 2.0 over WebSocket. REST v2.0 is NOT supported. #}
+{# TrueNAS 25.10 requires authentication on every call, so a TrueNAS API key #}
+{# is required even when running on the TrueNAS host itself. #}
 {# #}
-{# SECURITY NOTE: Secrets (omniServiceAccountKey) are stored in the TrueNAS app #}
-{# database and visible to anyone with TrueNAS admin access. This is inherent to #}
-{# the TrueNAS app catalog model. The Unix socket transport avoids needing a #}
-{# TrueNAS API key, reducing the secret surface area. #}
+{# SECURITY NOTE: Secrets (omniServiceAccountKey, truenasApiKey) are stored in #}
+{# the TrueNAS app database and visible to anyone with TrueNAS admin access. #}
+{# This is inherent to the TrueNAS app catalog model. #}
 
 {% set app_name = "omni-infra-provider-truenas" %}
 
@@ -23,13 +23,14 @@ services:
     network_mode: host
     user: "65534:65534"
     read_only: true
-    volumes:
-      # Middleware Unix socket — enables zero-config auth (no API key needed)
-      - /var/run/middleware:/var/run/middleware:ro
     environment:
       OMNI_ENDPOINT: "{{ values.omniEndpoint }}"
       OMNI_SERVICE_ACCOUNT_KEY: "{{ values.omniServiceAccountKey }}"
       OMNI_INSECURE_SKIP_VERIFY: "{{ values.omniInsecureSkipVerify | default(false) | lower }}"
+
+      TRUENAS_HOST: "{{ values.truenasHost | default('localhost') }}"
+      TRUENAS_API_KEY: "{{ values.truenasApiKey }}"
+      TRUENAS_INSECURE_SKIP_VERIFY: "{{ values.truenasInsecureSkipVerify | default(true) | lower }}"
 
       PROVIDER_ID: "{{ values.providerId | default('truenas') }}"
       PROVIDER_NAME: "{{ values.providerName | default('TrueNAS') }}"

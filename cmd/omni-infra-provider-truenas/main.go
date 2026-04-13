@@ -90,6 +90,7 @@ func run() error {
 		OTELInsecure:   envBool("OTEL_EXPORTER_OTLP_INSECURE", true),
 		OTELHeaders:    parseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
 		OTELProtocol:   envString("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc"),
+		OTELConsole:    envBool("OTEL_CONSOLE_EXPORT", false),
 		PyroscopeURL:   os.Getenv("PYROSCOPE_URL"),
 		PyroscopeUser:  os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
 		PyroscopePass:  os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
@@ -133,14 +134,13 @@ func run() error {
 	defaultBootMethod := envString("DEFAULT_BOOT_METHOD", "UEFI")
 	concurrency := envInt("CONCURRENCY", 4)
 
-	// Create TrueNAS client — auto-detects transport:
-	//   1. Unix socket (if /var/run/middleware/middlewared.sock exists) — no API key needed
-	//   2. WebSocket (requires TRUENAS_HOST + TRUENAS_API_KEY)
+	// Create TrueNAS client. WebSocket transport — requires TRUENAS_HOST + TRUENAS_API_KEY.
+	// TrueNAS 25.10 removed implicit Unix socket auth, so WebSocket with API key is the
+	// only supported transport.
 	tnClient, err := truenasclient.New(truenasclient.Config{
 		Host:               os.Getenv("TRUENAS_HOST"),
 		APIKey:             os.Getenv("TRUENAS_API_KEY"),
 		InsecureSkipVerify: envBool("TRUENAS_INSECURE_SKIP_VERIFY", false),
-		SocketPath:         os.Getenv("TRUENAS_SOCKET_PATH"),
 		MaxConcurrentCalls: envInt("TRUENAS_MAX_CONCURRENT_CALLS", 8),
 	})
 	if err != nil {
@@ -150,6 +150,8 @@ func run() error {
 
 	logger.Info("TrueNAS client connected",
 		zap.String("transport", tnClient.TransportName()),
+		zap.String("host", os.Getenv("TRUENAS_HOST")),
+		zap.Bool("tls_verify", !envBool("TRUENAS_INSECURE_SKIP_VERIFY", false)),
 	)
 
 	// Create provisioner

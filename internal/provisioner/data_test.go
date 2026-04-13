@@ -252,14 +252,14 @@ func TestExtensionMerge(t *testing.T) {
 
 		assert.Equal(t, []string{
 			"siderolabs/qemu-guest-agent",
-			"siderolabs/nfs-utils",
 			"siderolabs/util-linux-tools",
+			"siderolabs/iscsi-tools",
 		}, extensions)
 	})
 
 	t.Run("defaults plus custom", func(t *testing.T) {
 		data := Data{
-			Extensions: []string{"siderolabs/iscsi-tools", "siderolabs/drbd"},
+			Extensions: []string{"siderolabs/nfs-utils", "siderolabs/drbd"},
 		}
 		extensions := make([]string, 0, len(defaultExtensions)+len(data.Extensions))
 		extensions = append(extensions, defaultExtensions...)
@@ -267,9 +267,9 @@ func TestExtensionMerge(t *testing.T) {
 
 		assert.Equal(t, []string{
 			"siderolabs/qemu-guest-agent",
-			"siderolabs/nfs-utils",
 			"siderolabs/util-linux-tools",
 			"siderolabs/iscsi-tools",
+			"siderolabs/nfs-utils",
 			"siderolabs/drbd",
 		}, extensions)
 		assert.Len(t, extensions, 5)

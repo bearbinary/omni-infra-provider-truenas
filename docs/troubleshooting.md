@@ -8,19 +8,11 @@ Common issues and their solutions when running the Omni TrueNAS provider.
 
 The provider cannot connect to TrueNAS on startup.
 
-**Unix socket transport:**
-- Verify the socket is mounted: `ls -la /var/run/middleware/middlewared.sock`
-- If running as a TrueNAS app, ensure the volume mount is present in your compose config:
-  ```yaml
-  volumes:
-    - /var/run/middleware:/var/run/middleware:ro
-  ```
-- Check that TrueNAS middleware is running: `midclt call core.ping` on the TrueNAS host
-
-**WebSocket transport:**
 - Verify `TRUENAS_HOST` is reachable from the provider container: `curl -k https://<host>/websocket`
-- Confirm `TRUENAS_API_KEY` is valid — generate a new one in TrueNAS UI under **Credentials > API Keys**
+- Confirm `TRUENAS_API_KEY` is valid — generate a new one in TrueNAS UI under **Credentials > Local Users > root > API Keys**
 - If using a self-signed cert, ensure `TRUENAS_INSECURE_SKIP_VERIFY=true`
+- When running as a TrueNAS app, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`
+- Check that TrueNAS middleware is running: `midclt call core.ping` on the TrueNAS host
 
 ### "pool not found on TrueNAS"
 
@@ -183,8 +175,8 @@ With `LOG_LEVEL=debug`, every JSON-RPC request and response is logged. This is u
 
 | Mistake | Fix |
 |---|---|
-| Using TrueNAS SCALE < 25.04 | Upgrade to 25.04+ (Fangtooth) — the JSON-RPC API is required |
-| Setting `TRUENAS_HOST` when running on TrueNAS | Remove it — the Unix socket is auto-detected and preferred |
-| Missing `network_mode: host` in Docker | Add `network_mode: host` — required for the middleware socket |
+| Using TrueNAS SCALE < 25.10 | Upgrade to 25.10+ (Goldeye) — v0.13.2+ requires the JSON-RPC 2.0 WebSocket API |
+| Omitting `TRUENAS_HOST` / `TRUENAS_API_KEY` when running on TrueNAS | Set `TRUENAS_HOST=localhost`, create an API key, and set `TRUENAS_INSECURE_SKIP_VERIFY=true` |
+| Missing `network_mode: host` in Docker | Add `network_mode: host` — required for the provider to reach `localhost:443` |
 | Pool name mismatch | Pool names are case-sensitive — check with `pool.query` |
 | No bridge interface created | Create one in TrueNAS UI under Network > Interfaces first |

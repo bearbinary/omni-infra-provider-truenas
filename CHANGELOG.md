@@ -2,7 +2,27 @@
 
 All notable changes to this project are documented here.
 
-## [v0.13.2] — Fix Unix Socket Transport for TrueNAS 25.10
+## [v0.14.0] — WebSocket-Only Transport, Longhorn Default
+
+### Breaking / Behavior Changes
+- **Drop Unix socket transport — WebSocket + API key required** — TrueNAS 25.10 removed implicit authentication on the `middlewared.sock` Unix socket. Every JSON-RPC call now returns `ENOTAUTHENTICATED` unless the client has authenticated first, which means the "zero-auth Unix socket" path is no longer possible. The transport auto-detection logic, the `socketTransport`, `TRUENAS_SOCKET_PATH` env var, and the socket mount have all been removed. `TRUENAS_HOST` and `TRUENAS_API_KEY` are now required in all deployments. When running as a TrueNAS app, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`.
+
+### Features
+- **Console OTEL exporters (opt-in)** — Set `OTEL_CONSOLE_EXPORT=true` to emit traces, metrics, and logs to stdout in addition to the configured gRPC endpoint. Off by default to avoid log spam in production. Traces and logs use pretty-printed JSON; metrics print every 60s. Useful for local debugging without wiring up a collector.
+- **Startup log includes TrueNAS host and TLS verify status** — The `TrueNAS client connected` log line now shows `host=<truenas-host>` and `tls_verify=<bool>` to make misconfiguration easier to spot.
+- **Add `siderolabs/iscsi-tools` to default extensions** — Longhorn (the default storage) uses iSCSI internally to attach replicas to pods. Previously users had to manually add `iscsi-tools` to their MachineClass `extensions` list or PVCs would sit in Pending forever. Now it's baked in alongside `qemu-guest-agent` and `util-linux-tools`.
+- **Longhorn install script loads `iscsi_tcp` kernel module** — `scripts/install-longhorn.sh` now includes `machine.kernel.modules: [iscsi_tcp]` in the Talos config patch. Required for Longhorn to establish iSCSI sessions between replicas and pods.
+
+### Removed
+- `socketTransport` implementation and all Unix-socket-specific code paths
+- `TRUENAS_SOCKET_PATH` environment variable
+- `SocketPath` field on `client.Config`
+- Unix socket host mount from the TrueNAS app definition
+- **`siderolabs/nfs-utils` from default Talos extensions** — the provider no longer manages NFS storage, so the NFS client is no longer needed in every VM. Users who want democratic-csi NFS mode or manual NFS mounts can add `siderolabs/nfs-utils` to their MachineClass `extensions` field.
+
+## [v0.13.2] — Fix Unix Socket Transport for TrueNAS 25.10 (SUPERSEDED — use v0.14.0+)
+
+> ⚠️ **KNOWN BROKEN.** The Unix socket fix in v0.13.2 was incomplete. TrueNAS 25.10's middleware requires authentication on every JSON-RPC call, so the "zero-auth Unix socket" path is no longer viable. Upgrade to v0.14.0, which uses WebSocket with mandatory API key authentication.
 
 ### Bug Fixes
 - **Fix Unix socket transport for TrueNAS 25.10+** — TrueNAS 25.10 (Goldeye) changed the middleware Unix socket from raw JSON-RPC to JSON-RPC 2.0 over WebSocket. The provider now uses WebSocket-over-Unix with pure JSON-RPC 2.0 framing (no DDP handshake), matching `midclt`'s `JSONRPCClient`. Without this fix, the provider crash-loops with `invalid character 'H' looking for beginning of value` or `i/o timeout` when deployed as a TrueNAS app.
@@ -254,6 +274,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.14.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.0
 [v0.13.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.2
 [v0.13.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.1
 [v0.13.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.0
