@@ -61,8 +61,8 @@ func dialUnixWebSocket(socketPath string) (*websocket.Conn, error) {
 	}
 
 	// The hostname is ignored for Unix sockets — "localhost" is a dummy.
-	// The Python ws+unix:// scheme sends no HTTP path; gorilla maps "/" to the root.
-	conn, _, err := dialer.Dial("ws://localhost/", nil)
+	// Path must be /api/current — this is the JSON-RPC 2.0 endpoint on TrueNAS 25.10+.
+	conn, _, err := dialer.Dial("ws://localhost/api/current", nil)
 	if err != nil {
 		return nil, fmt.Errorf("websocket handshake over unix socket failed: %w", err)
 	}
