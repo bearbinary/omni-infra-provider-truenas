@@ -126,6 +126,8 @@ helm install longhorn longhorn/longhorn \
 kubectl patch storageclass longhorn -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 ```
 
+Longhorn's Helm install creates two StorageClasses: `longhorn` (dynamic provisioning -- use this for all PVCs) and `longhorn-static` (for pre-existing volumes you created manually). Kubernetes StorageClasses have no description field, so the naming convention is the only way to communicate intent.
+
 ### Why Longhorn
 
 - **No TrueNAS dependency** -- cluster storage is self-contained and works in any deployment topology
