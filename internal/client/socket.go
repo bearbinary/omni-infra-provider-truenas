@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -17,18 +18,27 @@ import (
 )
 
 // socketTransport implements Transport over the TrueNAS middleware Unix socket
-// using WebSocket protocol. No authentication is required — the socket is
-// trusted for local processes.
+// using WebSocket with JSON-RPC 2.0 protocol. No authentication is required —
+// the socket is trusted for local processes.
 //
-// TrueNAS 25.10+ uses WebSocket over the Unix socket (same DDP-like protocol
-// as the remote WebSocket transport). The Python midclt client connects via
-// ws+unix:// — we do the same with gorilla/websocket and a custom Unix dialer.
+// TrueNAS 25.10+ uses the JSONRPCClient protocol over the Unix socket:
+//   - WebSocket connection to the socket file (no HTTP path needed)
+//   - Pure JSON-RPC 2.0 messages (NOT the DDP protocol used by the remote /websocket endpoint)
+//   - No connect handshake — just send {"jsonrpc":"2.0","method":...} directly
+//   - No authentication needed for local Unix socket
 type socketTransport struct {
 	conn          *websocket.Conn
 	socketPath    string
 	mu            sync.Mutex
 	wg            sync.WaitGroup
 	lastReconnect time.Time
+}
+
+// socketRequestID generates unique request IDs for socket transport calls.
+var socketRequestID atomic.Int64
+
+func nextSocketRequestID() string {
+	return fmt.Sprintf("%d", socketRequestID.Add(1))
 }
 
 // socketAvailable checks if the middleware Unix socket exists and is connectable.
@@ -50,9 +60,9 @@ func dialUnixWebSocket(socketPath string) (*websocket.Conn, error) {
 		HandshakeTimeout: 10 * time.Second,
 	}
 
-	// The URL path must be /api/current for TrueNAS 25.10+ JSON-RPC 2.0.
 	// The hostname is ignored for Unix sockets — "localhost" is a dummy.
-	conn, _, err := dialer.Dial("ws://localhost/api/current", nil)
+	// The Python ws+unix:// scheme sends no HTTP path; gorilla maps "/" to the root.
+	conn, _, err := dialer.Dial("ws://localhost/", nil)
 	if err != nil {
 		return nil, fmt.Errorf("websocket handshake over unix socket failed: %w", err)
 	}
@@ -61,25 +71,17 @@ func dialUnixWebSocket(socketPath string) (*websocket.Conn, error) {
 }
 
 // newSocketTransport creates a transport that communicates via WebSocket over
-// the middleware Unix socket. Performs the DDP connect handshake but skips
-// authentication (Unix socket is trusted).
+// the middleware Unix socket using JSON-RPC 2.0. No handshake or auth needed.
 func newSocketTransport(path string) (*socketTransport, error) {
 	conn, err := dialUnixWebSocket(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot connect to middleware socket at %s: %w", path, err)
 	}
 
-	t := &socketTransport{
+	return &socketTransport{
 		conn:       conn,
 		socketPath: path,
-	}
-
-	if err := t.connect(); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("connect handshake failed: %w", err)
-	}
-
-	return t, nil
+	}, nil
 }
 
 func (t *socketTransport) Name() string {
@@ -100,36 +102,6 @@ func (t *socketTransport) Close() error {
 	}
 
 	return t.conn.Close()
-}
-
-// connect sends the initial DDP connect handshake (same as wsTransport).
-func (t *socketTransport) connect() error {
-	t.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)) //nolint:errcheck
-
-	if err := t.conn.WriteJSON(wsRequest{
-		Msg:     "connect",
-		Version: "1",
-		Support: []string{"1"},
-	}); err != nil {
-		return fmt.Errorf("failed to send connect: %w", err)
-	}
-
-	t.conn.SetReadDeadline(time.Now().Add(10 * time.Second)) //nolint:errcheck
-
-	var resp wsResponse
-	if err := t.conn.ReadJSON(&resp); err != nil {
-		return fmt.Errorf("failed to read connect response: %w", err)
-	}
-
-	if resp.Msg != "connected" {
-		return fmt.Errorf("unexpected connect response: %s", resp.Msg)
-	}
-
-	// Clear deadlines for normal operation
-	t.conn.SetReadDeadline(time.Time{})  //nolint:errcheck
-	t.conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
-
-	return nil
 }
 
 // reconnect closes the current connection and establishes a new one.
@@ -167,19 +139,13 @@ func (t *socketTransport) reconnect() error {
 
 		t.conn = conn
 
-		if err := t.connect(); err != nil {
-			_ = t.conn.Close()
-			lastErr = err
-			continue
-		}
-
 		return nil
 	}
 
 	return fmt.Errorf("reconnect failed after %d attempts: %w", maxReconnectAttempts, lastErr)
 }
 
-// Call sends a method call over the WebSocket-over-Unix-socket connection.
+// Call sends a JSON-RPC 2.0 method call over the WebSocket-over-Unix-socket.
 // On connection failure, attempts to reconnect and retry once.
 func (t *socketTransport) Call(ctx context.Context, method string, params any, result any) error {
 	t.wg.Add(1)
@@ -208,15 +174,38 @@ func (t *socketTransport) Call(ctx context.Context, method string, params any, r
 	return t.doCall(ctx, method, params, result)
 }
 
-// doCall performs a single call without reconnect logic.
-func (t *socketTransport) doCall(ctx context.Context, method string, params any, result any) error {
-	reqID := nextWSRequestID()
+// jsonRPC2Request is a JSON-RPC 2.0 request (used by the Unix socket transport).
+type jsonRPC2Request struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	ID      string `json:"id"`
+	Params  any    `json:"params,omitempty"`
+}
 
-	req := wsRequest{
-		Msg:    "method",
-		Method: method,
-		ID:     reqID,
-		Params: normalizeParams(params),
+// jsonRPC2Response is a JSON-RPC 2.0 response (used by the Unix socket transport).
+type jsonRPC2Response struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      string          `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *jsonRPC2Error  `json:"error,omitempty"`
+}
+
+// jsonRPC2Error is a JSON-RPC 2.0 error object.
+type jsonRPC2Error struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// doCall performs a single JSON-RPC 2.0 call without reconnect logic.
+func (t *socketTransport) doCall(ctx context.Context, method string, params any, result any) error {
+	reqID := nextSocketRequestID()
+
+	req := jsonRPC2Request{
+		JSONRPC: "2.0",
+		Method:  method,
+		ID:      reqID,
+		Params:  normalizeParams(params),
 	}
 
 	deadline := time.Now().Add(30 * time.Second)
@@ -232,19 +221,20 @@ func (t *socketTransport) doCall(ctx context.Context, method string, params any,
 	}
 
 	for {
-		var resp wsResponse
+		var resp jsonRPC2Response
 		if err := t.conn.ReadJSON(&resp); err != nil {
 			return fmt.Errorf("failed to read response: %w", err)
 		}
 
+		// Skip messages that don't match our request ID (e.g., job updates)
 		if resp.ID != reqID {
 			continue
 		}
 
 		if resp.Error != nil {
 			return &APIError{
-				Code:    resp.Error.Error,
-				Message: resp.Error.Reason,
+				Code:    resp.Error.Code,
+				Message: resp.Error.Message,
 			}
 		}
 

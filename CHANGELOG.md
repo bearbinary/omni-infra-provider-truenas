@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 ## [v0.13.2] — Fix Unix Socket Transport for TrueNAS 25.10
 
 ### Bug Fixes
-- **Fix Unix socket transport for TrueNAS 25.10+** — TrueNAS 25.10 (Goldeye) changed the middleware Unix socket from raw JSON-RPC to WebSocket protocol (same as the remote transport). The provider's socket transport now performs a proper WebSocket handshake over the Unix socket with the DDP connect sequence, matching the behavior of TrueNAS's own `midclt` CLI. Without this fix, the provider crash-loops with `invalid character 'H' looking for beginning of value` when deployed as a TrueNAS app.
+- **Fix Unix socket transport for TrueNAS 25.10+** — TrueNAS 25.10 (Goldeye) changed the middleware Unix socket from raw JSON-RPC to JSON-RPC 2.0 over WebSocket. The provider now uses WebSocket-over-Unix with pure JSON-RPC 2.0 framing (no DDP handshake), matching `midclt`'s `JSONRPCClient`. Without this fix, the provider crash-loops with `invalid character 'H' looking for beginning of value` or `i/o timeout` when deployed as a TrueNAS app.
 
 ### Housekeeping
 - Remove unused raw JSON-RPC request/response types (superseded by WebSocket protocol)
