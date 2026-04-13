@@ -7,6 +7,9 @@ All notable changes to this project are documented here.
 ### Bug Fixes
 - **Fix Unix socket transport for TrueNAS 25.10+** — TrueNAS 25.10 (Goldeye) changed the middleware Unix socket from raw JSON-RPC to JSON-RPC 2.0 over WebSocket. The provider now uses WebSocket-over-Unix with pure JSON-RPC 2.0 framing (no DDP handshake), matching `midclt`'s `JSONRPCClient`. Without this fix, the provider crash-loops with `invalid character 'H' looking for beginning of value` or `i/o timeout` when deployed as a TrueNAS app.
 
+### CI
+- **Eliminate QEMU from Docker builds** — The Dockerfile no longer compiles Go inside the container. Pre-built binaries from Go's native cross-compilation are `COPY`ed directly into distroless, removing the QEMU emulation bottleneck for arm64. Release builds that took 10+ minutes now complete in under 30 seconds.
+
 ### Housekeeping
 - Remove unused raw JSON-RPC request/response types (superseded by WebSocket protocol)
 - Add reconnect with exponential backoff to Unix socket transport (matches WebSocket transport behavior)

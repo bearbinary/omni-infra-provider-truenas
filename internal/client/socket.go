@@ -78,10 +78,29 @@ func newSocketTransport(path string) (*socketTransport, error) {
 		return nil, fmt.Errorf("cannot connect to middleware socket at %s: %w", path, err)
 	}
 
-	return &socketTransport{
+	t := &socketTransport{
 		conn:       conn,
 		socketPath: path,
-	}, nil
+	}
+
+	// The TrueNAS JSONRPCClient sends core.set_options as its first call after
+	// WebSocket open. The middleware may require this before accepting other calls.
+	if err := t.initSession(); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("session init failed: %w", err)
+	}
+
+	return t, nil
+}
+
+// initSession sends core.set_options to configure the middleware session.
+// The TrueNAS JSONRPCClient does this immediately after WebSocket open.
+func (t *socketTransport) initSession() error {
+	var result any
+
+	return t.doCall(context.Background(), "core.set_options", []any{map[string]any{
+		"legacy_jobs": false,
+	}}, &result)
 }
 
 func (t *socketTransport) Name() string {

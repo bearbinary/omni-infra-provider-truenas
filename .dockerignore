@@ -5,7 +5,10 @@
 .claude/
 .agents/
 .idea/
-_out/
+# _out/ binaries are needed by the Dockerfile (pre-built, no QEMU)
+# Exclude large artifacts that shouldn't be in the Docker context
+_out/*.iso
+_out/*.tar
 *.md
 !README.md
 docs/
