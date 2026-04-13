@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## [v0.13.2] — Fix Unix Socket Transport for TrueNAS 25.10
+
+### Bug Fixes
+- **Fix Unix socket transport for TrueNAS 25.10+** — TrueNAS 25.10 (Goldeye) changed the middleware Unix socket from raw JSON-RPC to WebSocket protocol (same as the remote transport). The provider's socket transport now performs a proper WebSocket handshake over the Unix socket with the DDP connect sequence, matching the behavior of TrueNAS's own `midclt` CLI. Without this fix, the provider crash-loops with `invalid character 'H' looking for beginning of value` when deployed as a TrueNAS app.
+
+### Housekeeping
+- Remove unused raw JSON-RPC request/response types (superseded by WebSocket protocol)
+- Add reconnect with exponential backoff to Unix socket transport (matches WebSocket transport behavior)
+
 ## [v0.13.1] — Grafana Cloud Observability
 
 ### Features
@@ -242,6 +251,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.13.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.2
 [v0.13.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.1
 [v0.13.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.0
 [v0.12.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.12.0
