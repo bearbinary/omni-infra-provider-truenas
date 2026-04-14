@@ -498,6 +498,38 @@ Download `sbom.spdx.json` from the [release assets](https://github.com/bearbinar
 
 ---
 
+## Grafana Dashboards
+
+Four ready-to-import Grafana dashboards ship with each release. They cover VM health, provisioning latency, TrueNAS API performance, and cleanup metrics.
+
+### Quick install (recommended)
+
+Download the dashboard bundle from the latest release and import via the Grafana UI:
+
+```bash
+curl -L https://github.com/bearbinary/omni-infra-provider-truenas/releases/latest/download/grafana-dashboards.zip -o dashboards.zip
+unzip dashboards.zip -d dashboards/
+```
+
+Then in Grafana: **Dashboards → New → Import → Upload JSON file**. When prompted, select your Prometheus, Tempo, Loki, and Pyroscope data sources.
+
+### Import from grafana.com
+
+Once approved on [grafana.com/dashboards](https://grafana.com/grafana/dashboards/), you can import by ID from **Dashboards → New → Import → Paste ID**.
+
+| Dashboard | ID | Description |
+|---|---|---|
+| Omni TrueNAS Provider — Overview | _pending_ | VM count, host health, pool status, and provisioning rate |
+| Omni TrueNAS Provider — VM Provisioning | _pending_ | Per-step provision/deprovision latency, error categories, ISO cache hits |
+| Omni TrueNAS Provider — TrueNAS API Performance | _pending_ | JSON-RPC call latency by method, WebSocket reconnects, rate limit queue depth |
+| Omni TrueNAS Provider — Cleanup & Maintenance | _pending_ | Stale ISO cleanup, orphan VM detection, zvol reclaim metrics |
+
+### Local dev stack
+
+Run `docker compose -f deploy/observability/docker-compose.yaml up -d` to start Prometheus, Tempo, Loki, Pyroscope, and Grafana locally. Dashboards are autoloaded at [localhost:3000](http://localhost:3000).
+
+---
+
 ## Development
 
 ```bash
