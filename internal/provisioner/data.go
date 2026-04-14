@@ -107,9 +107,12 @@ func (d *Data) ApplyDefaults(cfg ProviderConfig) {
 	// Expand storage_disk_size into additional_disks[0].
 	// This is a convenience shorthand for adding a dedicated data disk for Longhorn:
 	// the emitted UserVolumeConfig is named "longhorn" so the volume mounts at
-	// /var/mnt/longhorn, which matches Longhorn's defaultDataPath.
+	// /var/mnt/longhorn, which matches Longhorn's defaultDataPath. The
+	// provisioner also emits a Longhorn operational patch (iscsi_tcp kernel
+	// module + /var/lib/longhorn bind mount + vm.overcommit_memory sysctl)
+	// when it sees a disk named "longhorn" — see buildLonghornOperationalPatch.
 	if d.StorageDiskSize > 0 {
-		storageDisk := AdditionalDisk{Size: d.StorageDiskSize, Name: "longhorn"}
+		storageDisk := AdditionalDisk{Size: d.StorageDiskSize, Name: LonghornVolumeName}
 		d.AdditionalDisks = append([]AdditionalDisk{storageDisk}, d.AdditionalDisks...)
 		d.StorageDiskSize = 0 // consumed — prevent double-expansion
 	}

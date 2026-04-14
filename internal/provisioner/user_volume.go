@@ -79,6 +79,11 @@ func buildUserVolumePatch(disks []AdditionalDisk) ([]byte, error) {
 		// first discovered disk.
 		selector := fmt.Sprintf("!system_disk && disk.size >= %du && disk.size <= %du", low, high)
 
+		// Omit maxSize entirely when we want the volume to grow unbounded.
+		// Talos validates minSize <= maxSize, so emitting `maxSize: 0` fails
+		// with "min size is greater than max size" — observed on a real
+		// cluster in v0.14.3–v0.14.5. Per Talos v1.12 UserVolumeConfig docs,
+		// an unset maxSize with grow:true means "fill the matched disk".
 		doc := map[string]any{
 			"apiVersion": "v1alpha1",
 			"kind":       "UserVolumeConfig",
@@ -88,7 +93,6 @@ func buildUserVolumePatch(disks []AdditionalDisk) ([]byte, error) {
 					"match": selector,
 				},
 				"minSize": "1GiB",
-				"maxSize": 0,
 				"grow":    true,
 			},
 			"filesystem": map[string]any{

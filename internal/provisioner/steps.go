@@ -509,7 +509,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		}
 
 		if patchData != nil {
-			if cpErr := pctx.CreateConfigPatch(ctx, "data-volumes", patchData); cpErr != nil {
+			if cpErr := pctx.CreateConfigPatch(ctx, patchName("data-volumes", requestID), patchData); cpErr != nil {
 				return fmt.Errorf("failed to apply UserVolumeConfig patch: %w", cpErr)
 			}
 
@@ -520,6 +520,26 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 			logger.Info("applied UserVolumeConfig patch for additional disks",
 				zap.Strings("volumes", volumeNames),
+				zap.String("vm_name", vmName),
+			)
+		}
+
+		// Emit the Longhorn operational patch if any disk is named "longhorn".
+		// This makes the node Longhorn-ready (iscsi_tcp module, bind mount,
+		// sysctl) at provision time, so the only remaining step for the user
+		// is `helm install longhorn`. See buildLonghornOperationalPatch for
+		// the three silent failure modes this prevents.
+		if hasLonghornDisk(data.AdditionalDisks) {
+			longhornPatch, longhornErr := buildLonghornOperationalPatch()
+			if longhornErr != nil {
+				return fmt.Errorf("failed to build Longhorn operational patch: %w", longhornErr)
+			}
+
+			if cpErr := pctx.CreateConfigPatch(ctx, patchName("longhorn-ops", requestID), longhornPatch); cpErr != nil {
+				return fmt.Errorf("failed to apply Longhorn operational patch: %w", cpErr)
+			}
+
+			logger.Info("applied Longhorn operational patch",
 				zap.String("vm_name", vmName),
 			)
 		}
@@ -636,7 +656,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			return fmt.Errorf("failed to build MTU config patch: %w", patchErr)
 		}
 
-		if cpErr := pctx.CreateConfigPatch(ctx, "nic-mtu", patchData); cpErr != nil {
+		if cpErr := pctx.CreateConfigPatch(ctx, patchName("nic-mtu", requestID), patchData); cpErr != nil {
 			return fmt.Errorf("failed to apply MTU config patch: %w", cpErr)
 		}
 
@@ -654,7 +674,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		}
 
 		if patchData != nil {
-			if cpErr := pctx.CreateConfigPatch(ctx, "advertised-subnets", patchData); cpErr != nil {
+			if cpErr := pctx.CreateConfigPatch(ctx, patchName("advertised-subnets", requestID), patchData); cpErr != nil {
 				return fmt.Errorf("failed to apply advertised_subnets config patch: %w", cpErr)
 			}
 
@@ -676,7 +696,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		case subnet != "":
 			patchData, patchErr := buildAdvertisedSubnetsPatch(subnet)
 			if patchErr == nil && patchData != nil {
-				if cpErr := pctx.CreateConfigPatch(ctx, "advertised-subnets", patchData); cpErr != nil {
+				if cpErr := pctx.CreateConfigPatch(ctx, patchName("advertised-subnets", requestID), patchData); cpErr != nil {
 					return fmt.Errorf("failed to apply auto-detected advertised_subnets config patch: %w", cpErr)
 				}
 

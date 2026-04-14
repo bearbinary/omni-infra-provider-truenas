@@ -56,6 +56,14 @@ func TestBuildUserVolumePatch_SingleDisk_Longhorn(t *testing.T) {
 	// 150 GiB = 161061273600 bytes. ±1 MiB window.
 	assert.Contains(t, s, "disk.size >= 161060225024u", "lower bound must be 150 GiB minus 1 MiB")
 	assert.Contains(t, s, "disk.size <= 161062322176u", "upper bound must be 150 GiB plus 1 MiB")
+
+	// Regression for v0.14.3–v0.14.5: emitting `maxSize: 0` made Talos
+	// reject the document with "min size is greater than max size" because
+	// it parses 0 as a literal byte count, not "unbounded". The correct
+	// way to express "fill the disk" in Talos UserVolumeConfig is to omit
+	// maxSize and rely on grow:true. Fail loudly if the key reappears.
+	assert.NotContains(t, s, "maxSize",
+		"maxSize must be omitted — emitting maxSize:0 fails Talos validation with 'min size is greater than max size'")
 }
 
 func TestBuildUserVolumePatch_MultipleDisks_DistinctSelectors(t *testing.T) {

@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.14.6] — Fix every storage-side gap that made Longhorn silently broken
+
+> **Storage-side hardening release.** Three independent bugs in v0.13.0–v0.14.5 left users with non-functional or silently-broken Longhorn deployments. This release fixes all three plus adds the Talos-side operational config the `install-longhorn.sh` script used to apply, so `storage_disk_size: 100` in a MachineClass is now sufficient for a Longhorn-ready worker. **Migration required for any existing cluster** — see end of entry.
+
+### Fixes
+- **Drop `maxSize: 0` from emitted `UserVolumeConfig`** — The patch builder added in v0.14.3 emitted `maxSize: 0` intending "unbounded", but Talos parses 0 as a literal byte count and rejects the document with `UserVolumeConfig/longhorn: min size is greater than max size`. Any worker that received the patch was stuck at Talos `stage: 3` with `configuptodate: false` and never finished joining the cluster. Per Talos v1.12 docs, the correct way to express "fill the disk" is to **omit** `maxSize` and rely on `grow: true`. Fixed in `buildUserVolumePatch`. Pinned by `TestBuildUserVolumePatch_SingleDisk_Longhorn` (now also asserts `maxSize` is absent from the YAML).
+- **Fix `CreateConfigPatch` name collision across `MachineRequests`** — The Omni SDK's `provision.Context.CreateConfigPatch(ctx, name, data)` uses the literal `name` as the resource ID and upserts on every call. Every MachineRequest reconciling with the same unqualified name (e.g. `"data-volumes"`) wrote to the SAME `ConfigPatchRequest` resource — last writer wins, the other 5 of 6 machines silently went without their patch. Verified on a real cluster: 6 MachineRequests, 1 surviving `data-volumes` ConfigPatchRequest labeled for whichever request reconciled last. Same bug applied to `nic-mtu` and `advertised-subnets` patches. Fixed by introducing `patchName(kind, requestID)` helper and threading the request ID into all 4 call sites in `stepCreateVM`. Pinned by `TestPatchName_IncludesRequestID`, `TestPatchName_DistinctAcrossRequests`, `TestPatchName_DistinctAcrossKinds`.
+- **Auto-emit Longhorn operational patch when a disk is named `longhorn`** — From v0.13.0 to v0.14.5 the provider attached the Longhorn data disk and (from v0.14.3) mounted it at `/var/mnt/longhorn`, but the **Talos-side bits** that make the node Longhorn-ready had to be applied by `scripts/install-longhorn.sh` — which most users either forgot to run or ran with the broken self-bind from v0.13.0–v0.14.2. The provider now emits a `longhorn-ops-<requestID>` patch alongside the `UserVolumeConfig` whenever any disk is named `longhorn` (set implicitly by `storage_disk_size`, explicitly by `additional_disks: [{name: longhorn, ...}]`). The patch loads the `iscsi_tcp` kernel module (without it, Longhorn iSCSI replica attachment fails and PVCs stay Pending forever), binds `/var/mnt/longhorn` → `/var/lib/longhorn` with `bind,rshared,rw` (without it, Longhorn writes replicas to Talos's ephemeral root partition — silent data loss on node replace), and sets `vm.overcommit_memory: "1"` (recommended for replica process stability). After v0.14.6, `helm install longhorn` is the only remaining user step. Pinned by 5 new test cases asserting source≠destination on the bind mount, `rshared` option present, `iscsi_tcp` module loaded, `vm.overcommit_memory=1` set, and `LonghornVolumeName` constant equals `"longhorn"`.
+
+### Migration
+
+Existing clusters provisioned on v0.13.0–v0.14.5 need cleanup before v0.14.6 starts emitting the new patches:
+
+```bash
+# 1. Delete the stuck data-volumes ConfigPatchRequest (collision artifact, has bad maxSize:0)
+omnictl delete configpatchrequest data-volumes --namespace=infra-provider
+
+# 2. If you have a manual Longhorn patch (e.g. longhorn-data-disk), delete it —
+#    the provider now emits an equivalent patch automatically.
+#    Two UserVolumeConfigs both named "longhorn" applied to the same machine
+#    will be rejected by Talos.
+omnictl delete configpatch longhorn-data-disk
+
+# 3. Reprovision worker VMs so they pick up the per-request patches and the
+#    operational patch on first boot. Easiest path: scale the worker
+#    MachineRequestSet down to 0 then back up to N.
+
+# 4. After workers come back up, install/upgrade Longhorn via Helm.
+#    scripts/install-longhorn.sh is now optional — it still works (the Talos
+#    patch it applies is a superset of what the provider emits, so it's a
+#    no-op merge), but the only step that matters going forward is the Helm
+#    install itself.
+helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
+  --set defaultSettings.defaultDataPath=/var/lib/longhorn
+```
+
 ## [v0.14.5] — Fix Grafana Cloud OTLP 404s (for real this time) + run as uid 65534
 
 ### Fixes
@@ -333,6 +369,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.14.6]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.6
 [v0.14.5]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.5
 [v0.14.4]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.4
 [v0.14.3]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.3
