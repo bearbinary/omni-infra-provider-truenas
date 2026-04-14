@@ -7,7 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"path"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
@@ -221,13 +224,40 @@ func buildGRPCExporters(ctx context.Context, cfg Config) (sdktrace.SpanExporter,
 	return traceExp, metricExp, logExp, nil
 }
 
+// signalEndpoint appends the per-signal path (e.g. "/v1/traces") to an OTLP
+// base URL. Unlike the SDK's own `OTEL_EXPORTER_OTLP_ENDPOINT` env-var handler,
+// `otlptracehttp.WithEndpointURL(url)` uses the URL path *verbatim* and does
+// NOT append signal paths — it follows the `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+// per-signal-URL semantic, not the base-URL semantic. So if a user sets
+// `OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway.../otlp` (a base URL, as
+// Grafana Cloud documents), forwarding that value through WithEndpointURL
+// produces requests to `.../otlp` instead of `.../otlp/v1/traces`, and the
+// gateway returns 404. This helper does the appending the SDK would have done
+// if we'd let it read the env var itself.
+//
+// Returns the input unchanged if parsing fails — upstream SDK will surface the
+// error when it tries to connect, which is a clearer signal than a nil-guarded
+// silent failure here.
+func signalEndpoint(baseURL, signalPath string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return baseURL
+	}
+
+	u.Path = path.Join(strings.TrimRight(u.Path, "/"), signalPath)
+
+	return u.String()
+}
+
 func buildHTTPExporters(ctx context.Context, cfg Config) (sdktrace.SpanExporter, sdkmetric.Exporter, sdklog.Exporter, error) {
-	// WithEndpointURL accepts a full URL (scheme + host + path). The exporter
-	// appends /v1/traces, /v1/metrics, /v1/logs to the path — Grafana Cloud's
-	// /otlp base path becomes /otlp/v1/traces etc., which is correct.
-	traceOpts := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(cfg.OTELEndpoint)}
-	metricOpts := []otlpmetrichttp.Option{otlpmetrichttp.WithEndpointURL(cfg.OTELEndpoint)}
-	logOpts := []otlploghttp.Option{otlploghttp.WithEndpointURL(cfg.OTELEndpoint)}
+	// Append the per-signal path to the base URL ourselves. See signalEndpoint
+	// above for why WithEndpointURL can't do this. For Grafana Cloud users
+	// setting OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway.../otlp, the
+	// resulting per-exporter URLs are .../otlp/v1/traces, .../v1/metrics,
+	// .../v1/logs — which is what Grafana Cloud actually serves.
+	traceOpts := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(signalEndpoint(cfg.OTELEndpoint, "/v1/traces"))}
+	metricOpts := []otlpmetrichttp.Option{otlpmetrichttp.WithEndpointURL(signalEndpoint(cfg.OTELEndpoint, "/v1/metrics"))}
+	logOpts := []otlploghttp.Option{otlploghttp.WithEndpointURL(signalEndpoint(cfg.OTELEndpoint, "/v1/logs"))}
 
 	if cfg.OTELInsecure {
 		traceOpts = append(traceOpts, otlptracehttp.WithInsecure())

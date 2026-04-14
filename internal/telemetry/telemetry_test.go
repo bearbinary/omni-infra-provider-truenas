@@ -16,6 +16,81 @@ import (
 	"go.opentelemetry.io/otel"
 )
 
+// TestSignalEndpoint_AppendsPath pins the URL-join behavior that fixes the
+// 404s seen with Grafana Cloud OTLP. The v0.14.1–v0.14.4 implementation
+// forwarded OTEL_EXPORTER_OTLP_ENDPOINT verbatim through WithEndpointURL,
+// which the SDK uses as a per-signal URL with no path appending. For a
+// user-set base URL like .../otlp, requests hit .../otlp and return 404.
+// This test asserts we now append /v1/<signal> so requests reach the
+// signal-specific endpoints Grafana Cloud serves.
+func TestSignalEndpoint_AppendsPath(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		base     string
+		signal   string
+		expected string
+	}{
+		{
+			name:     "grafana cloud base with /otlp suffix (the bug in v0.14.1-v0.14.4)",
+			base:     "https://otlp-gateway-prod-us-east-3.grafana.net/otlp",
+			signal:   "/v1/traces",
+			expected: "https://otlp-gateway-prod-us-east-3.grafana.net/otlp/v1/traces",
+		},
+		{
+			name:     "grafana cloud base metrics",
+			base:     "https://otlp-gateway-prod-us-east-3.grafana.net/otlp",
+			signal:   "/v1/metrics",
+			expected: "https://otlp-gateway-prod-us-east-3.grafana.net/otlp/v1/metrics",
+		},
+		{
+			name:     "grafana cloud base logs",
+			base:     "https://otlp-gateway-prod-us-east-3.grafana.net/otlp",
+			signal:   "/v1/logs",
+			expected: "https://otlp-gateway-prod-us-east-3.grafana.net/otlp/v1/logs",
+		},
+		{
+			name:     "trailing slash in base is normalized",
+			base:     "https://otlp.example.com/otlp/",
+			signal:   "/v1/traces",
+			expected: "https://otlp.example.com/otlp/v1/traces",
+		},
+		{
+			name:     "host-only base (no path) just gets the signal path",
+			base:     "https://otel-collector.default.svc:4318",
+			signal:   "/v1/traces",
+			expected: "https://otel-collector.default.svc:4318/v1/traces",
+		},
+		{
+			name:     "root-path base gets the signal path appended cleanly",
+			base:     "http://localhost:4318/",
+			signal:   "/v1/traces",
+			expected: "http://localhost:4318/v1/traces",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := signalEndpoint(tc.base, tc.signal)
+			assert.Equal(t, tc.expected, got)
+		})
+	}
+}
+
+// TestSignalEndpoint_InvalidURL_PassesThrough keeps the fallback contract:
+// a bad URL comes back unchanged instead of silently becoming something
+// weird. The OTLP exporter will raise a clear error at connection time,
+// which is more actionable than a mangled URL.
+func TestSignalEndpoint_InvalidURL_PassesThrough(t *testing.T) {
+	t.Parallel()
+
+	got := signalEndpoint("not a url at all", "/v1/traces")
+	assert.Equal(t, "not a url at all", got)
+}
+
 func TestInit_NoConfig(t *testing.T) {
 	shutdown, err := Init(context.Background(), Config{})
 	require.NoError(t, err)

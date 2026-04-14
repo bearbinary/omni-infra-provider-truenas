@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.14.5] — Fix Grafana Cloud OTLP 404s (for real this time) + run as uid 65534
+
+### Fixes
+- **Fix OTLP 404s on Grafana Cloud (the v0.14.1 fix was wrong)** — v0.14.1 claimed to honor `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` by forwarding `OTEL_EXPORTER_OTLP_ENDPOINT` through `otlptracehttp.WithEndpointURL(url)`, under the (incorrect) assumption that the SDK would append `/v1/traces`, `/v1/metrics`, `/v1/logs` to the path. It doesn't: `WithEndpointURL` in the Go OTEL SDK uses the URL path **verbatim** — it implements the `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` per-signal-URL semantic, not the `OTEL_EXPORTER_OTLP_ENDPOINT` base-URL semantic. So when a user set `OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-us-east-3.grafana.net/otlp`, every OTLP request went to `.../otlp` (no signal suffix) and Grafana Cloud returned `404 Not Found`. Observed as repeating `failed to send logs to https://.../otlp: 404 Not Found` / `traces export: ... 404` lines with no telemetry reaching the gateway. Fixed by introducing `signalEndpoint(base, "/v1/<signal>")` that appends the per-signal path before calling `WithEndpointURL`. Covered by `TestSignalEndpoint_AppendsPath` (6 cases including Grafana Cloud base URL, trailing slash, host-only, root path, and invalid-URL fallback) and `TestSignalEndpoint_InvalidURL_PassesThrough`.
+
+### Behavior Changes
+- **Container runs as uid/gid 65534 (`nobody`) instead of 65532** — The Dockerfile now sets `USER 65534:65534` explicitly, overriding the distroless `:nonroot` tag's default uid 65532. On TrueNAS hosts, `nobody` is uid 65534 by default, so bind-mounted volumes from the host now align with the container user without needing a `chown`. Container-only installs (pure Docker Compose, Kubernetes PVCs) are unaffected as long as volume ownership matches 65534 (most default volume-plugins create volumes owned by the container's uid). **Manual migration may be required** for existing deployments where volumes were pre-created and chown'd to 65532 (the old default): either `chown -R 65534:65534 <volume-path>` on the host, or override with `docker run --user 65532:65532` to keep the old behavior. The binary is statically linked Go — no username lookups — so the fact that uid 65534 has no `/etc/passwd` entry in the distroless image is harmless.
+
 ## [v0.14.4] — Fix container permission denied + add image smoke test; yank v0.14.3
 
 > **v0.14.4 = v0.14.3 + permission-denied fix + pipeline smoke test.** All of v0.14.3's fixes ship here (UserVolumeConfig auto-emission for additional disks, `install-longhorn.sh` bind-mount correction) — the v0.14.3 release was yanked because its Docker image failed to start. Upgrading from v0.14.2 to v0.14.4 gives you every v0.14.3 fix plus a working binary. See the v0.14.3 entry below for the full storage fix details.
@@ -325,6 +333,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.14.5]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.5
 [v0.14.4]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.4
 [v0.14.3]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.3
 [v0.14.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.2
