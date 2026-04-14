@@ -2,10 +2,14 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [v0.14.1] — Fix OTEL_EXPORTER_OTLP_PROTOCOL for Grafana Cloud
 
 ### Fixes
 - **Honor `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`** — The `OTELProtocol` config field was declared but `initOTEL` only wired up the gRPC exporters, so setting `http/protobuf` silently fell back to gRPC. When users pointed `OTEL_EXPORTER_OTLP_ENDPOINT` at a Grafana Cloud OTLP gateway URL (`https://otlp-gateway-...grafana.net/otlp`), the gRPC name resolver rejected the `https://` scheme and logged `failed to upload metrics: exporter export timeout: rpc error: code = Unavailable desc = name resolver error: produced zero addresses` on repeat. Fixed by branching on `OTEL_EXPORTER_OTLP_PROTOCOL`: `grpc` (default) uses the existing gRPC exporters; `http/protobuf` (or `http`) uses the OTLP/HTTP exporters via `WithEndpointURL`, which accepts full URLs and appends `/v1/traces`, `/v1/metrics`, `/v1/logs` to the base path as the spec requires. Unknown protocol values now fail fast with a clear error instead of silently defaulting.
+
+### Internal
+- Update Grafana dashboard title assertions in `TestGrafanaDashboards_ValidJSON` to match the grafana.com-ready names shipped in v0.14.0.
+- Add multi-size logo assets (128/256/512) for grafana.com plugin catalog upload.
 
 ## [v0.14.0] — WebSocket-Only Transport, Longhorn Default
 
@@ -287,6 +291,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.14.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.1
 [v0.14.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.0
 [v0.13.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.2
 [v0.13.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.1
