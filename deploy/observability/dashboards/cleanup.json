@@ -1,215 +1,696 @@
 {
-  "annotations": { "list": [] },
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_TEMPO",
+      "label": "Tempo",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "tempo",
+      "pluginName": "Tempo"
+    },
+    {
+      "name": "DS_LOKI",
+      "label": "Loki",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "loki",
+      "pluginName": "Loki"
+    }
+  ],
+  "__elements": {},
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "11.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "tempo",
+      "name": "Tempo",
+      "version": "1.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "loki",
+      "name": "Loki",
+      "version": "1.0.0"
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
   "description": "Cleanup operations, orphan management, graceful shutdown outcomes, and maintenance health",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": null,
   "links": [
-    { "title": "Overview", "url": "/d/truenas-overview", "type": "link" },
-    { "title": "Provisioning", "url": "/d/truenas-provisioning", "type": "link" },
-    { "title": "API Performance", "url": "/d/truenas-api", "type": "link" }
+    {
+      "title": "Overview",
+      "url": "/d/truenas-overview",
+      "type": "link"
+    },
+    {
+      "title": "Provisioning",
+      "url": "/d/truenas-provisioning",
+      "type": "link"
+    },
+    {
+      "title": "API Performance",
+      "url": "/d/truenas-api",
+      "type": "link"
+    }
   ],
   "panels": [
     {
       "title": "Cleanup Totals",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "collapsed": false
     },
     {
       "title": "Stale ISOs Removed",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
       "targets": [
-        { "expr": "truenas_cleanup_isos_removed_total{job=~\"$job\"}", "legendFormat": "" }
+        {
+          "expr": "truenas_cleanup_isos_removed_total{job=~\"$job\"}",
+          "legendFormat": ""
+        }
       ],
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue", "value": null }] } } },
-      "options": { "colorMode": "background", "graphMode": "area" },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Orphan VMs Removed",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
       "targets": [
-        { "expr": "truenas_cleanup_orphan_vms_total{job=~\"$job\"}", "legendFormat": "" }
+        {
+          "expr": "truenas_cleanup_orphan_vms_total{job=~\"$job\"}",
+          "legendFormat": ""
+        }
       ],
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 5 }] } } },
-      "options": { "colorMode": "background", "graphMode": "area" },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 5
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Orphan Zvols Removed",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
       "targets": [
-        { "expr": "truenas_cleanup_orphan_zvols_total{job=~\"$job\"}", "legendFormat": "" }
+        {
+          "expr": "truenas_cleanup_orphan_zvols_total{job=~\"$job\"}",
+          "legendFormat": ""
+        }
       ],
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 5 }] } } },
-      "options": { "colorMode": "background", "graphMode": "area" },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 5
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Deprovisioned VMs",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
       "targets": [
-        { "expr": "truenas_vms_deprovisioned_total{job=~\"$job\"}", "legendFormat": "" }
+        {
+          "expr": "truenas_vms_deprovisioned_total{job=~\"$job\"}",
+          "legendFormat": ""
+        }
       ],
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue", "value": null }] } } },
-      "options": { "colorMode": "background", "graphMode": "area" },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Cleanup Rates",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
       "collapsed": false
     },
     {
       "title": "Cleanup Operations Over Time",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
       "targets": [
-        { "expr": "rate(truenas_cleanup_isos_removed_total{job=~\"$job\"}[10m])", "legendFormat": "ISOs removed/s" },
-        { "expr": "rate(truenas_cleanup_orphan_vms_total{job=~\"$job\"}[10m])", "legendFormat": "Orphan VMs/s" },
-        { "expr": "rate(truenas_cleanup_orphan_zvols_total{job=~\"$job\"}[10m])", "legendFormat": "Orphan zvols/s" }
+        {
+          "expr": "rate(truenas_cleanup_isos_removed_total{job=~\"$job\"}[10m])",
+          "legendFormat": "ISOs removed/s"
+        },
+        {
+          "expr": "rate(truenas_cleanup_orphan_vms_total{job=~\"$job\"}[10m])",
+          "legendFormat": "Orphan VMs/s"
+        },
+        {
+          "expr": "rate(truenas_cleanup_orphan_zvols_total{job=~\"$job\"}[10m])",
+          "legendFormat": "Orphan zvols/s"
+        }
       ],
-      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20 } } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 20
+          }
+        }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Deprovision Rate",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
       "targets": [
-        { "expr": "rate(truenas_vms_deprovisioned_total{job=~\"$job\"}[5m])", "legendFormat": "Deprovisioned/s" }
+        {
+          "expr": "rate(truenas_vms_deprovisioned_total{job=~\"$job\"}[5m])",
+          "legendFormat": "Deprovisioned/s"
+        }
       ],
-      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20 }, "color": { "fixedColor": "blue", "mode": "fixed" } } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 20
+          },
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          }
+        }
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Graceful Shutdown",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
       "collapsed": false
     },
     {
       "title": "Shutdown Outcomes",
       "type": "piechart",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 15 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 15
+      },
       "targets": [
-        { "expr": "truenas_shutdown_graceful_total{job=~\"$job\"}", "legendFormat": "Graceful (ACPI)" },
-        { "expr": "truenas_shutdown_forced_total{job=~\"$job\"}", "legendFormat": "Forced (timeout)" }
+        {
+          "expr": "truenas_shutdown_graceful_total{job=~\"$job\"}",
+          "legendFormat": "Graceful (ACPI)"
+        },
+        {
+          "expr": "truenas_shutdown_forced_total{job=~\"$job\"}",
+          "legendFormat": "Forced (timeout)"
+        }
       ],
       "fieldConfig": {
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Graceful (ACPI)" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "Forced (timeout)" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Graceful (ACPI)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Forced (timeout)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
-      "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] }, "pieType": "donut" },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "donut"
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Graceful vs Forced Over Time",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 15 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 15
+      },
       "targets": [
-        { "expr": "rate(truenas_shutdown_graceful_total{job=~\"$job\"}[5m])", "legendFormat": "Graceful/s" },
-        { "expr": "rate(truenas_shutdown_forced_total{job=~\"$job\"}[5m])", "legendFormat": "Forced/s" }
+        {
+          "expr": "rate(truenas_shutdown_graceful_total{job=~\"$job\"}[5m])",
+          "legendFormat": "Graceful/s"
+        },
+        {
+          "expr": "rate(truenas_shutdown_forced_total{job=~\"$job\"}[5m])",
+          "legendFormat": "Forced/s"
+        }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "fillOpacity": 20 } },
+        "defaults": {
+          "custom": {
+            "fillOpacity": 20
+          }
+        },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Graceful/s" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "Forced/s" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Graceful/s"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Forced/s"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Graceful Shutdown Rate",
       "type": "gauge",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 15 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 15
+      },
       "targets": [
-        { "expr": "truenas_shutdown_graceful_total{job=~\"$job\"} / (truenas_shutdown_graceful_total{job=~\"$job\"} + truenas_shutdown_forced_total{job=~\"$job\"}) * 100", "legendFormat": "" }
+        {
+          "expr": "truenas_shutdown_graceful_total{job=~\"$job\"} / (truenas_shutdown_graceful_total{job=~\"$job\"} + truenas_shutdown_forced_total{job=~\"$job\"}) * 100",
+          "legendFormat": ""
+        }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "percent", "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 50 }, { "color": "green", "value": 80 }] } }
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 80
+              }
+            ]
+          }
+        }
       },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      }
     },
     {
       "title": "Traces & Logs",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
       "collapsed": false
     },
     {
       "title": "Recent Cleanup Traces",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
       "targets": [
         {
-          "datasource": { "type": "tempo", "uid": "tempo" },
+          "datasource": {
+            "type": "tempo",
+            "uid": "${DS_TEMPO}"
+          },
           "queryType": "traceqlSearch",
           "filters": [
-            { "id": "service-name", "tag": "service.name", "operator": "=", "value": ["omni-infra-provider-truenas"], "scope": "resource" },
-            { "id": "span-name", "tag": "name", "operator": "=~", "value": ["cleanup.*"], "scope": "span" }
+            {
+              "id": "service-name",
+              "tag": "service.name",
+              "operator": "=",
+              "value": [
+                "omni-infra-provider-truenas"
+              ],
+              "scope": "resource"
+            },
+            {
+              "id": "span-name",
+              "tag": "name",
+              "operator": "=~",
+              "value": [
+                "cleanup.*"
+              ],
+              "scope": "span"
+            }
           ],
           "limit": 20
         }
       ],
-      "datasource": { "type": "tempo", "uid": "tempo" }
+      "datasource": {
+        "type": "tempo",
+        "uid": "${DS_TEMPO}"
+      }
     },
     {
       "title": "Recent Deprovision Traces",
       "type": "table",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
       "targets": [
         {
-          "datasource": { "type": "tempo", "uid": "tempo" },
+          "datasource": {
+            "type": "tempo",
+            "uid": "${DS_TEMPO}"
+          },
           "queryType": "traceqlSearch",
           "filters": [
-            { "id": "service-name", "tag": "service.name", "operator": "=", "value": ["omni-infra-provider-truenas"], "scope": "resource" },
-            { "id": "span-name", "tag": "name", "operator": "=~", "value": ["deprovision"], "scope": "span" }
+            {
+              "id": "service-name",
+              "tag": "service.name",
+              "operator": "=",
+              "value": [
+                "omni-infra-provider-truenas"
+              ],
+              "scope": "resource"
+            },
+            {
+              "id": "span-name",
+              "tag": "name",
+              "operator": "=~",
+              "value": [
+                "deprovision"
+              ],
+              "scope": "span"
+            }
           ],
           "limit": 20
         }
       ],
-      "datasource": { "type": "tempo", "uid": "tempo" }
+      "datasource": {
+        "type": "tempo",
+        "uid": "${DS_TEMPO}"
+      }
     },
     {
       "title": "Cleanup Logs",
       "type": "logs",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
       "targets": [
-        { "expr": "{service_name=\"omni-infra-provider-truenas\"} | json | msg=~\".*(cleanup|orphan|deprovision|shutdown).*\"", "refId": "A" }
+        {
+          "expr": "{service_name=\"omni-infra-provider-truenas\"} | json | msg=~\".*(cleanup|orphan|deprovision|shutdown).*\"",
+          "refId": "A"
+        }
       ],
-      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true, "dedupStrategy": "none" },
-      "datasource": { "type": "loki", "uid": "loki" }
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${DS_LOKI}"
+      }
     }
   ],
-  "schemaVersion": 39,
-  "tags": ["truenas", "omni", "cleanup", "maintenance"],
+  "refresh": "1m",
+  "tags": [
+    "truenas",
+    "omni",
+    "cleanup",
+    "maintenance"
+  ],
   "templating": {
     "list": [
       {
         "name": "job",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
         "query": "label_values(truenas_cleanup_orphan_vms_total, job)",
         "refresh": 2,
         "includeAll": true,
         "allValue": ".*",
-        "current": { "text": "All", "value": "$__all" }
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
       }
     ]
   },
-  "time": { "from": "now-6h", "to": "now" },
-  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "title": "TrueNAS Provider / Cleanup & Maintenance",
-  "uid": "truenas-cleanup"
+  "uid": "truenas-cleanup",
+  "id": null,
+  "gnetId": null,
+  "schemaVersion": 41,
+  "version": 1,
+  "timezone": "",
+  "timepicker": {},
+  "weekStart": ""
 }
