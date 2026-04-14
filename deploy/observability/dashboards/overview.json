@@ -825,7 +825,7 @@
     "from": "now-1h",
     "to": "now"
   },
-  "title": "TrueNAS Provider / Overview",
+  "title": "Omni TrueNAS Provider \u2014 Overview",
   "uid": "truenas-overview",
   "id": null,
   "gnetId": null,

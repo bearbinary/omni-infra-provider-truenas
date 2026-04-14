@@ -670,7 +670,7 @@
     "from": "now-1h",
     "to": "now"
   },
-  "title": "TrueNAS Provider / API Performance",
+  "title": "Omni TrueNAS Provider \u2014 TrueNAS API Performance",
   "uid": "truenas-api",
   "id": null,
   "gnetId": null,

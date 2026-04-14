@@ -166,6 +166,13 @@ jobs:
               "$f"
           done
 
+      # Bundle Grafana dashboards for easy import into Grafana Cloud / self-hosted.
+      # Users can grab the zip or individual JSONs from the release page.
+      - name: Bundle Grafana dashboards
+        run: |
+          cp deploy/observability/dashboards/*.json _out/
+          (cd deploy/observability/dashboards && zip -r - *.json) > _out/grafana-dashboards.zip
+
       # Single atomic release creation — all assets uploaded together.
       # With immutable releases, assets cannot be modified after creation.
       # If this step fails, delete the release and re-tag to retry.
@@ -183,4 +190,9 @@ jobs:
             _out/checksums.txt \
             _out/sbom.spdx.json \
             _out/*.sig \
-            _out/*.cert
+            _out/*.cert \
+            _out/grafana-dashboards.zip \
+            _out/overview.json \
+            _out/provisioning.json \
+            _out/api-performance.json \
+            _out/cleanup.json

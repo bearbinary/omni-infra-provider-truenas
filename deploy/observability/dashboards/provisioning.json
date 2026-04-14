@@ -916,7 +916,7 @@
     "from": "now-3h",
     "to": "now"
   },
-  "title": "TrueNAS Provider / Provisioning",
+  "title": "Omni TrueNAS Provider \u2014 VM Provisioning",
   "uid": "truenas-provisioning",
   "id": null,
   "gnetId": null,
