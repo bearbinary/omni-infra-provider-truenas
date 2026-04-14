@@ -126,6 +126,13 @@ jobs:
           pattern: binary-*
           merge-multiple: true
 
+      # actions/upload-artifact + download-artifact package files as ZIP and
+      # strip the execute bit. Without this chmod, release-page binaries
+      # downloaded by users fail with "Permission denied" when run directly.
+      # (The Dockerfile sets --chmod=0755 independently for the container image.)
+      - name: Restore executable bit on binaries
+        run: chmod +x _out/omni-infra-provider-truenas-*
+
       - name: Generate checksums
         run: |
           cd _out
@@ -154,6 +161,47 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
             type=raw,value=latest
 
+      # Build single-arch (runner-native) image into the local Docker daemon
+      # so we can smoke test it *before* pushing multi-arch. If we pushed
+      # first and then tested, a broken image (e.g. missing execute bit,
+      # corrupted binary) would already be live on GHCR by the time the test
+      # flagged it. Building locally first + pushing only on success means a
+      # broken image never reaches users. BuildKit cache (type=gha) makes
+      # the second multi-arch build a near-no-op for the native-arch layer.
+      - name: Build image locally for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: smoke-test:${{ steps.version.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Catches the "permission denied" class of regressions that slipped
+      # through v0.14.1–v0.14.3, where actions/upload-artifact stripped the
+      # execute bit from the binary and docker COPY preserved the zero mode.
+      # The `--version` handler exits 0 immediately without needing Omni or
+      # TrueNAS config, so the only thing it tests is "can the binary run".
+      - name: Smoke test local image (binary is executable)
+        run: |
+          set -euo pipefail
+          IMAGE="smoke-test:${{ steps.version.outputs.tag }}"
+          echo "Running --version inside ${IMAGE}..."
+          OUTPUT=$(docker run --rm "${IMAGE}" --version 2>&1)
+          echo "stdout: ${OUTPUT}"
+          if [ -z "${OUTPUT}" ]; then
+            echo "::error::Smoke test failed: --version produced no output. Binary is likely missing the execute bit or crashed on startup."
+            exit 1
+          fi
+          EXPECTED="${{ steps.version.outputs.tag }}"
+          if [ "${OUTPUT}" != "${EXPECTED}" ]; then
+            echo "::error::Smoke test failed: expected version ${EXPECTED}, got ${OUTPUT}. The ldflags -X main.version=... did not take effect during build."
+            exit 1
+          fi
+          echo "Smoke test passed: image runs and reports version ${OUTPUT}"
+
+      # Only reached if the smoke test passed. Multi-arch build pushed to GHCR.
       - name: Build and push Docker image
         id: docker-push
         uses: docker/build-push-action@v6

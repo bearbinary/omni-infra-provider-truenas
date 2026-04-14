@@ -17,6 +17,12 @@ LABEL org.opencontainers.image.title="omni-infra-provider-truenas" \
       org.opencontainers.image.licenses="MIT"
 
 ARG TARGETARCH
-COPY _out/omni-infra-provider-truenas-linux-${TARGETARCH} /usr/local/bin/omni-infra-provider-truenas
+# --chmod=0755 is required because actions/upload-artifact + download-artifact
+# package files as ZIP and strip the execute bit. Without this, the COPY
+# preserves the zero-permission file and the container fails at startup with
+# `exec: "/usr/local/bin/omni-infra-provider-truenas": permission denied`.
+# Regression affected v0.14.1–v0.14.3 images. BuildKit (used by docker/build-push-action)
+# has supported --chmod on COPY since 2020.
+COPY --chmod=0755 _out/omni-infra-provider-truenas-linux-${TARGETARCH} /usr/local/bin/omni-infra-provider-truenas
 
 ENTRYPOINT ["/usr/local/bin/omni-infra-provider-truenas"]

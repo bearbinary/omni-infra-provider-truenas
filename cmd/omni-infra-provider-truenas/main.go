@@ -44,6 +44,18 @@ var schema string
 var icon []byte
 
 func main() {
+	// --version / -v: print version and exit. Used by CI as a smoke test to
+	// verify the compiled binary is executable inside the Docker image before
+	// publishing the release — catches regressions where artifact upload
+	// strips the execute bit or the binary is corrupted during cross-compile.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			fmt.Println(version)
+			os.Exit(0)
+		}
+	}
+
 	if err := run(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
