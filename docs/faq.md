@@ -45,7 +45,7 @@ No. VMs need outbound HTTPS for Talos ISO download (first time, then cached) and
 
 ### How does transport auto-detection work?
 
-The provider connects to TrueNAS via WebSocket (`wss://<host>/websocket`) using a JSON-RPC 2.0 API key. When running as a TrueNAS app, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`. The Unix socket transport was removed in v0.14.0 because TrueNAS 25.10 requires authentication on every call, eliminating the zero-auth advantage.
+The provider connects to TrueNAS via WebSocket (`wss://<host>/websocket`) using a JSON-RPC 2.0 API key. When running the container on the TrueNAS host itself, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`. The Unix socket transport was removed in v0.14.0 because TrueNAS 25.10 requires authentication on every call, eliminating the zero-auth advantage.
 
 ### What ZFS features does this provider use?
 

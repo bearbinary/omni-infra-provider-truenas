@@ -778,14 +778,14 @@ func TestIntegration_AdditionalDisks_CreateAndAttach(t *testing.T) {
 		c.DeleteVM(context.Background(), vm.ID)     //nolint:errcheck
 	})
 
-	// Attach root disk (order 1001), additional disks (1002, 1003)
+	// Attach root disk (order 1000), additional disks (1001, 1002)
 	_, err = c.AddDisk(ctx, vm.ID, rootZvol)
 	require.NoError(t, err, "should attach root disk")
 
-	_, err = c.AddDiskWithOrder(ctx, vm.ID, disk1Zvol, 1002)
+	_, err = c.AddDiskWithOrder(ctx, vm.ID, disk1Zvol, 1001)
 	require.NoError(t, err, "should attach additional disk 1")
 
-	_, err = c.AddDiskWithOrder(ctx, vm.ID, disk2Zvol, 1003)
+	_, err = c.AddDiskWithOrder(ctx, vm.ID, disk2Zvol, 1002)
 	require.NoError(t, err, "should attach additional disk 2")
 
 	// Verify all devices are attached

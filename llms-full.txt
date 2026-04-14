@@ -64,11 +64,11 @@ Only needed if NOT running directly on TrueNAS (e.g., running in external Kubern
 
 Ask the user which deployment method they prefer, then guide them through the appropriate section.
 
-### Option A: TrueNAS App (Recommended)
+### Option A: Docker Compose on TrueNAS (Recommended)
 
-Best for: Running directly on the TrueNAS server. Simplest setup — no API key needed.
+Best for: Running directly on the TrueNAS host via the built-in Apps UI.
 
-**Step 1:** In TrueNAS UI, go to Apps > Discover Apps > Install Custom App (or use the Docker Compose option).
+**Step 1:** In TrueNAS UI, go to Apps > Discover Apps > Install via YAML (Custom App / Docker Compose).
 
 **Step 2:** Use this compose config:
 
@@ -255,7 +255,7 @@ Users who need NFS client support (for democratic-csi NFS mode) can add `siderol
 |---|---|---|---|
 | `OMNI_ENDPOINT` | Yes | — | Omni instance URL |
 | `OMNI_SERVICE_ACCOUNT_KEY` | Yes | — | Omni infra provider service account key |
-| `TRUENAS_HOST` | **Yes** | — | TrueNAS hostname or IP (use `localhost` when running as a TrueNAS app) |
+| `TRUENAS_HOST` | **Yes** | — | TrueNAS hostname or IP (use `localhost` when running the container on the TrueNAS host itself) |
 | `TRUENAS_API_KEY` | **Yes** | — | TrueNAS API key (Credentials > Local Users > root > API Keys) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification (recommended `true` for `localhost`) |
 | `PROVIDER_ID` | No | `truenas` | Provider ID registered with Omni |
@@ -349,7 +349,7 @@ Q: What is Talos Linux?
 A: Talos Linux is an immutable, minimal operating system purpose-built for Kubernetes. It has no SSH, no shell, and no package manager — managed entirely via API. VMs created by this provider run Talos and join Omni clusters automatically via SideroLink (WireGuard).
 
 Q: How does the provider connect to TrueNAS?
-A: The provider connects via WebSocket (wss://<host>/websocket) using a JSON-RPC 2.0 API key. When running as a TrueNAS app, set TRUENAS_HOST=localhost and TRUENAS_INSECURE_SKIP_VERIFY=true. Unix socket support was removed in v0.14.0 because TrueNAS 25.10 requires authentication on every call.
+A: The provider connects via WebSocket (wss://<host>/websocket) using a JSON-RPC 2.0 API key. When running the container on the TrueNAS host itself, set TRUENAS_HOST=localhost and TRUENAS_INSECURE_SKIP_VERIFY=true. Unix socket support was removed in v0.14.0 because TrueNAS 25.10 requires authentication on every call.
 
 Q: What ZFS features does this provider use?
 A: VM disks are created as ZFS zvols on your specified pool. ISOs are cached on the pool filesystem with SHA-256 deduplication. You can target different pools per MachineClass (e.g., NVMe for control plane, HDD for workers).

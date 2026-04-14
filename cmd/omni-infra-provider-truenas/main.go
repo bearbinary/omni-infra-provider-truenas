@@ -57,7 +57,7 @@ func run() error {
 	// SECURITY: godotenv loads from the working directory. If an attacker can write
 	// an .env file (e.g., via volume mount misconfiguration), they could override
 	// TRUENAS_HOST, TRUENAS_API_KEY, or OMNI_ENDPOINT. Mitigations:
-	//   - Docker: read_only: true in the TrueNAS app template
+	//   - Docker: read_only: true in the compose definition
 	//   - Kubernetes: readOnlyRootFilesystem: true in the deployment securityContext
 	//   - godotenv does NOT override existing env vars (existing values take precedence)
 	_ = godotenv.Load()

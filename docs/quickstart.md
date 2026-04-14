@@ -21,9 +21,9 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 
 ## Deployment Options
 
-=== "TrueNAS App (Recommended)"
+=== "Docker Compose on TrueNAS (Recommended)"
 
-    Deploy directly on your TrueNAS server. Create an API key at **Credentials > Local Users > root > API Keys**.
+    Run the container directly on your TrueNAS host via **Apps > Discover > Install via YAML**. Create an API key first at **Credentials > Local Users > root > API Keys**.
 
     ```yaml
     services:
@@ -76,7 +76,7 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRUENAS_HOST` | — | **Required.** TrueNAS hostname or IP (use `localhost` when running as a TrueNAS app) |
+| `TRUENAS_HOST` | — | **Required.** TrueNAS hostname or IP (use `localhost` when running the container on the TrueNAS host itself) |
 | `TRUENAS_API_KEY` | — | **Required.** TrueNAS API key (Credentials > Local Users > root > API Keys) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for self-signed certs (recommended `true` for `localhost`) |
 
@@ -107,9 +107,9 @@ These fields go in the MachineClass `configpatch`:
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `cpus` | int | Yes | `2` | Virtual CPUs (min: 1) |
-| `memory` | int | Yes | `4096` | Memory in MiB (min: 1024) |
-| `disk_size` | int | Yes | `40` | Root disk in GiB (min: 10) |
+| `cpus` | int | Yes | `2` | Virtual CPUs (min: 1). For control planes, see [Sizing Guide](sizing.md). |
+| `memory` | int | Yes | `4096` | Memory in MiB (min: 1024). For control planes, see [Sizing Guide](sizing.md). |
+| `disk_size` | int | Yes | `40` | Root disk in GiB (min: 10). For control planes, see [Sizing Guide](sizing.md). |
 | `pool` | string | Yes | `DEFAULT_POOL` | ZFS pool for zvols and ISOs |
 | `network_interface` | string | Yes | `DEFAULT_NETWORK_INTERFACE` | Bridge, VLAN, or physical interface |
 | `boot_method` | string | Yes | `UEFI` | `UEFI` or `BIOS` |

@@ -60,16 +60,16 @@ All via environment variables:
 
 ## Deployment Options
 
-1. TrueNAS App (recommended): Docker container on the TrueNAS host with TRUENAS_HOST=localhost and a TrueNAS API key
+1. Docker Compose on TrueNAS (recommended): install via TrueNAS Apps > Discover > Install via YAML, with TRUENAS_HOST=localhost and a TrueNAS API key
 2. Kubernetes: Helm chart in deploy/helm/omni-infra-provider-truenas/
-3. Docker Compose: Remote deployment via WebSocket in deploy/docker-compose.yaml
+3. Docker Compose (remote): deployment from a separate host via WebSocket in deploy/docker-compose.yaml
 
 ## For Beginners
 
 docs/getting-started.md is a complete 6-step tutorial for users new to Kubernetes:
 1. Sign up for Omni (free tier available for homelab)
 2. Prepare TrueNAS (check version, identify ZFS pool, create network bridge)
-3. Install the provider as a TrueNAS app
+3. Install the provider on TrueNAS via Apps > Discover > Install via YAML (custom Docker Compose app)
 4. Create MachineClasses and first Kubernetes cluster via Omni
 5. Install kubectl, download kubeconfig, verify nodes
 6. Deploy a test app (nginx) and access it via NodePort
@@ -130,7 +130,7 @@ Q: What is Talos Linux?
 A: Talos Linux is an immutable, minimal operating system purpose-built for Kubernetes. It has no SSH, no shell, and no package manager — managed entirely via API. VMs created by this provider run Talos and join Omni clusters automatically via SideroLink (WireGuard).
 
 Q: How does transport auto-detection work?
-A: The provider connects to TrueNAS via WebSocket (wss://<host>/websocket) using a JSON-RPC 2.0 API key. When running as a TrueNAS app, set TRUENAS_HOST=localhost and TRUENAS_INSECURE_SKIP_VERIFY=true. Unix socket auth was dropped in v0.14.0 because TrueNAS 25.10 requires authentication on every call.
+A: The provider connects to TrueNAS via WebSocket (wss://<host>/websocket) using a JSON-RPC 2.0 API key. When running the container on the TrueNAS host itself, set TRUENAS_HOST=localhost and TRUENAS_INSECURE_SKIP_VERIFY=true. Unix socket auth was dropped in v0.14.0 because TrueNAS 25.10 requires authentication on every call.
 
 Q: What ZFS features does this provider use?
 A: VM disks are created as ZFS zvols on your specified pool. ISOs are cached on the pool filesystem with SHA-256 deduplication. You can target different pools per MachineClass (e.g., NVMe for control plane, HDD for workers).

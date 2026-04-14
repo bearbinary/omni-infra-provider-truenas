@@ -86,6 +86,7 @@ nav:
   - Architecture: architecture.md
   - Operations:
       - Upgrading: upgrading.md
+      - Sizing Control Planes: sizing.md
       - Backup & Recovery: backup.md
       - Troubleshooting: troubleshooting.md
       - Testing: testing.md

@@ -13,5 +13,4 @@ _out/*.tar
 !README.md
 docs/
 deploy/
-truenas-app/
 skills-lock.json

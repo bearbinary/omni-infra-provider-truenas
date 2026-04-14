@@ -11,7 +11,7 @@ The provider cannot connect to TrueNAS on startup.
 - Verify `TRUENAS_HOST` is reachable from the provider container: `curl -k https://<host>/websocket`
 - Confirm `TRUENAS_API_KEY` is valid — generate a new one in TrueNAS UI under **Credentials > Local Users > root > API Keys**
 - If using a self-signed cert, ensure `TRUENAS_INSECURE_SKIP_VERIFY=true`
-- When running as a TrueNAS app, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`
+- When running the container on the TrueNAS host itself, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`
 - Check that TrueNAS middleware is running: `midclt call core.ping` on the TrueNAS host
 
 ### "pool not found on TrueNAS"
@@ -138,6 +138,57 @@ The provider failed to generate a Talos image schematic.
 - **Insufficient resources** — TrueNAS needs enough free memory for the VM. Check `memory` in MachineClass config vs. available RAM.
 - **zvol allocation** — ensure the pool has enough free space for the `disk_size` specified
 - **CPU mode** — the provider uses `HOST-PASSTHROUGH` CPU mode. Verify the host CPU supports virtualization (VT-x/AMD-V)
+
+### VM halts on reboot with "Talos is already installed to disk but booted from another media"
+
+Log output (repeats every 30s until the VM is shut down):
+
+```
+[talos] task haltIfInstalled (1/1): Talos is already installed to disk but booted
+from another media and talos.halt_if_installed kernel parameter is set. Please
+reboot from the disk.
+```
+
+**Cause.** On provider versions **≤ v0.14.1**, the VM's CDROM was attached with UEFI
+boot `order=1000` and the root disk with `order=1001`. bhyve's UEFI boot manager
+tries the entry with the lowest `order` first, so on every reboot UEFI re-entered
+the Talos ISO instead of the disk. The initial install worked because the disk
+was empty on first boot, but once Talos was installed any reboot (manual stop,
+TrueNAS restart, host reboot) re-entered the ISO — and the ISO's
+`talos.halt_if_installed=1` kernel parameter halts the boot as a safeguard
+against overwriting an existing installation.
+
+**Fix for existing VMs** — bump the CDROM `order` above the root disk's
+`order` (1000). Recommended value: `1500`.
+
+TrueNAS UI:
+
+1. **Virtualization > Virtual Machines > _your VM_ > Devices**
+2. Edit the CDROM device
+3. Change **Device Order** from `1000` to `1500`
+4. Save, then start the VM
+
+TrueNAS shell (faster if you have many VMs):
+
+```bash
+# Find the CDROM device ID for a VM (replace <VM_ID>)
+midclt call vm.device.query '[["vm","=",<VM_ID>]]' | jq '.[] | select(.attributes.dtype=="CDROM") | {id, order}'
+
+# Update the order
+midclt call vm.device.update <CDROM_DEVICE_ID> '{"order": 1500}'
+
+# Start the VM
+midclt call vm.start <VM_ID>
+```
+
+**Fix for new VMs** — upgrade the provider to a version that includes the
+correct boot order (root disk = 1000, additional disks = 1001+, CDROM = 1500,
+NIC = 2001). New VMs provisioned after the upgrade boot correctly without
+manual intervention.
+
+Do **not** detach the CDROM. Talos may still be mid-install when you notice
+the issue, and detaching a device requires stopping the VM — which interrupts
+the install. Reordering is always safe.
 
 ## Deprovision Issues
 

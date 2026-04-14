@@ -27,7 +27,7 @@ Once we agree on the approach, we'll implement or merge the change. This lets us
 Use the [Bug Report](https://github.com/bearbinary/omni-infra-provider-truenas/issues/new?template=bug_report.md) issue template. Include:
 - TrueNAS SCALE version
 - Provider version / Docker image tag
-- Deployment method (TrueNAS app, Kubernetes, Docker Compose)
+- Deployment method (Docker Compose on TrueNAS, Kubernetes, Docker Compose remote)
 - Logs (set `LOG_LEVEL=debug` for verbose output)
 
 ## Requesting Features

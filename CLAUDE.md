@@ -66,6 +66,7 @@ All via environment variables (`.env` file loaded automatically). Key ones: `OMN
 - **`docs/troubleshooting.md`** — Common issues and solutions (startup failures, provisioning, debugging)
 - **`docs/testing.md`** — Unit, integration, and E2E test setup
 - **`docs/storage.md`** — Storage guide: Longhorn (recommended default) setup, decision matrix vs NFS/democratic-csi, trade-offs.
+- **`docs/sizing.md`** — Control plane sizing guide: triggers (apiserver p99, etcd slow fsync, OOM, kubectl top pressure), sizing table by cluster scale, HA resize via MachineSet rolling, single-CP in-place on TrueNAS, ZFS/SLOG considerations for etcd.
 - **`docs/cni.md`** — CNI selection guide: Flannel (default), Cilium, Calico with Talos-specific setup steps
 - **`docs/networking.md`** — Networking guide: bridges, DHCP reservations, MetalLB, VIP, UniFi/pfSense/OPNsense/Mikrotik setup
 - **`docs/backlog.md`** — Feature roadmap and backlog items

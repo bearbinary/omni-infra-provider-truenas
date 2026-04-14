@@ -118,7 +118,7 @@ flowchart TD
     Check -->|No| Fail([Startup failure:<br/>TRUENAS_HOST / TRUENAS_API_KEY required])
 ```
 
-TrueNAS 25.10 (Goldeye) requires authentication on every JSON-RPC call — including local Unix socket connections. The Unix socket transport was removed in v0.14.0 because there is no longer a zero-auth path. When running as a TrueNAS app, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`.
+TrueNAS 25.10 (Goldeye) requires authentication on every JSON-RPC call — including local Unix socket connections. The Unix socket transport was removed in v0.14.0 because there is no longer a zero-auth path. When running the container on the TrueNAS host itself, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`.
 
 ## Startup Health Checks
 

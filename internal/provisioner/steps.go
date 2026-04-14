@@ -479,7 +479,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			return fmt.Errorf("additional disk %d: %w", i, err)
 		}
 
-		if _, err := p.client.AddDiskWithOrder(ctx, vm.ID, additionalZvolPath, 1002+i); err != nil {
+		if _, err := p.client.AddDiskWithOrder(ctx, vm.ID, additionalZvolPath, 1001+i); err != nil {
 			return fmt.Errorf("failed to attach additional disk %d: %w", i, err)
 		}
 
@@ -683,9 +683,11 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 // stepHealthCheck runs on every reconcile after the VM is created.
 // Verifies the VM still exists on TrueNAS — if it was deleted externally
 // (manual deletion, TrueNAS restart, etc.), resets state so Omni can re-provision.
-// The CDROM is intentionally left attached — Talos boots from disk by default
-// once installed, and removing the CDROM requires stopping the VM which kills
-// Talos before it finishes installing. The CDROM is cleaned up on deprovision.
+// The CDROM is intentionally left attached — the root disk has the lowest
+// boot order (1000) so UEFI boots it once Talos is installed, and the CDROM
+// at order 1500 is only reached on a fresh VM where the disk is empty.
+// Removing the CDROM would require stopping the VM, which kills Talos before
+// it finishes installing. The CDROM is cleaned up on deprovision.
 func (p *Provisioner) stepHealthCheck(ctx context.Context, logger *zap.Logger, pctx provision.Context[*resources.Machine]) (err error) {
 	stepStart := time.Now()
 	ctx, span := provTracer.Start(ctx, "provision.healthCheck",
@@ -718,10 +720,11 @@ func (p *Provisioner) stepHealthCheck(ctx context.Context, logger *zap.Logger, p
 		}
 	}
 
-	// The CDROM is intentionally left attached. Talos boots from disk by default
-	// once installed (disk has higher boot priority). Removing the CDROM requires
-	// stopping the VM, which kills Talos before it has finished installing to disk.
-	// The CDROM stays attached but unused — it will be cleaned up on deprovision.
+	// The CDROM is intentionally left attached. The root disk has boot order 1000
+	// (lowest = UEFI tries first), the CDROM is at 1500, so once Talos is installed
+	// on disk UEFI never reaches the CDROM. Removing it would require stopping the
+	// VM, which kills Talos mid-install. The CDROM stays attached but unused and is
+	// cleaned up on deprovision.
 	//
 	// If the CDROM was already removed (by an older provider version), that's fine.
 	logger.Debug("VM provisioned and healthy",

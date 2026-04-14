@@ -38,10 +38,18 @@ func (c *Client) AddDevice(ctx context.Context, req AddDeviceRequest) (*Device, 
 }
 
 // AddCDROM attaches a CDROM device to a VM pointing to an ISO path.
+//
+// Boot order 1500 places the CDROM AFTER all disks (root=1000, additional=1001+)
+// but BEFORE the NIC (2001). UEFI boot manager tries entries in ascending order:
+// on a fresh VM the disk is empty so UEFI falls through to the CDROM and runs
+// the Talos installer; once Talos is installed the disk boots first and the
+// CDROM is never hit, so Talos's talos.halt_if_installed kernel parameter does
+// not trip on subsequent boots. The CDROM is deliberately left attached because
+// detaching it requires stopping the VM mid-install.
 func (c *Client) AddCDROM(ctx context.Context, vmID int, isoPath string) (*Device, error) {
 	return c.AddDevice(ctx, AddDeviceRequest{
 		VM:    vmID,
-		Order: 1000,
+		Order: 1500,
 		Attributes: map[string]any{
 			"dtype": "CDROM",
 			"path":  isoPath,
@@ -236,8 +244,11 @@ func (c *Client) ResetVMNVRAM(ctx context.Context, vmID int) error {
 }
 
 // AddDisk attaches a DISK device to a VM pointing to a zvol path.
+// Order 1000 makes this the root/boot disk — it has the lowest order of all
+// attached devices, so UEFI tries it first. See AddCDROM for the full boot
+// order rationale.
 func (c *Client) AddDisk(ctx context.Context, vmID int, zvolPath string) (*Device, error) {
-	return c.AddDiskWithOrder(ctx, vmID, zvolPath, 1001)
+	return c.AddDiskWithOrder(ctx, vmID, zvolPath, 1000)
 }
 
 // AddDiskWithOrder attaches a DISK device to a VM with a specific boot order.

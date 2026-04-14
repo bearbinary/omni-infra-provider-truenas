@@ -202,6 +202,15 @@ jobs:
               "$f"
           done
 
+      # Bundle Grafana dashboards + Prometheus alert rules for easy import.
+      # Users can grab individual JSONs, the zip, or the alerts YAML from the
+      # release page and drop them into Grafana Cloud / self-hosted Prom.
+      - name: Bundle observability assets
+        run: |
+          cp deploy/observability/dashboards/*.json _out/
+          cp deploy/observability/alerts/*.yml _out/
+          (cd deploy/observability/dashboards && zip -r - *.json) > _out/grafana-dashboards.zip
+
       # Single atomic release creation — all assets uploaded together.
       # With immutable releases, assets cannot be modified after creation.
       # If this step fails, delete the release and re-tag to retry.
@@ -219,4 +228,10 @@ jobs:
             _out/checksums.txt \
             _out/sbom.spdx.json \
             _out/*.sig \
-            _out/*.cert
+            _out/*.cert \
+            _out/grafana-dashboards.zip \
+            _out/overview.json \
+            _out/provisioning.json \
+            _out/api-performance.json \
+            _out/cleanup.json \
+            _out/truenas-provider.rules.yml

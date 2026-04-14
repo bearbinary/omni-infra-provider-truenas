@@ -52,15 +52,16 @@ flowchart TD
 - :material-nas: **[TrueNAS Setup](truenas-setup.md)** — Step-by-step NFS, iSCSI, SSH, bridges, and jumbo frames
 - :material-lan: **[Networking](networking.md)** — Bridges, DHCP, MetalLB, VIP, router-specific guides
 - :material-harddisk: **[Storage](storage.md)** — CSI options: NFS, iSCSI, democratic-csi, Longhorn
+- :material-resize: **[Sizing Control Planes](sizing.md)** — When and how to make CP nodes bigger
 - :material-wrench: **[Troubleshooting](troubleshooting.md)** — Common issues and solutions
 
 </div>
 
 ## Installation
 
-=== "TrueNAS App (Recommended)"
+=== "Docker Compose on TrueNAS (Recommended)"
 
-    Deploy directly on your TrueNAS server. Create an API key at **Credentials > Local Users > root > API Keys**.
+    Run the container directly on your TrueNAS host via **Apps > Discover > Install via YAML**. Create an API key first at **Credentials > Local Users > root > API Keys**.
 
     ```yaml
     services:

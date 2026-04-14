@@ -64,11 +64,11 @@ Only needed if NOT running directly on TrueNAS (e.g., running in external Kubern
 
 Ask the user which deployment method they prefer, then guide them through the appropriate section.
 
-### Option A: TrueNAS App (Recommended)
+### Option A: Docker Compose on TrueNAS (Recommended)
 
-Best for: Running directly on the TrueNAS server. Simplest setup — no API key needed.
+Best for: Running directly on the TrueNAS host via the built-in Apps UI.
 
-**Step 1:** In TrueNAS UI, go to Apps > Discover Apps > Install Custom App (or use the Docker Compose option).
+**Step 1:** In TrueNAS UI, go to Apps > Discover Apps > Install via YAML (Custom App / Docker Compose).
 
 **Step 2:** Use this compose config:
 
@@ -259,7 +259,7 @@ If you need NFS client support (for democratic-csi NFS mode), add `siderolabs/nf
 | `TRUENAS_HOST` | Remote only | — | TrueNAS hostname or IP (WebSocket transport) |
 | `TRUENAS_API_KEY` | Remote only | — | TrueNAS API key (WebSocket transport) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification for self-signed certs |
-| `TRUENAS_HOST` | **Yes** | — | TrueNAS hostname or IP (use `localhost` when running as a TrueNAS app) |
+| `TRUENAS_HOST` | **Yes** | — | TrueNAS hostname or IP (use `localhost` when running the container on the TrueNAS host itself) |
 | `TRUENAS_API_KEY` | **Yes** | — | TrueNAS API key (Credentials > Local Users > root > API Keys) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification (recommended `true` for `localhost`) |
 | `PROVIDER_ID` | No | `truenas` | Provider ID registered with Omni |

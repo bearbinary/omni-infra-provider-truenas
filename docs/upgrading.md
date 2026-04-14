@@ -21,9 +21,46 @@ kubectl set image deployment/omni-infra-provider-truenas \
   -n omni-infra-provider
 ```
 
-For TrueNAS app deployments, update the image tag in the app configuration.
+For TrueNAS Docker-Compose-on-host deployments (installed via Apps > Discover > Install via YAML), update the image tag in the app's YAML and redeploy from the TrueNAS UI.
 
 ## Version Notes
+
+### Upgrading to the boot-order fix (v0.14.2)
+
+**Existing VMs provisioned on v0.14.1 or earlier need a one-time boot-order
+correction on TrueNAS.** Upgrading the provider image alone is not sufficient —
+the provider only sets boot `order` at VM creation time, so pre-existing VMs
+keep their old (incorrect) ordering until you change it manually.
+
+**Symptom if left unfixed.** The VM boots fine today, but the next time it
+reboots — host reboot, TrueNAS update, manual stop/start — it halts with
+`task haltIfInstalled: Talos is already installed to disk but booted from
+another media and talos.halt_if_installed kernel parameter is set`. See
+[Troubleshooting](troubleshooting.md#vm-halts-on-reboot-with-talos-is-already-installed-to-disk-but-booted-from-another-media)
+for the full explanation.
+
+**Action required for each existing VM:**
+
+TrueNAS UI:
+
+1. **Virtualization > Virtual Machines > _your VM_ > Devices**
+2. Edit the CDROM device → change **Device Order** from `1000` to `1500`
+3. Save. Next reboot will boot from disk correctly.
+
+TrueNAS shell (scriptable for many VMs):
+
+```bash
+# For each running Talos VM:
+midclt call vm.device.query '[["vm","=",<VM_ID>]]' | jq '.[] | select(.attributes.dtype=="CDROM") | .id'
+midclt call vm.device.update <CDROM_DEVICE_ID> '{"order": 1500}'
+```
+
+You do **not** need to reboot the VM immediately — the fix applies the next
+time the VM starts. No data migration, no Talos reinstall, no config change.
+
+**New VMs provisioned after the upgrade** are unaffected: they get the correct
+boot order (root disk `1000`, additional disks `1001+`, CDROM `1500`,
+NIC `2001`) at creation time.
 
 ### v0.13.0
 
@@ -51,8 +88,8 @@ and [Troubleshooting](troubleshooting.md#singleton-lease-acquire-failed-another-
   terminated before the new one starts. The shipped Helm chart already does
   this. With the default `maxSurge=25%` rolling strategy, the new pod would
   briefly overlap with the old and crashloop on the preflight check.
-- **Docker / systemd / TrueNAS app deployments**: no action needed. These run
-  one instance by design.
+- **Docker Compose / systemd deployments (including Docker-Compose-on-TrueNAS)**:
+  no action needed. These run one instance by design.
 - **Advanced sharding (rare)**: if you deliberately run multiple provider
   instances behind the same `PROVIDER_ID` (uncommon — Omni handles scheduling
   across distinct provider IDs natively), set

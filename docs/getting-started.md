@@ -506,7 +506,7 @@ The VMs will stop when TrueNAS shuts down and restart when it comes back. The pr
 No. This requires TrueNAS **SCALE** (Linux-based) version 25.04 or newer. TrueNAS CORE is not supported.
 
 ### What's the difference between control plane and worker nodes?
-- **Control plane**: Runs the Kubernetes "brain" — the API server, scheduler, and etcd database. Needs minimal resources (2 CPU, 2 GB RAM, 10 GB disk). You need at least 1, ideally 3 for high availability.
+- **Control plane**: Runs the Kubernetes "brain" — the API server, scheduler, and etcd database. Needs minimal resources (2 CPU, 2 GB RAM, 10 GB disk) for a homelab. You need at least 1, ideally 3 for high availability. **Bump it up** once you install GitOps tooling, service meshes, or start running > ~10 nodes — see the [Control Plane Sizing Guide](sizing.md) for concrete triggers and numbers.
 - **Workers**: Run your actual applications (containers). Need more resources depending on your workloads. Start with 1-2 and add more as needed.
 
 ### Can I mix this with physical machines?

@@ -108,11 +108,9 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 # Save the output — it contains OMNI_SERVICE_ACCOUNT_KEY
 ```
 
-### Option 1: TrueNAS App (Recommended)
+### Option 1: Docker Compose on TrueNAS (Recommended)
 
-Deploy directly on your TrueNAS server. Create an API key in the TrueNAS UI under **Credentials > Local Users > root > API Keys**.
-
-> If this app is available in your TrueNAS app catalog, install it from **Apps > Discover** for a guided setup with a config form. The [`truenas-app/`](truenas-app/) directory contains the full app definition with `questions.yaml` for the TrueNAS UI. For manual installation, use the compose config below.
+Run the container directly on your TrueNAS host via **Apps > Discover > Install via YAML**. Create an API key first in the TrueNAS UI under **Credentials > Local Users > root > API Keys**.
 
 ```yaml
 # Paste into TrueNAS Apps > Discover > Install via YAML
@@ -172,7 +170,7 @@ All configuration is via environment variables. A `.env` file is loaded automati
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRUENAS_HOST` | — | **Required.** TrueNAS hostname or IP (e.g., `truenas.local`, `localhost` when running as a TrueNAS app) |
+| `TRUENAS_HOST` | — | **Required.** TrueNAS hostname or IP (e.g., `truenas.local`, or `localhost` when running the container on the TrueNAS host itself) |
 | `TRUENAS_API_KEY` | — | **Required.** TrueNAS API key (Credentials > Local Users > root > API Keys) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for self-signed certs |
 

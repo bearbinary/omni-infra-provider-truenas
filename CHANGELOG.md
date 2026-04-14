@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+## [v0.14.2] — Fix UEFI boot order trapping Talos in halt_if_installed
+
+### Fixes
+- **Boot order: root disk before CDROM** — Provisioned VMs set CDROM `order=1000` and root disk `order=1001`, which in bhyve's UEFI boot manager means "CDROM first, disk second". The initial install worked because Talos installs from the ISO, reboots, and the disk then has a bootloader — but any subsequent reboot where UEFI re-entered the CDROM caused the VM to halt with `task haltIfInstalled: Talos is already installed to disk but booted from another media and talos.halt_if_installed kernel parameter is set`. Re-ordered to root disk `1000`, additional disks `1001+`, CDROM `1500`, NIC `2001`. Now UEFI tries the disk first and only falls through to the CDROM on a fresh VM where the disk is empty. Added `TestBootOrder_DiskBeforeCDROM` to pin the invariant. **Migration required for VMs provisioned on v0.14.1 or earlier** — bump each CDROM's `order` from `1000` to `1500` (TrueNAS UI: VM → Devices → CDROM → Device Order; or `midclt call vm.device.update <id> '{"order": 1500}'`). New VMs provisioned on v0.14.2 and later are unaffected. See [Troubleshooting](docs/troubleshooting.md#vm-halts-on-reboot-with-talos-is-already-installed-to-disk-but-booted-from-another-media) and [Upgrading](docs/upgrading.md#upgrading-to-the-boot-order-fix-v0142).
+
+### Removed
+- **TrueNAS app catalog packaging** — Deleted the `truenas-app/` directory (app.yaml, questions.yaml, ix_values.yaml, docker-compose template, migrations stub). The provider is no longer being submitted to the TrueNAS community apps catalog. Installation on TrueNAS is still supported via **Apps > Discover > Install via YAML** with the compose YAML documented in `README.md` and `docs/quickstart.md` — the removed files were only used for catalog-format submission. Affected doc language was updated from "TrueNAS App (Recommended)" to "Docker Compose on TrueNAS (Recommended)" in `README.md`, `docs/index.md`, `docs/quickstart.md`, `AGENT.md`, `llms.txt`, and `llms-full.txt`. Bug report template's deployment-method field updated accordingly.
+
+### Documentation
+- **New control plane sizing guide** (`docs/sizing.md`) — When to bump CP VM resources, with concrete observable triggers (apiserver p99 > 1s, etcd `apply request took too long` warnings, kube-apiserver OOMKilled, `kubectl top` CPU/mem > 70% sustained, etcd DB > 2 GiB, heavy operator installs like ArgoCD / Crossplane / service meshes). Includes a sizing table from homelab (2 vCPU / 2 GiB) up to 50+ node clusters, an HA rolling-replace procedure (drain → delete → scale up → repeat) with a Mermaid sequence diagram, single-CP in-place resize via `midclt`, and a note that etcd fsync latency is a ZFS/SLOG problem — bumping CPU/RAM won't fix it. Linked from `index.md`, `getting-started.md`, `quickstart.md` MachineClass config table, and mkdocs nav under Operations.
+
+### CI
+- **Restore Grafana dashboards + alert rules as release assets** — The parallelize-builds refactor in v0.14.1 inadvertently dropped the dashboard bundling step added for v0.14.0 discoverability. Re-added: the release workflow now uploads `overview.json`, `provisioning.json`, `api-performance.json`, `cleanup.json`, a combined `grafana-dashboards.zip`, and `truenas-provider.rules.yml` as release assets on every tag. Users can grab them directly from the GitHub release page for import into Grafana Cloud / self-hosted.
+
 ## [v0.14.1] — Fix OTEL_EXPORTER_OTLP_PROTOCOL for Grafana Cloud
 
 ### Fixes
@@ -291,6 +307,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.14.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.2
 [v0.14.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.1
 [v0.14.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.0
 [v0.13.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.13.2
