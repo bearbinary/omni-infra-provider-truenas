@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestData_ApplyDefaults(t *testing.T) {
@@ -240,6 +241,104 @@ func TestStorageDiskSize_ZeroDoesNotExpand(t *testing.T) {
 	d.ApplyDefaults(cfg)
 
 	assert.Nil(t, d.AdditionalDisks)
+}
+
+// TestStorageDiskSize_ExpandsWithLonghornVolumeName pins the convention that
+// storage_disk_size expands into an AdditionalDisk named "longhorn". The name
+// becomes the mount path (/var/mnt/longhorn) which matches Longhorn's
+// defaultDataPath — changing this breaks every existing Longhorn deployment
+// that was provisioned through storage_disk_size.
+func TestStorageDiskSize_ExpandsWithLonghornVolumeName(t *testing.T) {
+	t.Parallel()
+
+	cfg := ProviderConfig{DefaultPool: "tank", DefaultNetworkInterface: "br0"}
+
+	d := Data{StorageDiskSize: 150}
+	d.ApplyDefaults(cfg)
+
+	require.Len(t, d.AdditionalDisks, 1)
+	assert.Equal(t, "longhorn", d.AdditionalDisks[0].Name,
+		"storage_disk_size must expand with Name=longhorn so UserVolumeConfig mounts at /var/mnt/longhorn")
+	assert.Equal(t, "xfs", d.AdditionalDisks[0].Filesystem)
+}
+
+func TestAdditionalDisks_DefaultsFillNameAndFilesystem(t *testing.T) {
+	t.Parallel()
+
+	cfg := ProviderConfig{DefaultPool: "tank", DefaultNetworkInterface: "br0"}
+
+	d := Data{
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100},                                   // no name, no fs
+			{Size: 200, Name: "cache"},                    // named, no fs
+			{Size: 300, Filesystem: "ext4"},               // fs, no name
+			{Size: 400, Name: "logs", Filesystem: "ext4"}, // both
+		},
+	}
+	d.ApplyDefaults(cfg)
+
+	assert.Equal(t, "data-1", d.AdditionalDisks[0].Name, "index 0 defaults to data-1 (1-based)")
+	assert.Equal(t, "xfs", d.AdditionalDisks[0].Filesystem)
+
+	assert.Equal(t, "cache", d.AdditionalDisks[1].Name, "explicit name preserved")
+	assert.Equal(t, "xfs", d.AdditionalDisks[1].Filesystem)
+
+	assert.Equal(t, "data-3", d.AdditionalDisks[2].Name, "1-based index stays positional even when earlier disks are named")
+	assert.Equal(t, "ext4", d.AdditionalDisks[2].Filesystem)
+
+	assert.Equal(t, "logs", d.AdditionalDisks[3].Name)
+	assert.Equal(t, "ext4", d.AdditionalDisks[3].Filesystem)
+}
+
+func TestValidate_AdditionalDisks_DuplicateNamesRejected(t *testing.T) {
+	t.Parallel()
+
+	d := Data{
+		Pool:             "tank",
+		NetworkInterface: "br0",
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100, Name: "longhorn"},
+			{Size: 200, Name: "longhorn"},
+		},
+	}
+
+	err := d.Validate()
+	require.Error(t, err, "two disks with the same name would both try to mount at /var/mnt/longhorn")
+	assert.Contains(t, err.Error(), "collides")
+	assert.Contains(t, err.Error(), "longhorn")
+}
+
+func TestValidate_AdditionalDisks_UnsafeNameRejected(t *testing.T) {
+	t.Parallel()
+
+	d := Data{
+		Pool:             "tank",
+		NetworkInterface: "br0",
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100, Name: "../escape"},
+		},
+	}
+
+	err := d.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsafe characters")
+}
+
+func TestValidate_AdditionalDisks_BadFilesystemRejected(t *testing.T) {
+	t.Parallel()
+
+	d := Data{
+		Pool:             "tank",
+		NetworkInterface: "br0",
+		AdditionalDisks: []AdditionalDisk{
+			{Size: 100, Name: "data-1", Filesystem: "btrfs"},
+		},
+	}
+
+	err := d.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "xfs")
+	assert.Contains(t, err.Error(), "ext4")
 }
 
 func TestExtensionMerge(t *testing.T) {

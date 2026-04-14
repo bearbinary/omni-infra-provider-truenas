@@ -498,6 +498,33 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		telemetry.AdditionalDisksTotal.Record(ctx, int64(len(data.AdditionalDisks)))
 	}
 
+	// Emit Talos UserVolumeConfig for each additional disk so Talos formats
+	// and mounts them at /var/mnt/<name>. Without this patch the disks are
+	// attached to the VM but show up as raw unformatted block devices inside
+	// the guest, invisible to Kubernetes workloads (Longhorn, local-path, etc.).
+	if len(data.AdditionalDisks) > 0 {
+		patchData, patchErr := buildUserVolumePatch(data.AdditionalDisks)
+		if patchErr != nil {
+			return fmt.Errorf("failed to build UserVolumeConfig patch: %w", patchErr)
+		}
+
+		if patchData != nil {
+			if cpErr := pctx.CreateConfigPatch(ctx, "data-volumes", patchData); cpErr != nil {
+				return fmt.Errorf("failed to apply UserVolumeConfig patch: %w", cpErr)
+			}
+
+			volumeNames := make([]string, len(data.AdditionalDisks))
+			for i, d := range data.AdditionalDisks {
+				volumeNames[i] = d.Name
+			}
+
+			logger.Info("applied UserVolumeConfig patch for additional disks",
+				zap.Strings("volumes", volumeNames),
+				zap.String("vm_name", vmName),
+			)
+		}
+	}
+
 	// Attach primary NIC with a deterministic MAC derived from the request ID.
 	// This ensures the MAC survives reprovisioning, so DHCP reservations stay valid.
 	// Collision detection is scoped to the same network segment (bridge/VLAN) because

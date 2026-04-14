@@ -127,7 +127,16 @@ These fields go in the MachineClass `configpatch`:
 |---|---|---|---|---|
 | `size` | int | Yes | — | Disk size in GiB |
 | `pool` | string | No | primary pool | ZFS pool override for this disk |
+| `dataset_prefix` | string | No | MachineClass prefix | Per-disk dataset prefix override |
 | `encrypted` | bool | No | `false` | Per-disk encryption toggle |
+| `name` | string | No | `data-N` (1-indexed) | Talos `UserVolumeConfig` name — the disk is formatted and mounted at `/var/mnt/<name>` inside the guest. Set to `longhorn` to match Longhorn's `defaultDataPath`. `storage_disk_size` auto-sets this to `longhorn`. |
+| `filesystem` | string | No | `xfs` | Filesystem for the emitted `UserVolumeConfig` — `xfs` (default) or `ext4`. |
+
+Each additional disk is attached to the VM **and** made usable inside the guest:
+the provider emits a Talos `UserVolumeConfig` per disk (selector keyed by exact
+zvol byte-size) so Talos formats it and mounts it at `/var/mnt/<name>`. Without
+this, the disk shows up as a raw unformatted block device and Kubernetes
+storage drivers can't see it.
 
 #### `additional_nics` items
 

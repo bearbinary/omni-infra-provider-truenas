@@ -88,6 +88,15 @@ providerdata: |
 
 > `storage_disk_size` is a shorthand that adds a data disk to each VM. You can also use the full `additional_disks: [{size: 100}]` syntax if you need per-disk pool or encryption options.
 
+> **Automatic volume formatting + mount (v0.14.3+).** When `storage_disk_size` is
+> set (or any `additional_disks` entry is declared), the provider emits a Talos
+> `UserVolumeConfig` patch so the disk is formatted (xfs by default) and
+> mounted at `/var/mnt/<name>` inside the guest. The `storage_disk_size`
+> shorthand uses `name: longhorn`, so the mount lands at `/var/mnt/longhorn`
+> — which matches Longhorn's `defaultDataPath`. Older releases (≤ v0.14.2)
+> attached the disk but required a manual `UserVolumeConfig` patch; that
+> manual step is no longer needed.
+
 **2. Apply Talos machine config patches for Longhorn:**
 
 Longhorn needs specific Talos configuration. Apply this as a config patch in Omni:
@@ -98,7 +107,7 @@ machine:
     extraMounts:
       - destination: /var/lib/longhorn
         type: bind
-        source: /var/lib/longhorn
+        source: /var/mnt/longhorn
         options:
           - bind
           - rshared
@@ -106,6 +115,10 @@ machine:
   sysctls:
     vm.overcommit_memory: "1"
 ```
+
+Note `source: /var/mnt/longhorn` — that's the mount path the provider's
+auto-emitted `UserVolumeConfig` creates. The `/var/lib/longhorn` destination
+is where Longhorn expects its data path inside its own containers.
 
 See the [Longhorn Talos Linux support guide](https://longhorn.io/docs/1.9.0/advanced-resources/os-distro-specific/talos-linux-support/) for the latest configuration requirements.
 

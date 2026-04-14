@@ -65,9 +65,18 @@ spec:
     machine:
       kubelet:
         extraMounts:
+          # Bind the UserVolumeConfig-mounted data disk (/var/mnt/longhorn) to
+          # the path Longhorn's pods expect (/var/lib/longhorn). The provider
+          # (v0.14.3+) auto-emits a UserVolumeConfig that formats each additional
+          # disk as xfs and mounts it at /var/mnt/<name>; storage_disk_size uses
+          # name=longhorn so the mount is at /var/mnt/longhorn.
+          #
+          # Before v0.14.3 this bind was source == destination (a no-op
+          # self-bind), which meant Longhorn silently wrote to Talos's
+          # ephemeral root partition instead of the attached data disk.
           - destination: /var/lib/longhorn
             type: bind
-            source: /var/lib/longhorn
+            source: /var/mnt/longhorn
             options:
               - bind
               - rshared

@@ -25,6 +25,16 @@ type AdditionalDisk struct {
 	Pool          string `yaml:"pool,omitempty"`           // Pool override (defaults to primary pool)
 	DatasetPrefix string `yaml:"dataset_prefix,omitempty"` // Dataset prefix override (defaults to MachineClass dataset_prefix)
 	Encrypted     bool   `yaml:"encrypted,omitempty"`      // Per-disk encryption toggle
+
+	// Name sets the Talos UserVolumeConfig name emitted for this disk. The
+	// volume is mounted at /var/mnt/<name> inside the guest. Default: data-N
+	// (1-indexed). Setting this to "longhorn" matches the default Longhorn
+	// defaultDataPath = /var/mnt/longhorn.
+	Name string `yaml:"name,omitempty"`
+
+	// Filesystem for the emitted UserVolumeConfig. "xfs" (default) or "ext4".
+	// Longhorn recommends xfs for best performance on modern kernels.
+	Filesystem string `yaml:"filesystem,omitempty"`
 }
 
 type Data struct {
@@ -95,11 +105,25 @@ func (d *Data) ApplyDefaults(cfg ProviderConfig) {
 	}
 
 	// Expand storage_disk_size into additional_disks[0].
-	// This is a convenience shorthand for adding a dedicated data disk (e.g., for Longhorn).
+	// This is a convenience shorthand for adding a dedicated data disk for Longhorn:
+	// the emitted UserVolumeConfig is named "longhorn" so the volume mounts at
+	// /var/mnt/longhorn, which matches Longhorn's defaultDataPath.
 	if d.StorageDiskSize > 0 {
-		storageDisk := AdditionalDisk{Size: d.StorageDiskSize}
+		storageDisk := AdditionalDisk{Size: d.StorageDiskSize, Name: "longhorn"}
 		d.AdditionalDisks = append([]AdditionalDisk{storageDisk}, d.AdditionalDisks...)
 		d.StorageDiskSize = 0 // consumed — prevent double-expansion
+	}
+
+	// Fill defaults for each additional disk. Index assignment happens after
+	// any prepended storage_disk_size expansion so names stay 1-based and stable.
+	for i := range d.AdditionalDisks {
+		if d.AdditionalDisks[i].Name == "" {
+			d.AdditionalDisks[i].Name = fmt.Sprintf("data-%d", i+1)
+		}
+
+		if d.AdditionalDisks[i].Filesystem == "" {
+			d.AdditionalDisks[i].Filesystem = "xfs"
+		}
 	}
 }
 
@@ -200,6 +224,8 @@ func (d *Data) Validate() error {
 		return fmt.Errorf("additional_disks: maximum 16 additional disks allowed, got %d", len(d.AdditionalDisks))
 	}
 
+	seenVolumeNames := make(map[string]int)
+
 	for i, disk := range d.AdditionalDisks {
 		if disk.Size <= 0 {
 			return fmt.Errorf("additional_disks[%d]: size must be > 0", i)
@@ -221,6 +247,22 @@ func (d *Data) Validate() error {
 					return err
 				}
 			}
+		}
+
+		if disk.Name != "" {
+			if err := validateSafeName(fmt.Sprintf("additional_disks[%d].name", i), disk.Name); err != nil {
+				return err
+			}
+
+			if prev, dup := seenVolumeNames[disk.Name]; dup {
+				return fmt.Errorf("additional_disks[%d].name %q collides with additional_disks[%d].name — each volume name must be unique because it becomes the mount path at /var/mnt/<name>", i, disk.Name, prev)
+			}
+
+			seenVolumeNames[disk.Name] = i
+		}
+
+		if disk.Filesystem != "" && disk.Filesystem != "xfs" && disk.Filesystem != "ext4" {
+			return fmt.Errorf("additional_disks[%d].filesystem must be \"xfs\" or \"ext4\", got %q", i, disk.Filesystem)
 		}
 	}
 

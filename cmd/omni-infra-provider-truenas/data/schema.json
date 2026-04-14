@@ -116,6 +116,20 @@
             "type": "boolean",
             "default": false,
             "description": "Enable ZFS native encryption on this disk"
+          },
+          "name": {
+            "type": "string",
+            "title": "Volume Name",
+            "maxLength": 63,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+            "description": "Talos UserVolumeConfig name — the disk is formatted and mounted at /var/mnt/<name> inside the guest. Defaults to data-N (1-indexed). Set to 'longhorn' to match Longhorn's defaultDataPath = /var/mnt/longhorn."
+          },
+          "filesystem": {
+            "type": "string",
+            "title": "Filesystem",
+            "enum": ["xfs", "ext4"],
+            "default": "xfs",
+            "description": "Filesystem for the emitted UserVolumeConfig. xfs (default) is recommended for Longhorn; ext4 is available as an alternative."
           }
         },
         "required": ["size"]

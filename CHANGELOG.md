@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.14.3] — Fix additional disks never reaching Talos (Longhorn was running on the root disk)
+
+### Fixes
+- **Auto-emit Talos `UserVolumeConfig` for additional disks** — Setting `additional_disks` (or the `storage_disk_size` shorthand) attached the disk as a VM device on TrueNAS but never emitted the Talos config patch needed to format and mount it inside the guest. The disk showed up as a raw unformatted block device (`/dev/vdb`, `/dev/vdc`, ...) invisible to Longhorn, local-path-provisioner, and every other Kubernetes storage driver. Users had to apply a custom `UserVolumeConfig` patch manually for every MachineClass. Fixed by emitting a `UserVolumeConfig` patch per additional disk in `stepCreateVM` — filesystem `xfs` (default) or `ext4`, mounted at `/var/mnt/<name>`, with a CEL selector keyed to each zvol's exact byte-size (±1 MiB tolerance for block-alignment) so multiple same-sized disks assign 1:1 to volumes in discovery order. Two new `AdditionalDisk` fields: `name` (defaults to `data-N`, 1-indexed) and `filesystem` (defaults to `xfs`). `storage_disk_size` expansion now auto-sets `name: longhorn` so the volume mounts at `/var/mnt/longhorn` to match Longhorn's `defaultDataPath`. Validation rejects duplicate volume names (two disks can't mount at the same path) and unknown filesystems. Added `TestBuildUserVolumePatch_*`, `TestStorageDiskSize_ExpandsWithLonghornVolumeName`, `TestAdditionalDisks_DefaultsFillNameAndFilesystem`, and three new validation tests.
+- **Fix `install-longhorn.sh` bind mount — Longhorn was silently running on the ephemeral root disk** — The Talos config patch in `scripts/install-longhorn.sh` declared `source: /var/lib/longhorn` and `destination: /var/lib/longhorn`: a self-bind that was effectively a no-op. It exposed the path under Talos's read-only `/var` overlay without mounting the attached data disk, so Longhorn has been writing replica data to Talos's ephemeral root partition instead of the `storage_disk_size` zvol since v0.13.0. Every `storage_disk_size` zvol on every existing Longhorn cluster has been attached, unformatted, and unused for two releases. Fixed to `source: /var/mnt/longhorn` to bind the provider's now-auto-emitted `UserVolumeConfig` mount into the path Longhorn's pods expect. Combined with the `UserVolumeConfig` auto-emission above, new clusters provisioned on this release get Longhorn running on the intended data disk out of the box. **Existing clusters need to re-run the script (idempotent — the config patch gets replaced) _after_ reprovisioning their worker VMs on this release** so the UserVolumeConfig mount exists before the bind references it. Migrating data off the ephemeral root is Longhorn's problem: drain replicas to new nodes, remove old nodes, rebalance.
+
 ## [v0.14.2] — Fix UEFI boot order trapping Talos in halt_if_installed
 
 ### Fixes
@@ -307,6 +313,7 @@ All notable changes to this project are documented here.
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.14.3]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.3
 [v0.14.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.2
 [v0.14.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.1
 [v0.14.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.0
