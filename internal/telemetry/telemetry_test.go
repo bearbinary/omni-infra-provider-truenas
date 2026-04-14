@@ -3,7 +3,11 @@ package telemetry
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -146,6 +150,61 @@ func TestInit_RealPyroscope(t *testing.T) {
 
 	err = shutdown(context.Background())
 	assert.NoError(t, err, "shutdown should flush successfully to real Pyroscope")
+}
+
+func TestInit_HTTPProtobuf_DeliversToEndpoint(t *testing.T) {
+	// Verifies that setting OTELProtocol="http/protobuf" routes traffic through
+	// the HTTP exporter and hits /v1/traces etc. Regression test: previously the
+	// Protocol field was declared but ignored, so http/protobuf silently fell
+	// back to gRPC and failed with "name resolver error" against HTTPS URLs.
+	var hits atomic.Int32
+
+	var gotPaths []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		gotPaths = append(gotPaths, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	shutdown, err := Init(context.Background(), Config{
+		OTELEndpoint:   srv.URL,
+		OTELProtocol:   "http/protobuf",
+		OTELInsecure:   true,
+		ServiceName:    "test-provider-http",
+		ServiceVersion: "v0.0.0-test",
+	})
+	require.NoError(t, err)
+
+	tracer := otel.Tracer("test")
+	_, span := tracer.Start(context.Background(), "test-span")
+	span.End()
+
+	require.NoError(t, shutdown(context.Background()))
+
+	assert.Positive(t, hits.Load(), "HTTP exporter should have made at least one request")
+
+	var sawV1Traces bool
+
+	for _, p := range gotPaths {
+		if strings.HasSuffix(p, "/v1/traces") {
+			sawV1Traces = true
+		}
+	}
+
+	assert.True(t, sawV1Traces, "expected a request to .../v1/traces, got paths: %v", gotPaths)
+}
+
+func TestInit_UnsupportedProtocol(t *testing.T) {
+	_, err := Init(context.Background(), Config{
+		OTELEndpoint:   "http://example:4318",
+		OTELProtocol:   "bogus",
+		ServiceName:    "test",
+		ServiceVersion: "test",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported OTEL_EXPORTER_OTLP_PROTOCOL")
 }
 
 func TestInit_ShutdownFlushesAll(t *testing.T) {

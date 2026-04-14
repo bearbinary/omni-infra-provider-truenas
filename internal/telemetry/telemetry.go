@@ -13,8 +13,11 @@ import (
 	"github.com/grafana/pyroscope-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
@@ -102,26 +105,9 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(context.Context) error, error) {
 	var shutdownFuncs []func(context.Context) error
 
-	traceOpts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(cfg.OTELEndpoint)}
-	metricOpts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(cfg.OTELEndpoint)}
-	logOpts := []otlploggrpc.Option{otlploggrpc.WithEndpoint(cfg.OTELEndpoint)}
-
-	if cfg.OTELInsecure {
-		traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
-		metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
-		logOpts = append(logOpts, otlploggrpc.WithInsecure())
-	}
-
-	if len(cfg.OTELHeaders) > 0 {
-		traceOpts = append(traceOpts, otlptracegrpc.WithHeaders(cfg.OTELHeaders))
-		metricOpts = append(metricOpts, otlpmetricgrpc.WithHeaders(cfg.OTELHeaders))
-		logOpts = append(logOpts, otlploggrpc.WithHeaders(cfg.OTELHeaders))
-	}
-
-	// Traces
-	traceExporter, err := otlptracegrpc.New(ctx, traceOpts...)
+	traceExporter, metricExporter, logExporter, err := buildOTLPExporters(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
+		return nil, err
 	}
 
 	traceOpts2 := []sdktrace.TracerProviderOption{
@@ -142,12 +128,6 @@ func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(c
 	otel.SetTracerProvider(tp)
 	shutdownFuncs = append(shutdownFuncs, tp.Shutdown)
 
-	// Metrics
-	metricExporter, err := otlpmetricgrpc.New(ctx, metricOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create metric exporter: %w", err)
-	}
-
 	metricProviderOpts := []sdkmetric.Option{
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(15*time.Second))),
 		sdkmetric.WithResource(res),
@@ -167,12 +147,6 @@ func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(c
 	mp := sdkmetric.NewMeterProvider(metricProviderOpts...)
 	otel.SetMeterProvider(mp)
 	shutdownFuncs = append(shutdownFuncs, mp.Shutdown)
-
-	// Logs
-	logExporter, err := otlploggrpc.New(ctx, logOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create log exporter: %w", err)
-	}
 
 	logProviderOpts := []sdklog.LoggerProviderOption{
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
@@ -195,6 +169,94 @@ func initOTEL(ctx context.Context, cfg Config, res *resource.Resource) ([]func(c
 	initMetrics()
 
 	return shutdownFuncs, nil
+}
+
+// buildOTLPExporters creates trace/metric/log exporters for either gRPC or HTTP
+// protocol based on cfg.OTELProtocol. Empty or "grpc" selects gRPC; "http/protobuf"
+// (also "http") selects HTTP. HTTP accepts a full URL in OTELEndpoint — required
+// for Grafana Cloud OTLP which serves on https://<host>/otlp.
+func buildOTLPExporters(ctx context.Context, cfg Config) (sdktrace.SpanExporter, sdkmetric.Exporter, sdklog.Exporter, error) {
+	switch cfg.OTELProtocol {
+	case "", "grpc":
+		return buildGRPCExporters(ctx, cfg)
+	case "http/protobuf", "http":
+		return buildHTTPExporters(ctx, cfg)
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported OTEL_EXPORTER_OTLP_PROTOCOL %q (want \"grpc\" or \"http/protobuf\")", cfg.OTELProtocol)
+	}
+}
+
+func buildGRPCExporters(ctx context.Context, cfg Config) (sdktrace.SpanExporter, sdkmetric.Exporter, sdklog.Exporter, error) {
+	traceOpts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(cfg.OTELEndpoint)}
+	metricOpts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(cfg.OTELEndpoint)}
+	logOpts := []otlploggrpc.Option{otlploggrpc.WithEndpoint(cfg.OTELEndpoint)}
+
+	if cfg.OTELInsecure {
+		traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
+		metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
+		logOpts = append(logOpts, otlploggrpc.WithInsecure())
+	}
+
+	if len(cfg.OTELHeaders) > 0 {
+		traceOpts = append(traceOpts, otlptracegrpc.WithHeaders(cfg.OTELHeaders))
+		metricOpts = append(metricOpts, otlpmetricgrpc.WithHeaders(cfg.OTELHeaders))
+		logOpts = append(logOpts, otlploggrpc.WithHeaders(cfg.OTELHeaders))
+	}
+
+	traceExp, err := otlptracegrpc.New(ctx, traceOpts...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create grpc trace exporter: %w", err)
+	}
+
+	metricExp, err := otlpmetricgrpc.New(ctx, metricOpts...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create grpc metric exporter: %w", err)
+	}
+
+	logExp, err := otlploggrpc.New(ctx, logOpts...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create grpc log exporter: %w", err)
+	}
+
+	return traceExp, metricExp, logExp, nil
+}
+
+func buildHTTPExporters(ctx context.Context, cfg Config) (sdktrace.SpanExporter, sdkmetric.Exporter, sdklog.Exporter, error) {
+	// WithEndpointURL accepts a full URL (scheme + host + path). The exporter
+	// appends /v1/traces, /v1/metrics, /v1/logs to the path — Grafana Cloud's
+	// /otlp base path becomes /otlp/v1/traces etc., which is correct.
+	traceOpts := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(cfg.OTELEndpoint)}
+	metricOpts := []otlpmetrichttp.Option{otlpmetrichttp.WithEndpointURL(cfg.OTELEndpoint)}
+	logOpts := []otlploghttp.Option{otlploghttp.WithEndpointURL(cfg.OTELEndpoint)}
+
+	if cfg.OTELInsecure {
+		traceOpts = append(traceOpts, otlptracehttp.WithInsecure())
+		metricOpts = append(metricOpts, otlpmetrichttp.WithInsecure())
+		logOpts = append(logOpts, otlploghttp.WithInsecure())
+	}
+
+	if len(cfg.OTELHeaders) > 0 {
+		traceOpts = append(traceOpts, otlptracehttp.WithHeaders(cfg.OTELHeaders))
+		metricOpts = append(metricOpts, otlpmetrichttp.WithHeaders(cfg.OTELHeaders))
+		logOpts = append(logOpts, otlploghttp.WithHeaders(cfg.OTELHeaders))
+	}
+
+	traceExp, err := otlptracehttp.New(ctx, traceOpts...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create http trace exporter: %w", err)
+	}
+
+	metricExp, err := otlpmetrichttp.New(ctx, metricOpts...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create http metric exporter: %w", err)
+	}
+
+	logExp, err := otlploghttp.New(ctx, logOpts...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create http log exporter: %w", err)
+	}
+
+	return traceExp, metricExp, logExp, nil
 }
 
 func initPyroscope(cfg Config) (func(context.Context) error, error) {

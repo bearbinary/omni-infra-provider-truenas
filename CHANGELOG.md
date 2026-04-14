@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Fixes
+- **Honor `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`** — The `OTELProtocol` config field was declared but `initOTEL` only wired up the gRPC exporters, so setting `http/protobuf` silently fell back to gRPC. When users pointed `OTEL_EXPORTER_OTLP_ENDPOINT` at a Grafana Cloud OTLP gateway URL (`https://otlp-gateway-...grafana.net/otlp`), the gRPC name resolver rejected the `https://` scheme and logged `failed to upload metrics: exporter export timeout: rpc error: code = Unavailable desc = name resolver error: produced zero addresses` on repeat. Fixed by branching on `OTEL_EXPORTER_OTLP_PROTOCOL`: `grpc` (default) uses the existing gRPC exporters; `http/protobuf` (or `http`) uses the OTLP/HTTP exporters via `WithEndpointURL`, which accepts full URLs and appends `/v1/traces`, `/v1/metrics`, `/v1/logs` to the base path as the spec requires. Unknown protocol values now fail fast with a clear error instead of silently defaulting.
+
 ## [v0.14.0] — WebSocket-Only Transport, Longhorn Default
 
 ### Breaking / Behavior Changes
@@ -20,6 +25,10 @@ All notable changes to this project are documented here.
 - Unix socket host mount from the TrueNAS app definition
 - **`siderolabs/nfs-utils` from default Talos extensions** — the provider no longer manages NFS storage, so the NFS client is no longer needed in every VM. Users who want democratic-csi NFS mode or manual NFS mounts can add `siderolabs/nfs-utils` to their MachineClass `extensions` field.
 
+### CI
+- **Parallelize release binary builds via matrix strategy** — Release workflow now cross-compiles the four target platforms (`linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`) on separate runners in parallel via GitHub Actions `strategy.matrix`, instead of sequentially on a single runner. Each matrix job uploads its binary as an artifact; the release job downloads all four before signing and publishing. Cuts wall-clock time on the build stage roughly 4x.
+- **Drop duplicate compile in release gate** — The `test` job in `release.yaml` no longer runs `make build`. `go test` already compiles the packages, so the separate build step was pure duplication. Saves ~30s per release.
+
 ## [v0.13.2] — Fix Unix Socket Transport for TrueNAS 25.10 (SUPERSEDED — use v0.14.0+)
 
 > ⚠️ **KNOWN BROKEN.** The Unix socket fix in v0.13.2 was incomplete. TrueNAS 25.10's middleware requires authentication on every JSON-RPC call, so the "zero-auth Unix socket" path is no longer viable. Upgrade to v0.14.0, which uses WebSocket with mandatory API key authentication.
@@ -36,6 +45,8 @@ All notable changes to this project are documented here.
 
 ## [v0.13.1] — Grafana Cloud Observability
 
+> ⚠️ **Incompatible with TrueNAS SCALE 25.10 (Goldeye).** Upgrade to [v0.14.0](#v0140--websocket-only-transport-longhorn-default) if you're on 25.10+.
+
 ### Features
 - **Grafana Cloud observability support** — OTEL exporters now accept `OTEL_EXPORTER_OTLP_HEADERS` for authenticated endpoints (e.g., Grafana Cloud OTLP gateway). Pyroscope client supports `PYROSCOPE_BASIC_AUTH_USER` and `PYROSCOPE_BASIC_AUTH_PASSWORD` for Grafana Cloud Profiles. Both local dev stacks and Grafana Cloud work with the same provider binary — just different env vars.
 
@@ -44,6 +55,8 @@ All notable changes to this project are documented here.
 - Remove stale `configureStorage` and NFS panels from Grafana provisioning dashboard
 
 ## [v0.13.0] — Multi-Disk VMs, Singleton Lease, Deterministic MACs, Circuit Breaker & Storage
+
+> ⚠️ **Incompatible with TrueNAS SCALE 25.10 (Goldeye).** Upgrade to [v0.14.0](#v0140--websocket-only-transport-longhorn-default) if you're on 25.10+.
 
 ### Breaking / Behavior Changes
 - **Longhorn is now the only supported storage path** — NFS auto-storage has been fully removed (see Removed section below). Add a dedicated data disk via `storage_disk_size` in your MachineClass, then install Longhorn via Helm. See [`docs/storage.md`](storage.md) for setup steps.

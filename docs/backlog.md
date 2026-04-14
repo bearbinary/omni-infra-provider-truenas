@@ -100,7 +100,7 @@ Opens an issue when cassette responses differ from what's committed.
 
 ## Might Implement
 
-Items that are feasible but niche — will implement if there's demand.
+Items that are possible but niche — will implement if there's demand.
 
 ### Multi-Host Provider
 Support multiple TrueNAS hosts behind a single provider instance. Enables HA and load distribution. Most users have a single NAS — this targets the rare multi-host setup.
@@ -119,7 +119,9 @@ Implementation:
 - Add OTEL metrics per host: `truenas.host.vms_running`, `truenas.host.pool_free_bytes`
 
 ### Webhook / Event Notifications
-Notify external systems when provisioning completes, fails, or a VM enters ERROR state. Currently the only way to observe these events is via logs or Prometheus alerts. A webhook callback would enable automation workflows (e.g., Slack notification on provision failure, auto-trigger config management on new node).
+Notify external systems when provisioning completes, fails, or a VM enters ERROR state.
+Currently, the only way to observe these events is via logs or Prometheus alerts. 
+A webhook callback would enable automation workflows (e.g., Slack notification on provision failure, auto-trigger config management on a new node).
 
 Implementation:
 - Add `WEBHOOK_URL` env var (optional)

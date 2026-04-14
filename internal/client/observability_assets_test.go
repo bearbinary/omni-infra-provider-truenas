@@ -47,10 +47,10 @@ func TestGrafanaDashboards_ValidJSON(t *testing.T) {
 		UID       string
 		MinPanels int
 	}{
-		"overview.json":        {Title: "TrueNAS Provider / Overview", UID: "truenas-overview", MinPanels: 10},
-		"provisioning.json":    {Title: "TrueNAS Provider / Provisioning", UID: "truenas-provisioning", MinPanels: 10},
-		"api-performance.json": {Title: "TrueNAS Provider / API Performance", UID: "truenas-api", MinPanels: 10},
-		"cleanup.json":         {Title: "TrueNAS Provider / Cleanup & Maintenance", UID: "truenas-cleanup", MinPanels: 8},
+		"overview.json":        {Title: "Omni TrueNAS Provider — Overview", UID: "truenas-overview", MinPanels: 10},
+		"provisioning.json":    {Title: "Omni TrueNAS Provider — VM Provisioning", UID: "truenas-provisioning", MinPanels: 10},
+		"api-performance.json": {Title: "Omni TrueNAS Provider — TrueNAS API Performance", UID: "truenas-api", MinPanels: 10},
+		"cleanup.json":         {Title: "Omni TrueNAS Provider — Cleanup & Maintenance", UID: "truenas-cleanup", MinPanels: 8},
 	}
 
 	entries, err := os.ReadDir(dashboardDir)
