@@ -1,0 +1,49 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-15T10:45:36.840652Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-zvols-z87000",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-zvols-z87000",
+        "name": "default/omni-integration-test-zvols-z87000",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-zvols-z87000/zvol19000",
+          "type": "VOLUME",
+          "volsize": 1073741824
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-zvols-z87000/zvol19000",
+        "name": "default/omni-integration-test-zvols-z87000/zvol19000",
+        "type": "VOLUME",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-zvols-z87000/zvol19000"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-zvols-z87000"
+      ]
+    }
+  ]
+}

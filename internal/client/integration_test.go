@@ -90,6 +90,13 @@ func testClient(t *testing.T) *Client {
 		return c
 	}
 
+	// CI_REQUIRE_CASSETTES converts the "no cassette" skip into a hard
+	// failure. Set it in CI so a deleted/missing cassette can't silently
+	// turn an integration test into a green run. Local dev still skips.
+	if os.Getenv("CI_REQUIRE_CASSETTES") != "" {
+		t.Fatalf("cassette missing and CI_REQUIRE_CASSETTES is set: %s — re-record with `make test-record` or delete the test", path)
+	}
+
 	t.Skip("no TrueNAS connection and no cassette at " + path)
 
 	return nil
@@ -109,7 +116,9 @@ func testPool(t *testing.T) string {
 }
 
 // testNetworkInterface returns the NIC attach target to use for tests.
-// In replay mode, returns "br0" (responses are canned).
+// In replay mode, returns "vlan100" — the interface the committed cassettes
+// were recorded against. If you re-record cassettes from a box without
+// vlan100, update this default to match your cassette fixtures.
 func testNetworkInterface(t *testing.T) string {
 	t.Helper()
 
@@ -120,7 +129,7 @@ func testNetworkInterface(t *testing.T) string {
 
 	if nic == "" {
 		if isReplayMode() {
-			return "br0"
+			return "vlan100"
 		}
 
 		t.Skip("TRUENAS_TEST_NETWORK_INTERFACE must be set (bridge, VLAN, or physical interface)")

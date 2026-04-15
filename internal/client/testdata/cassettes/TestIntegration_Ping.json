@@ -1,0 +1,41 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-15T10:45:18.550492Z",
+  "interactions": [
+    {
+      "method": "system.info",
+      "params": [],
+      "result": {
+        "boottime": {
+          "$date": 1772211118000
+        },
+        "buildtime": {
+          "$date": 1765974743000
+        },
+        "cores": 24,
+        "datetime": {
+          "$date": 1776249918000
+        },
+        "ecc_memory": false,
+        "hostname": "truenas",
+        "license": null,
+        "loadavg": [
+          3.181640625,
+          3.64404296875,
+          4.0625
+        ],
+        "model": "AMD Ryzen 9 3900X 12-Core Processor",
+        "physical_cores": 12,
+        "physmem": 66513752064,
+        "system_manufacturer": "System manufacturer",
+        "system_product": "System Product Name",
+        "system_product_version": "System Version",
+        "system_serial": "System Serial Number",
+        "timezone": "America/Los_Angeles",
+        "uptime": "46 days, 17:53:20.020693",
+        "uptime_seconds": 4038800.020692765,
+        "version": "25.10.1"
+      }
+    }
+  ]
+}

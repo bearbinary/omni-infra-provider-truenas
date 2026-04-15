@@ -22,8 +22,16 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Test
+      - name: Test (unit + cassette replay, race-enabled)
         run: make test
+
+      # Hard cassette-completeness gate. Fails if an integration test has no
+      # cassette to replay against — catches the silent-skip false-green we
+      # had before the 2026-04-15 cassette backfill.
+      - name: Verify integration cassettes present
+        env:
+          CI_REQUIRE_CASSETTES: "1"
+        run: go test -count=1 -run TestIntegration_ ./internal/client/... ./internal/cleanup/... ./internal/provisioner/...
 
   secrets:
     runs-on: ubuntu-latest

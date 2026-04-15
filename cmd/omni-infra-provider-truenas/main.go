@@ -37,6 +37,12 @@ import (
 // version is set at build time via -ldflags.
 var version = "dev"
 
+// defaultOTELProtocol is the default OTLP exporter protocol. gRPC is the
+// historical default; users opt into http/protobuf for Grafana Cloud.
+// Exposed as a const so the safety-critical-defaults test can pin its value
+// without duplicating the literal.
+const defaultOTELProtocol = "grpc"
+
 //go:embed data/schema.json
 var schema string
 
@@ -98,16 +104,17 @@ func run() error {
 
 	// Initialize telemetry (noop if OTEL_EXPORTER_OTLP_ENDPOINT is not set)
 	telemetryShutdown, err := telemetry.Init(ctx, telemetry.Config{
-		OTELEndpoint:   os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		OTELInsecure:   envBool("OTEL_EXPORTER_OTLP_INSECURE", true),
-		OTELHeaders:    parseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
-		OTELProtocol:   envString("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc"),
-		OTELConsole:    envBool("OTEL_CONSOLE_EXPORT", false),
-		PyroscopeURL:   os.Getenv("PYROSCOPE_URL"),
-		PyroscopeUser:  os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
-		PyroscopePass:  os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
-		ServiceName:    envString("OTEL_SERVICE_NAME", "omni-infra-provider-truenas"),
-		ServiceVersion: version,
+		OTELEndpoint:    os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		OTELInsecure:    envBool("OTEL_EXPORTER_OTLP_INSECURE", true),
+		OTELHeaders:     parseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+		OTELProtocol:    envString("OTEL_EXPORTER_OTLP_PROTOCOL", defaultOTELProtocol),
+		OTELConsole:     envBool("OTEL_CONSOLE_EXPORT", false),
+		PyroscopeURL:    os.Getenv("PYROSCOPE_URL"),
+		PyroscopeUser:   os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
+		PyroscopePass:   os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
+		PyroscopeLogger: zapPyroscopeLogger{l: logger.Named("pyroscope")},
+		ServiceName:     envString("OTEL_SERVICE_NAME", "omni-infra-provider-truenas"),
+		ServiceVersion:  version,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize telemetry: %w", err)
@@ -503,4 +510,22 @@ func envInt(key string, defaultVal int) int {
 	}
 
 	return i
+}
+
+// zapPyroscopeLogger adapts the pyroscope-go Logger interface (logrus-style
+// Infof/Debugf/Errorf) onto our zap logger. Without this, pyroscope-go falls
+// back to a noop logger and silently swallows every upload error — which is
+// exactly what made "no profiles in Pyroscope" undebuggable.
+type zapPyroscopeLogger struct{ l *zap.Logger }
+
+func (z zapPyroscopeLogger) Infof(format string, args ...any) {
+	z.l.Info(fmt.Sprintf(format, args...))
+}
+
+func (z zapPyroscopeLogger) Debugf(format string, args ...any) {
+	z.l.Debug(fmt.Sprintf(format, args...))
+}
+
+func (z zapPyroscopeLogger) Errorf(format string, args ...any) {
+	z.l.Error(fmt.Sprintf(format, args...))
 }

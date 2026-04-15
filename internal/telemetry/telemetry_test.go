@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -110,33 +112,43 @@ func TestInit_DefaultServiceName(t *testing.T) {
 }
 
 func TestInit_OTELOnly_InvalidEndpoint(t *testing.T) {
-	// Invalid endpoint — Init should still succeed (exporters connect lazily)
+	// Invalid endpoint — Init must still succeed (exporters connect lazily;
+	// the gRPC OTLP client dials on first export, not during construction).
+	// Without this contract, a mistyped OTEL_EXPORTER_OTLP_ENDPOINT would
+	// take down the provider on startup instead of just losing telemetry.
 	shutdown, err := Init(context.Background(), Config{
 		OTELEndpoint:   "localhost:99999",
 		OTELInsecure:   true,
 		ServiceName:    "test-provider",
 		ServiceVersion: "test",
 	})
+	require.NoError(t, err, "Init must not fail on unreachable OTLP endpoint — exporter connects lazily so bad config can't wedge startup")
+	require.NotNil(t, shutdown)
 
-	if err != nil {
-		return // acceptable — some OTLP clients fail eagerly
-	}
-
-	// Shutdown may fail trying to flush to invalid endpoint — that's expected
-	_ = shutdown(context.Background())
+	// Shutdown flush will fail trying to reach the invalid endpoint; the
+	// important contract is that it returns rather than hanging forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = shutdown(ctx)
 }
 
 func TestInit_PyroscopeOnly_InvalidURL(t *testing.T) {
-	// Pyroscope with invalid URL — should fail
-	_, err := Init(context.Background(), Config{
+	// An invalid Pyroscope URL must either fail fast at Init or succeed and
+	// defer the failure to flush time — either way, no panic. Asserting one
+	// of those two branches instead of the older `_ = err` no-op.
+	shutdown, err := Init(context.Background(), Config{
 		PyroscopeURL:   "not-a-valid-url",
 		ServiceName:    "test-provider",
 		ServiceVersion: "test",
 	})
 
-	// Pyroscope may or may not fail on invalid URL depending on the client
-	// Just verify it doesn't panic
-	_ = err
+	if err != nil {
+		assert.Nil(t, shutdown, "failed Init must not return a shutdown func — caller has nothing to tear down")
+		return
+	}
+
+	require.NotNil(t, shutdown)
+	_ = shutdown(context.Background())
 }
 
 func TestInit_BothConfigured(t *testing.T) {
@@ -234,11 +246,18 @@ func TestInit_HTTPProtobuf_DeliversToEndpoint(t *testing.T) {
 	// back to gRPC and failed with "name resolver error" against HTTPS URLs.
 	var hits atomic.Int32
 
-	var gotPaths []string
+	var (
+		mu       sync.Mutex
+		gotPaths []string
+	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
+
+		mu.Lock()
 		gotPaths = append(gotPaths, r.URL.Path)
+		mu.Unlock()
+
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -260,15 +279,19 @@ func TestInit_HTTPProtobuf_DeliversToEndpoint(t *testing.T) {
 
 	assert.Positive(t, hits.Load(), "HTTP exporter should have made at least one request")
 
+	mu.Lock()
+	pathsCopy := append([]string(nil), gotPaths...)
+	mu.Unlock()
+
 	var sawV1Traces bool
 
-	for _, p := range gotPaths {
+	for _, p := range pathsCopy {
 		if strings.HasSuffix(p, "/v1/traces") {
 			sawV1Traces = true
 		}
 	}
 
-	assert.True(t, sawV1Traces, "expected a request to .../v1/traces, got paths: %v", gotPaths)
+	assert.True(t, sawV1Traces, "expected a request to .../v1/traces, got paths: %v", pathsCopy)
 }
 
 func TestInit_UnsupportedProtocol(t *testing.T) {
@@ -292,4 +315,87 @@ func TestInit_ShutdownFlushesAll(t *testing.T) {
 	// Call shutdown multiple times — should be safe
 	assert.NoError(t, shutdown(context.Background()))
 	assert.NoError(t, shutdown(context.Background()))
+}
+
+// TestBuildOTLPExporters_ProtocolSelection pins the gRPC vs HTTP branch in
+// buildOTLPExporters. The v0.14.1 fix was supposed to honor
+// OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf, but the http/protobuf branch
+// fell back to gRPC silently for nearly a year (well — for a few releases).
+// If anyone reverts the switch statement, this test fails immediately.
+//
+// We compare exporter package paths because the SDK exposes only interface
+// types from the public API. otlptracegrpc.Exporter.PkgPath() ends in
+// "otlptracegrpc"; otlptracehttp ends in "otlptracehttp".
+func TestBuildOTLPExporters_ProtocolSelection(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name              string
+		protocol          string
+		expectExporterPkg string // substring expected in exporter type's PkgPath
+	}{
+		{"empty defaults to gRPC", "", "otlpmetricgrpc"},
+		{"explicit grpc", "grpc", "otlpmetricgrpc"},
+		{"http/protobuf selects HTTP exporter", "http/protobuf", "otlpmetrichttp"},
+		{"http alias also selects HTTP exporter", "http", "otlpmetrichttp"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := Config{
+				OTELEndpoint: "https://otlp.example.com/otlp",
+				OTELProtocol: tc.protocol,
+				OTELInsecure: false,
+			}
+
+			// Use metric exporter for the type check — the trace exporter
+			// public type is *otlptrace.Exporter regardless of transport
+			// (it wraps an unexported client). The metric exporter, by
+			// contrast, has a transport-specific concrete type:
+			// otlpmetricgrpc.Exporter vs otlpmetrichttp.Exporter.
+			_, metricExp, _, err := buildOTLPExporters(context.Background(), cfg)
+			require.NoError(t, err, "exporter construction shouldn't fail with valid endpoint URL")
+
+			pkg := reflect.TypeOf(metricExp).Elem().PkgPath()
+			assert.Contains(t, pkg, tc.expectExporterPkg,
+				"protocol %q should produce exporter from %s, got from %s", tc.protocol, tc.expectExporterPkg, pkg)
+		})
+	}
+}
+
+func TestBuildOTLPExporters_UnsupportedProtocolFailsFast(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		OTELEndpoint: "https://otlp.example.com/otlp",
+		OTELProtocol: "websocket-over-carrier-pigeon",
+	}
+
+	_, _, _, err := buildOTLPExporters(context.Background(), cfg)
+	require.Error(t, err, "unknown protocol must fail fast — silent fallback was the v0.14.1–v0.14.4 OTEL bug")
+	assert.Contains(t, err.Error(), "unsupported")
+}
+
+// TestBuildHTTPExporters_UsesSignalEndpointWiring is a source-grep guard. The
+// signalEndpoint() helper is unit-tested separately for path-joining, but
+// nothing else asserts that buildHTTPExporters actually calls it. If a
+// future refactor reverts to bare WithEndpointURL(cfg.OTELEndpoint), unit
+// tests on signalEndpoint still pass and the v0.14.5 OTLP 404 bug returns
+// silently.
+func TestBuildHTTPExporters_UsesSignalEndpointWiring(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("telemetry.go")
+	require.NoError(t, err)
+
+	body := string(src)
+
+	for _, signal := range []string{"/v1/traces", "/v1/metrics", "/v1/logs"} {
+		expected := `signalEndpoint(cfg.OTELEndpoint, "` + signal + `")`
+		assert.Contains(t, body, expected,
+			"telemetry.go must call %s — without it, OTEL_EXPORTER_OTLP_ENDPOINT base URLs (Grafana Cloud /otlp) hit the wrong path and return 404",
+			expected)
+	}
 }

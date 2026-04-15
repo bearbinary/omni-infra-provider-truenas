@@ -77,6 +77,10 @@ func testClient(t *testing.T) *client.Client {
 		return c
 	}
 
+	if os.Getenv("CI_REQUIRE_CASSETTES") != "" {
+		t.Fatalf("cassette missing and CI_REQUIRE_CASSETTES is set: %s — re-record with `make test-record` or delete the test", path)
+	}
+
 	t.Skip("no TrueNAS connection and no cassette at " + path)
 
 	return nil

@@ -1,0 +1,62 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-15T10:45:54.016297Z",
+  "interactions": [
+    {
+      "method": "vm.create",
+      "params": [
+        {
+          "name": "omniinttestmac35000",
+          "vcpus": 1,
+          "memory": 512,
+          "bootloader": "UEFI",
+          "autostart": false
+        }
+      ],
+      "result": {
+        "id": 622,
+        "name": "omniinttestmac35000",
+        "vcpus": 1,
+        "memory": 512,
+        "bootloader": "UEFI",
+        "autostart": false,
+        "status": {
+          "state": "STOPPED"
+        }
+      }
+    },
+    {
+      "method": "vm.device.create",
+      "params": [
+        {
+          "vm": 622,
+          "order": 2001,
+          "attributes": {
+            "dtype": "NIC",
+            "mac": "02:de:ad:be:ef:01",
+            "nic_attach": "vlan100",
+            "type": "VIRTIO"
+          }
+        }
+      ],
+      "result": {
+        "id": 654,
+        "vm": 622,
+        "order": 2001,
+        "attributes": {
+          "dtype": "NIC",
+          "mac": "02:de:ad:be:ef:01",
+          "nic_attach": "vlan100",
+          "trust_guest_rx_filters": false,
+          "type": "VIRTIO"
+        }
+      }
+    },
+    {
+      "method": "vm.delete",
+      "params": [
+        622
+      ]
+    }
+  ]
+}

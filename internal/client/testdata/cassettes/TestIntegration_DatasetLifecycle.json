@@ -1,0 +1,60 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-15T10:45:20.052755Z",
+  "interactions": [
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-ds62000",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "result": {
+        "id": "default/omni-integration-test-ds62000",
+        "name": "default/omni-integration-test-ds62000",
+        "type": "FILESYSTEM",
+        "pool": "default"
+      }
+    },
+    {
+      "method": "pool.dataset.create",
+      "params": [
+        {
+          "name": "default/omni-integration-test-ds62000",
+          "type": "FILESYSTEM"
+        }
+      ],
+      "error": {
+        "code": 11,
+        "message": "[EINVAL] pool_dataset_create.name: Path /mnt/default/omni-integration-test-ds62000 already exists\n"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-ds62000"
+      ]
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-ds62000"
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: PoolDataset default/omni-integration-test-ds62000 does not exist"
+      }
+    },
+    {
+      "method": "pool.dataset.delete",
+      "params": [
+        "default/omni-integration-test-ds62000"
+      ],
+      "error": {
+        "code": 2,
+        "message": "[ENOENT] None: PoolDataset default/omni-integration-test-ds62000 does not exist"
+      }
+    }
+  ]
+}

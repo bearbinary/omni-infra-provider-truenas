@@ -1,0 +1,36 @@
+{
+  "truenas_version": "",
+  "recorded_at": "2026-04-15T10:45:19.331348Z",
+  "interactions": [
+    {
+      "method": "vm.device.nic_attach_choices",
+      "params": [],
+      "result": {
+        "br100": "br100",
+        "vlan100": "vlan100: to the k8 testing cluster",
+        "vlan50": "vlan50: DMZ",
+        "vlan666": "vlan666"
+      }
+    },
+    {
+      "method": "vm.device.nic_attach_choices",
+      "params": [],
+      "result": {
+        "br100": "br100",
+        "vlan100": "vlan100: to the k8 testing cluster",
+        "vlan50": "vlan50: DMZ",
+        "vlan666": "vlan666"
+      }
+    },
+    {
+      "method": "vm.device.nic_attach_choices",
+      "params": [],
+      "result": {
+        "br100": "br100",
+        "vlan100": "vlan100: to the k8 testing cluster",
+        "vlan50": "vlan50: DMZ",
+        "vlan666": "vlan666"
+      }
+    }
+  ]
+}

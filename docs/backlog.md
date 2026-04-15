@@ -56,6 +56,7 @@ Tracked improvements for future releases.
 - **Longhorn Install Script** — `scripts/install-longhorn.sh <cluster>` one-command Longhorn setup (v0.13.0)
 - **Velero CSI Snapshots & DR Runbook** — Extended [backup guide](backup.md) with Velero CSI snapshot integration and 5 disaster recovery scenarios (v0.13.0)
 - **Grafana Cloud Observability** — OTEL exporters support `OTEL_EXPORTER_OTLP_HEADERS` for authenticated endpoints. Pyroscope supports `PYROSCOPE_BASIC_AUTH_USER` / `PYROSCOPE_BASIC_AUTH_PASSWORD` for Grafana Cloud Profiles (unreleased)
+- **Cassette Coverage Backfill** — Recorded the 6 missing integration cassettes (`TestIntegration_{Ping,PoolExists,NetworkInterfaceValid,DatasetLifecycle,ZvolLifecycle,NIC_DeterministicMAC}`) and flipped `CI_REQUIRE_CASSETTES=1` from advisory → required in both `ci.yaml` and `release.yaml`. Missing cassettes now fail CI instead of skipping silently (unreleased)
 
 ## Upstream Issues
 

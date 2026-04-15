@@ -387,3 +387,35 @@ func TestExtensionMerge(t *testing.T) {
 		assert.Contains(t, extensions, "siderolabs/qemu-guest-agent")
 	})
 }
+
+// TestDefaultExtensions_RequiredEntries pins every Talos extension that the
+// provider depends on. Each entry below corresponds to a runtime feature that
+// silently breaks if the extension is removed:
+//
+//   - qemu-guest-agent: TrueNAS sends ACPI shutdown signals via the agent.
+//     Without it, Deprovision can't gracefully stop VMs and falls back to
+//     force-stop after the grace timeout — risks Talos data corruption.
+//   - util-linux-tools: Talos disk-format and partition operations require
+//     util-linux binaries (e.g. mkfs.xfs for UserVolumeConfig). Without
+//     this, the data-volumes patch can't format the additional disk.
+//   - iscsi-tools: Longhorn attaches replicas to pods over iSCSI. Without
+//     the iSCSI initiator from this extension, PVCs stay Pending forever
+//     and Longhorn manager logs show "iscsi: failed to start session".
+//     Added to defaults in v0.14.0 specifically to fix this.
+//
+// If you intentionally remove one of these, also update the runtime
+// behavior that relies on it AND the matching failure mode docs.
+func TestDefaultExtensions_RequiredEntries(t *testing.T) {
+	t.Parallel()
+
+	required := map[string]string{
+		"siderolabs/qemu-guest-agent": "ACPI shutdown signal — graceful VM stop on Deprovision",
+		"siderolabs/util-linux-tools": "Talos disk-format operations (mkfs.xfs for UserVolumeConfig)",
+		"siderolabs/iscsi-tools":      "Longhorn iSCSI replica attachment — without it, PVCs stay Pending",
+	}
+
+	for ext, why := range required {
+		assert.Contains(t, defaultExtensions, ext,
+			"required extension %q missing from defaultExtensions — needed for: %s", ext, why)
+	}
+}

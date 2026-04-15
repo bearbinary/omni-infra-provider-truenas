@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  # Required by the failure-notifier step to open an issue when E2E breaks.
+  issues: write
 
 jobs:
   e2e:
@@ -30,10 +32,13 @@ jobs:
           TRUENAS_TEST_POOL: ${{ secrets.TRUENAS_TEST_POOL }}
           TRUENAS_TEST_NETWORK_INTERFACE: ${{ secrets.TRUENAS_TEST_NETWORK_INTERFACE }}
         run: |
+          # Missing secrets used to `exit 0`, which made the daily E2E run
+          # report green even when the test harness couldn't authenticate —
+          # classic false-green failure mode. Now we fail loudly so a
+          # rotated/unset secret page someone instead of hiding the gap.
           if [ -z "$TRUENAS_TEST_HOST" ]; then
-            echo "::warning::TRUENAS_TEST_HOST not configured — skipping E2E tests"
-            echo "Configure repository secrets to enable: TRUENAS_TEST_HOST, TRUENAS_TEST_API_KEY, TRUENAS_TEST_POOL, TRUENAS_TEST_NETWORK_INTERFACE"
-            exit 0
+            echo "::error::E2E secrets missing: set TRUENAS_TEST_HOST, TRUENAS_TEST_API_KEY, TRUENAS_TEST_POOL, TRUENAS_TEST_NETWORK_INTERFACE in repository secrets."
+            exit 1
           fi
           make test-e2e
 
@@ -45,3 +50,40 @@ jobs:
           path: _out/test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+      # Open a GitHub issue on scheduled-run failure. Without this, a red
+      # 3am E2E sits unread until a human happens to open the Actions tab.
+      # `workflow_dispatch` runs don't page — they're interactive.
+      - name: Notify on failure (scheduled runs only)
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const today = new Date().toISOString().slice(0, 10);
+            const title = `E2E failed on ${today}`;
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'e2e-failure',
+            });
+            if (existing.some(i => i.title === title)) {
+              core.info(`Issue already open for ${today}, skipping.`);
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              labels: ['e2e-failure'],
+              body: [
+                `Scheduled E2E run failed.`,
+                ``,
+                `Run: ${runUrl}`,
+                ``,
+                `Common causes: rotated TRUENAS_TEST_API_KEY, TrueNAS host unreachable, test pool deleted, provider regression. Check the run logs and the uploaded \`e2e-results\` artifact before closing.`,
+              ].join('\n'),
+            });

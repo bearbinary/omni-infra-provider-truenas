@@ -6,9 +6,11 @@
 
 # Build artifacts
 _out/
+_tmp/
 site/
 *.exe
 /omni-infra-provider-truenas
+/verify-api-key-roles
 
 # OS
 .DS_Store

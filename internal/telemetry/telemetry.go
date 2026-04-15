@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"path"
 	"runtime"
 	"strings"
@@ -39,11 +41,12 @@ type Config struct {
 	OTELHeaders    map[string]string // Extra headers for OTLP exporter (e.g., Authorization for Grafana Cloud)
 	OTELProtocol   string            // "grpc" (default) or "http/protobuf"
 	OTELConsole    bool              // If true, also emit traces/metrics/logs to stdout (verbose — opt-in for local debugging)
-	PyroscopeURL   string            // Pyroscope server URL (e.g., "http://pyroscope:4040" or Grafana Cloud endpoint)
-	PyroscopeUser  string            // Basic auth user (Grafana Cloud instance ID)
-	PyroscopePass  string            // Basic auth password (Grafana Cloud API token)
-	ServiceName    string            // Defaults to "omni-infra-provider-truenas"
-	ServiceVersion string            // Injected at build time
+	PyroscopeURL    string           // Pyroscope server URL (e.g., "http://pyroscope:4040" or Grafana Cloud endpoint)
+	PyroscopeUser   string           // Basic auth user (Grafana Cloud instance ID)
+	PyroscopePass   string           // Basic auth password (Grafana Cloud API token)
+	PyroscopeLogger pyroscope.Logger // Optional logger for Pyroscope upload errors. Defaults to stderr — strongly recommended to wire to your app logger or you'll silently drop every profile upload failure.
+	ServiceName     string           // Defaults to "omni-infra-provider-truenas"
+	ServiceVersion  string           // Injected at build time
 }
 
 // Init initializes OpenTelemetry and Pyroscope. Returns a shutdown function
@@ -290,11 +293,21 @@ func buildHTTPExporters(ctx context.Context, cfg Config) (sdktrace.SpanExporter,
 }
 
 func initPyroscope(cfg Config) (func(context.Context) error, error) {
+	logger := cfg.PyroscopeLogger
+	if logger == nil {
+		// Default to a stderr logger so upload failures aren't silent.
+		// pyroscope-go's noop default is the reason "no profiles in
+		// Pyroscope" used to be undebuggable — you'd never see the
+		// connection refused or 401 that explains it.
+		logger = stderrPyroscopeLogger{}
+	}
+
 	profiler, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName:   cfg.ServiceName,
 		ServerAddress:     cfg.PyroscopeURL,
 		BasicAuthUser:     cfg.PyroscopeUser,
 		BasicAuthPassword: cfg.PyroscopePass,
+		Logger:            logger,
 		Tags:              map[string]string{"version": cfg.ServiceVersion},
 		ProfileTypes: []pyroscope.ProfileType{
 			pyroscope.ProfileCPU,
@@ -312,5 +325,27 @@ func initPyroscope(cfg Config) (func(context.Context) error, error) {
 	runtime.SetMutexProfileFraction(5)
 	runtime.SetBlockProfileRate(5)
 
+	logger.Infof("pyroscope profiler started: app=%q server=%q version=%q",
+		cfg.ServiceName, cfg.PyroscopeURL, cfg.ServiceVersion)
+
 	return func(_ context.Context) error { return profiler.Stop() }, nil
+}
+
+// stderrSink is os.Stderr in production. Overridable by tests.
+var stderrSink io.Writer = os.Stderr
+
+// stderrPyroscopeLogger is the fallback used when no PyroscopeLogger is
+// passed in Config. Writes Errorf and Infof to stderr so upload failures
+// surface in container logs. Debugf is dropped to avoid log spam from the
+// per-profile-flush chatter.
+type stderrPyroscopeLogger struct{}
+
+func (stderrPyroscopeLogger) Infof(format string, args ...any) {
+	fmt.Fprintf(stderrSink, "[pyroscope] "+format+"\n", args...)
+}
+
+func (stderrPyroscopeLogger) Debugf(string, ...any) {} // suppressed
+
+func (stderrPyroscopeLogger) Errorf(format string, args ...any) {
+	fmt.Fprintf(stderrSink, "[pyroscope][error] "+format+"\n", args...)
 }

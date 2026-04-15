@@ -11,6 +11,8 @@ permissions:
 jobs:
   # Gate release on tests passing. `go test` compiles the packages, so a
   # separate `make build` step would duplicate compilation — skip it.
+  # `make test` runs with `-race` (see Makefile) so data races like the
+  # gotPaths race fixed in v0.14.7 would fail here rather than ship.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -20,8 +22,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Test
+      - name: Test (unit + cassette replay, race-enabled)
         run: make test
+
+      # Cassette-replay gate: fail the release if an integration test has no
+      # cassette to replay against. Without this, a deleted cassette turns an
+      # integration test into a silent no-op that reports green.
+      - name: Verify integration cassettes present
+        env:
+          CI_REQUIRE_CASSETTES: "1"
+        run: go test -count=1 -run TestIntegration_ ./internal/client/... ./internal/cleanup/... ./internal/provisioner/...
 
   # Cross-compile each target on its own runner in parallel. Each job uploads
   # its binary as an artifact; the release job downloads all four.
@@ -201,7 +211,46 @@ jobs:
           fi
           echo "Smoke test passed: image runs and reports version ${OUTPUT}"
 
-      # Only reached if the smoke test passed. Multi-arch build pushed to GHCR.
+      # Image- and Dockerfile-level invariants that are easy to silently break:
+      #
+      # 1. Container runtime UID. `USER 65534:65534` (set in v0.14.5) aligns
+      #    container writes with TrueNAS host `nobody`. If a future Dockerfile
+      #    edit drops the USER directive, the distroless :nonroot default
+      #    (uid 65532) takes over and bind mounts on TrueNAS hosts get owned
+      #    by an unexpected uid — silent permission errors on PVC writes.
+      #
+      # 2. Dockerfile content. The `--chmod=0755` and `USER` directives are
+      #    the runtime versions of v0.14.4 and v0.14.5 fixes. If they drop
+      #    out of the Dockerfile during a refactor, only the runtime smoke
+      #    test catches them — and only one of them at a time. The grep
+      #    asserts here fail the build immediately on Dockerfile drift.
+      - name: Verify image and Dockerfile invariants
+        run: |
+          set -euo pipefail
+          IMAGE="smoke-test:${{ steps.version.outputs.tag }}"
+
+          USER_GID=$(docker inspect "${IMAGE}" --format '{{.Config.User}}')
+          if [ "${USER_GID}" != "65534:65534" ]; then
+            echo "::error::Container runs as ${USER_GID}, expected 65534:65534 (TrueNAS nobody alignment, set in v0.14.5)."
+            echo "::error::If you intentionally changed this, update the test and the v0.14.5 CHANGELOG entry."
+            exit 1
+          fi
+          echo "OK: image Config.User = ${USER_GID}"
+
+          if ! grep -q -- '--chmod=0755' Dockerfile; then
+            echo "::error::Dockerfile is missing 'COPY --chmod=0755'. This is the v0.14.4 fix for the actions/upload-artifact ZIP-strips-execute-bit regression."
+            echo "::error::Without it, the published image fails to start with: exec: '/usr/local/bin/omni-infra-provider-truenas': permission denied"
+            exit 1
+          fi
+          echo "OK: Dockerfile contains --chmod=0755"
+
+          if ! grep -q '^USER 65534:65534' Dockerfile; then
+            echo "::error::Dockerfile is missing 'USER 65534:65534'. This is the v0.14.5 fix for TrueNAS nobody alignment."
+            exit 1
+          fi
+          echo "OK: Dockerfile contains USER 65534:65534"
+
+      # Only reached if the smoke test + invariant checks passed. Multi-arch build pushed to GHCR.
       - name: Build and push Docker image
         id: docker-push
         uses: docker/build-push-action@v6
