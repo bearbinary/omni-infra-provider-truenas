@@ -23,7 +23,7 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 
 === "Docker Compose on TrueNAS (Recommended)"
 
-    Run the container directly on your TrueNAS host via **Apps > Discover > Install via YAML**. Create an API key first at **Credentials > Local Users > root > API Keys**.
+    Run the container directly on your TrueNAS host via **Apps > Discover > Install via YAML**. Create an API key first — see [TrueNAS Setup > API Key](truenas-setup.md#5-api-key) for the recommended dedicated non-root user + scoped roles. Do **not** use the `root` user's key.
 
     ```yaml
     services:
@@ -77,7 +77,7 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 | Variable | Default | Description |
 |---|---|---|
 | `TRUENAS_HOST` | — | **Required.** TrueNAS hostname or IP (use `localhost` when running the container on the TrueNAS host itself) |
-| `TRUENAS_API_KEY` | — | **Required.** TrueNAS API key (Credentials > Local Users > root > API Keys) |
+| `TRUENAS_API_KEY` | — | **Required.** TrueNAS API key from a dedicated non-root user with scoped roles ([setup](truenas-setup.md#5-api-key)). |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification for self-signed certs (recommended `true` for `localhost`) |
 
 !!! note

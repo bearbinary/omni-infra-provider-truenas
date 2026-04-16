@@ -87,6 +87,7 @@ nav:
   - Operations:
       - Upgrading: upgrading.md
       - Sizing Control Planes: sizing.md
+      - Security Hardening: hardening.md
       - Backup & Recovery: backup.md
       - Troubleshooting: troubleshooting.md
       - Testing: testing.md
@@ -96,3 +97,7 @@ nav:
       - Roadmap: backlog.md
       - Integration Test CI: integration-test-ci.md
       - Provider Research: provider-research.md
+      - Upstream TrueNAS Bugs:
+          - Overview: upstream-bugs/README.md
+          - Role recursion: upstream-bugs/truenas-role-recursion.md
+          - Upload role gap: upstream-bugs/truenas-upload-role-gap.md

@@ -61,7 +61,7 @@ flowchart TD
 
 === "Docker Compose on TrueNAS (Recommended)"
 
-    Run the container directly on your TrueNAS host via **Apps > Discover > Install via YAML**. Create an API key first at **Credentials > Local Users > root > API Keys**.
+    Run the container directly on your TrueNAS host via **Apps > Discover > Install via YAML**. Create an API key first — see [TrueNAS Setup > API Key](truenas-setup.md#5-api-key) for the recommended dedicated non-root user + scoped roles. Do **not** use the `root` user's key.
 
     ```yaml
     services:

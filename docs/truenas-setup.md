@@ -216,20 +216,85 @@ ssh -i ~/.ssh/csi-truenas csi@<truenas-ip> "sudo zfs list"
 
 ---
 
-## 5. API Key (for Remote Provider Deployment)
+## 5. API Key
 
-If running the provider **outside** TrueNAS (Kubernetes deployment, remote Docker), you need an API key for the WebSocket connection.
+The provider connects to TrueNAS via WebSocket with an API key — required in all deployments (as of v0.14.0 / TrueNAS 25.10, which removed implicit Unix-socket auth).
 
-!!! note
-    Create this in the TrueNAS UI at **Credentials > Local Users > root > API Keys** — required even when running the provider on the TrueNAS host (as of v0.14.0 / TrueNAS 25.10).
+### Recommended: dedicated non-root user in `builtin_administrators`
 
-1. Go to **Credentials > API Keys**
-2. Click **Add**
-3. **Name**: `omni-infra-provider`
-4. Click **Save**
-5. **Copy the key immediately** — it's only shown once
+Create a user dedicated to the provider and add it to the **`builtin_administrators`** group. This is better than using the `root` user's key:
+
+- The provider's API audit trail is separated from interactive admin activity.
+- The key can be revoked by deleting just the provider user, without touching `root`.
+- No password on the user → fewer attack surfaces than root, which typically has a console password.
+
+**Why `builtin_administrators` membership (not a scoped privilege):**
+
+The provider uploads Talos ISOs to TrueNAS via the `/_upload` HTTP endpoint (`filesystem.put` with a pipe-based multipart request). This endpoint enforces the `SYS_ADMIN` account attribute on top of the regular role system. `SYS_ADMIN` is granted **only** by membership in `builtin_administrators` — no custom privilege or granular role combination substitutes for it. This was verified empirically on TrueNAS SCALE 25.10.1; see [upstream bug reports](upstream-bugs/) for the specifics.
+
+Users not in `builtin_administrators` can call every JSON-RPC method the provider needs (VM lifecycle, dataset CRUD, filesystem queries) — but ISO upload fails with HTTP 403. The provider does not currently have a fallback, so `builtin_administrators` membership is required.
+
+### Setup
+
+**Create the user:**
+
+1. **Credentials > Local Users > Add**
+2. **Username**: `omni-provider` (or similar)
+3. **Full Name**: `Omni Infra Provider`
+4. **Password Disabled**: ✅ check (API-only, no interactive login)
+5. **Shell**: `nologin`
+6. **Create New Primary Group**: ✅ check
+7. Save
+
+**Add the user to `builtin_administrators`:**
+
+1. **Credentials > Groups > builtin_administrators > Edit**
+2. Under **Members**, add the `omni-provider` user.
+3. Save.
+
+Or via `midclt` (requires root / another admin):
+
+```bash
+# Get current member list + the new user's id
+GROUP_ID=$(sudo midclt call group.query '[["name","=","builtin_administrators"]]' | jq '.[0].id')
+USER_ID=$(sudo midclt call user.query '[["username","=","omni-provider"]]' | jq '.[0].id')
+CURRENT=$(sudo midclt call group.query '[["name","=","builtin_administrators"]]' | jq -c '.[0].users')
+NEW=$(echo "$CURRENT" | jq -c ". + [$USER_ID]")
+sudo midclt call group.update "$GROUP_ID" "{\"users\": $NEW}"
+```
+
+**Create the API key for this user:**
+
+1. **Credentials > API Keys > Add**
+2. **Name**: `omni-infra-provider`
+3. **Username**: select `omni-provider`
+4. Save and **copy the key immediately** — it's shown only once.
 
 Use this key as `TRUENAS_API_KEY` in your provider config.
+
+### Can scoped privileges work instead?
+
+Empirically, no — not in TrueNAS 25.10.1. A custom privilege with these 13 roles covers every JSON-RPC method the provider calls:
+
+```
+READONLY_ADMIN, VM_READ, VM_WRITE, VM_DEVICE_READ, VM_DEVICE_WRITE,
+DATASET_READ, DATASET_WRITE, DATASET_DELETE,
+POOL_READ, DISK_READ, NETWORK_INTERFACE_READ,
+FILESYSTEM_ATTRS_READ, FILESYSTEM_DATA_WRITE
+```
+
+A user with exactly these roles (and nothing else) can provision and deprovision VMs end-to-end EXCEPT for the Talos ISO upload, which fails at `/_upload` with HTTP 403 because `SYS_ADMIN` is missing.
+
+This is [a TrueNAS upstream bug](upstream-bugs/truenas-upload-role-gap.md) — `FILESYSTEM_DATA_WRITE` should reasonably cover HTTP file-upload, not just the JSON-RPC `filesystem.put` method — but until upstream fixes it, `builtin_administrators` membership is required.
+
+### Do not
+
+- **Do not** use the literal `root` user's API key. Create a dedicated user instead.
+- **Do not** attach `FULL_ADMIN` as a role to a custom privilege in TrueNAS 25.10.1. It triggers an [infinite-recursion middleware bug](upstream-bugs/truenas-role-recursion.md) that breaks all auth for users bound to that privilege; recovery requires editing the privilege via `midclt` to remove the offending roles.
+
+### Going further
+
+For the full hardening story (key rotation, network isolation, secret storage, TLS, container-level controls, ZFS encryption, monitoring), see [Security Hardening](hardening.md).
 
 ---
 

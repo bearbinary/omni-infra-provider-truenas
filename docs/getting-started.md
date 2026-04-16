@@ -199,7 +199,7 @@ services:
 4. **Replace the placeholder values:**
    - `OMNI_ENDPOINT` — your Omni URL (from Step 1)
    - `OMNI_SERVICE_ACCOUNT_KEY` — the key you saved in Step 1
-   - `TRUENAS_API_KEY` — create at **TrueNAS > Credentials > Local Users > root > API Keys**
+   - `TRUENAS_API_KEY` — create via a dedicated non-root user with scoped roles (see [TrueNAS Setup > API Key](truenas-setup.md#5-api-key)). Do **not** use the `root` user's API key.
    - `DEFAULT_POOL` — your ZFS pool name (from Step 2)
    - `DEFAULT_NETWORK_INTERFACE` — your bridge name (from Step 2)
 
@@ -297,6 +297,8 @@ EOF
 3. For the **control plane**: choose **Auto Provision**, select the `truenas` provider, pick the `truenas-small` MachineClass, set replicas to **1**
 4. For **workers**: choose **Auto Provision**, select the `truenas` provider, pick the `truenas-worker` MachineClass, set replicas to **1**
 5. Click **Create**
+
+> **Want `kubectl top` or HPA?** Enable metrics-server at creation time — it needs a kubelet flag plus two manifests that are cleanest to bootstrap with the cluster. See [Step 7 — Enable Metrics Server](#step-7-enable-metrics-server-optional) and come back before clicking **Create**.
 
 ### Watch It Happen
 
@@ -428,6 +430,56 @@ http://192.168.1.50:31234
 Open that URL in your browser. You should see the nginx welcome page ("Welcome to nginx!").
 
 Congratulations — you just deployed an app on Kubernetes running on your NAS.
+
+---
+
+## Step 7: Enable Metrics Server (Optional)
+
+Install [metrics-server](https://github.com/kubernetes-sigs/metrics-server) so `kubectl top nodes`, `kubectl top pods`, and Horizontal/Vertical Pod Autoscalers work.
+
+**Why this needs extra steps on Talos:** the kubelet's serving certificate is self-signed by default, so metrics-server can't scrape it. The fix is to turn on kubelet certificate rotation and run [kubelet-serving-cert-approver](https://github.com/alex1989hu/kubelet-serving-cert-approver) to auto-sign those certs with the cluster CA. Follows the upstream [Sidero guide](https://docs.siderolabs.com/kubernetes-guides/monitoring-and-observability/deploy-metrics-server/).
+
+### Option A — Bootstrap at Cluster Creation (Recommended)
+
+Best if you haven't clicked **Create** yet in Step 4. Every node boots with the kubelet flag in place.
+
+In the Omni cluster create form, open **Cluster Config Patches** (or **Patches > Cluster**) and add:
+
+```yaml
+machine:
+  kubelet:
+    extraArgs:
+      rotate-server-certificates: true
+```
+
+Then open **Extra Manifests** (under Cluster Configuration) and add both URLs, one per line:
+
+```
+https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/standalone-install.yaml
+https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+Click **Create**. Omni applies the patch to every node's machine config and installs both manifests on bootstrap.
+
+### Option B — Apply to an Existing Cluster
+
+If the cluster is already running, patch it in Omni (**Cluster > Config Patches**) with the same YAML above. Omni rolls the kubelet flag out to every node — wait until all nodes show Ready again before continuing.
+
+Then deploy the manifests:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/standalone-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+### Verify
+
+```bash
+kubectl top nodes
+kubectl top pods -A
+```
+
+Both should return CPU and memory columns within ~60 seconds. If you see `error: Metrics API not available`, the kubelet flag is not yet applied to every node — check `kubectl -n kube-system logs deploy/metrics-server` and confirm each node was rolled with the patch.
 
 ---
 

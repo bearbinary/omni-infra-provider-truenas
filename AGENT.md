@@ -53,12 +53,22 @@ The interface must have:
 
 To list available choices: `midclt call vm.device.nic_attach_choices` via SSH.
 
-### 6. TrueNAS API Key (Remote Deployments Only)
+### 6. TrueNAS API Key
 
-Only needed if NOT running directly on TrueNAS (e.g., running in external Kubernetes or Docker):
+Required in all deployments (TrueNAS 25.10+ removed implicit local auth).
 
-- TrueNAS UI > Credentials > API Keys > Add
-- Save the key — it's shown only once.
+**Do not use the `root` user's API key.** Create a dedicated non-root user with scoped roles:
+
+1. **Credentials > Local Users > Add**: create `omni-provider` user, disable password.
+2. **Credentials > Privileges > Add**: new privilege bound to the user's group, with roles:
+   `READONLY_ADMIN`, `VM_READ`, `VM_WRITE`, `VM_DEVICE_READ`, `VM_DEVICE_WRITE`,
+   `DATASET_READ`, `DATASET_WRITE`, `DATASET_DELETE`, `POOL_READ`, `DISK_READ`,
+   `NETWORK_INTERFACE_READ`, `FILESYSTEM_ATTRS_READ`, `FILESYSTEM_DATA_WRITE`.
+3. **Credentials > API Keys > Add**: name `omni-infra-provider`, username `omni-provider`. Copy key once.
+
+See [TrueNAS Setup > API Key](docs/truenas-setup.md#5-api-key) for the rationale per role.
+
+Alternate: `FULL_ADMIN` on a non-root user works too — broader than necessary but simpler to configure.
 
 ## Deployment — Three Options
 
@@ -91,7 +101,7 @@ services:
 **Step 3:** Replace the placeholder values:
 - `OMNI_ENDPOINT`: Their Omni URL (e.g., `https://omni.example.com`)
 - `OMNI_SERVICE_ACCOUNT_KEY`: The key from the service account creation step
-- `TRUENAS_API_KEY`: Create in the TrueNAS UI at **Credentials > Local Users > root > API Keys**
+- `TRUENAS_API_KEY`: Create via the dedicated non-root user + scoped privilege described in section 6 above. Do not use the `root` user's key.
 - `DEFAULT_POOL`: Their ZFS pool name (e.g., `default`, `tank`)
 - `DEFAULT_NETWORK_INTERFACE`: Their network interface (e.g., `br0`, `vlan100`)
 
@@ -250,6 +260,30 @@ These are included in every VM automatically — users do NOT need to add them:
 
 If you need NFS client support (for democratic-csi NFS mode), add `siderolabs/nfs-utils` to the MachineClass `extensions` field.
 
+## Enabling Metrics Server (HPA / `kubectl top`)
+
+Talos kubelets serve their metrics endpoint with a self-signed cert, so `metrics-server` fails until kubelet certificate rotation is on and a serving-cert approver is deployed. Best handled at **cluster creation** — every node boots with the right flag and nothing needs to roll later.
+
+In the Omni cluster create form, add this under **Cluster Config Patches**:
+
+```yaml
+machine:
+  kubelet:
+    extraArgs:
+      rotate-server-certificates: true
+```
+
+Add these to the cluster's **Extra Manifests**:
+
+- `https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/standalone-install.yaml`
+- `https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml`
+
+For an existing cluster: apply the same config patch in Omni (it rolls kubelets), then `kubectl apply -f` both URLs.
+
+Verify with `kubectl top nodes` and `kubectl top pods -A` — CPU/memory should return within ~60s. If it errors, the kubelet flag hasn't landed on every node yet.
+
+Upstream reference: https://docs.siderolabs.com/kubernetes-guides/monitoring-and-observability/deploy-metrics-server/
+
 ## All Environment Variables
 
 | Variable | Required | Default | Description |
@@ -260,7 +294,7 @@ If you need NFS client support (for democratic-csi NFS mode), add `siderolabs/nf
 | `TRUENAS_API_KEY` | Remote only | — | TrueNAS API key (WebSocket transport) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification for self-signed certs |
 | `TRUENAS_HOST` | **Yes** | — | TrueNAS hostname or IP (use `localhost` when running the container on the TrueNAS host itself) |
-| `TRUENAS_API_KEY` | **Yes** | — | TrueNAS API key (Credentials > Local Users > root > API Keys) |
+| `TRUENAS_API_KEY` | **Yes** | — | TrueNAS API key from a dedicated non-root user with scoped roles — see [TrueNAS Setup > API Key](docs/truenas-setup.md#5-api-key) |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification (recommended `true` for `localhost`) |
 | `PROVIDER_ID` | No | `truenas` | Provider ID registered with Omni |
 | `PROVIDER_NAME` | No | `TrueNAS` | Display name in Omni UI |

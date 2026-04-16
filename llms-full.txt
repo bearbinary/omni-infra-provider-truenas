@@ -91,7 +91,7 @@ services:
 **Step 3:** Replace the placeholder values:
 - `OMNI_ENDPOINT`: Their Omni URL (e.g., `https://omni.example.com`)
 - `OMNI_SERVICE_ACCOUNT_KEY`: The key from the service account creation step
-- `TRUENAS_API_KEY`: Create at TrueNAS UI > Credentials > Local Users > root > API Keys
+- `TRUENAS_API_KEY`: Create a dedicated non-root user (e.g. `omni-provider`) with the scoped role set — VM_READ, VM_WRITE, VM_DEVICE_READ, VM_DEVICE_WRITE, DATASET_READ, DATASET_WRITE, DATASET_DELETE, POOL_READ, DISK_READ, NETWORK_INTERFACE_READ, FILESYSTEM_ATTRS_READ, FILESYSTEM_DATA_WRITE, READONLY_ADMIN. Do NOT use the root user's key. See docs/truenas-setup.md#5-api-key.
 - `DEFAULT_POOL`: Their ZFS pool name (e.g., `default`, `tank`)
 - `DEFAULT_NETWORK_INTERFACE`: Their network interface (e.g., `br0`, `vlan100`)
 
@@ -249,6 +249,28 @@ These are included in every VM automatically — users do NOT need to add them:
 
 Users who need NFS client support (for democratic-csi NFS mode) can add `siderolabs/nfs-utils` to their MachineClass `extensions` field.
 
+## Enabling Metrics Server (HPA / `kubectl top`)
+
+Talos kubelets serve their metrics endpoint with a self-signed cert, so metrics-server fails until kubelet certificate rotation is enabled and a serving-cert approver is deployed. Best handled at cluster creation — every node boots with the kubelet flag in place.
+
+In the Omni cluster create form, add this to Cluster Config Patches:
+
+```yaml
+machine:
+  kubelet:
+    extraArgs:
+      rotate-server-certificates: true
+```
+
+Add these URLs to the cluster's Extra Manifests:
+
+- `https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/standalone-install.yaml`
+- `https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml`
+
+For an existing cluster, apply the same config patch in Omni (it rolls kubelets) and `kubectl apply -f` both URLs. Verify with `kubectl top nodes` and `kubectl top pods -A`.
+
+Upstream reference: https://docs.siderolabs.com/kubernetes-guides/monitoring-and-observability/deploy-metrics-server/
+
 ## All Environment Variables
 
 | Variable | Required | Default | Description |
@@ -256,7 +278,7 @@ Users who need NFS client support (for democratic-csi NFS mode) can add `siderol
 | `OMNI_ENDPOINT` | Yes | — | Omni instance URL |
 | `OMNI_SERVICE_ACCOUNT_KEY` | Yes | — | Omni infra provider service account key |
 | `TRUENAS_HOST` | **Yes** | — | TrueNAS hostname or IP (use `localhost` when running the container on the TrueNAS host itself) |
-| `TRUENAS_API_KEY` | **Yes** | — | TrueNAS API key (Credentials > Local Users > root > API Keys) |
+| `TRUENAS_API_KEY` | **Yes** | — | TrueNAS API key from a dedicated non-root user with scoped roles — see docs/truenas-setup.md#5-api-key |
 | `TRUENAS_INSECURE_SKIP_VERIFY` | No | `false` | Skip TLS verification (recommended `true` for `localhost`) |
 | `PROVIDER_ID` | No | `truenas` | Provider ID registered with Omni |
 | `PROVIDER_NAME` | No | `TrueNAS` | Display name in Omni UI |

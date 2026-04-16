@@ -9,7 +9,7 @@ Common issues and their solutions when running the Omni TrueNAS provider.
 The provider cannot connect to TrueNAS on startup.
 
 - Verify `TRUENAS_HOST` is reachable from the provider container: `curl -k https://<host>/websocket`
-- Confirm `TRUENAS_API_KEY` is valid — generate a new one in TrueNAS UI under **Credentials > Local Users > root > API Keys**
+- Confirm `TRUENAS_API_KEY` is valid — generate one for a dedicated non-root user with scoped roles; see [TrueNAS Setup > API Key](truenas-setup.md#5-api-key) for the setup and minimum role list
 - If using a self-signed cert, ensure `TRUENAS_INSECURE_SKIP_VERIFY=true`
 - When running the container on the TrueNAS host itself, set `TRUENAS_HOST=localhost` and `TRUENAS_INSECURE_SKIP_VERIFY=true`
 - Check that TrueNAS middleware is running: `midclt call core.ping` on the TrueNAS host
