@@ -36,17 +36,17 @@ import (
 
 // Config holds telemetry configuration.
 type Config struct {
-	OTELEndpoint   string            // OTLP gRPC endpoint (e.g., "otel-collector:4317" or Grafana Cloud OTLP endpoint)
-	OTELInsecure   bool              // Disable TLS for OTLP exporter (false for Grafana Cloud)
-	OTELHeaders    map[string]string // Extra headers for OTLP exporter (e.g., Authorization for Grafana Cloud)
-	OTELProtocol   string            // "grpc" (default) or "http/protobuf"
-	OTELConsole    bool              // If true, also emit traces/metrics/logs to stdout (verbose — opt-in for local debugging)
-	PyroscopeURL    string           // Pyroscope server URL (e.g., "http://pyroscope:4040" or Grafana Cloud endpoint)
-	PyroscopeUser   string           // Basic auth user (Grafana Cloud instance ID)
-	PyroscopePass   string           // Basic auth password (Grafana Cloud API token)
-	PyroscopeLogger pyroscope.Logger // Optional logger for Pyroscope upload errors. Defaults to stderr — strongly recommended to wire to your app logger or you'll silently drop every profile upload failure.
-	ServiceName     string           // Defaults to "omni-infra-provider-truenas"
-	ServiceVersion  string           // Injected at build time
+	OTELEndpoint    string            // OTLP gRPC endpoint (e.g., "otel-collector:4317" or Grafana Cloud OTLP endpoint)
+	OTELInsecure    bool              // Disable TLS for OTLP exporter (false for Grafana Cloud)
+	OTELHeaders     map[string]string // Extra headers for OTLP exporter (e.g., Authorization for Grafana Cloud)
+	OTELProtocol    string            // "grpc" (default) or "http/protobuf"
+	OTELConsole     bool              // If true, also emit traces/metrics/logs to stdout (verbose — opt-in for local debugging)
+	PyroscopeURL    string            // Pyroscope server URL (e.g., "http://pyroscope:4040" or Grafana Cloud endpoint)
+	PyroscopeUser   string            // Basic auth user (Grafana Cloud instance ID)
+	PyroscopePass   string            // Basic auth password (Grafana Cloud API token)
+	PyroscopeLogger pyroscope.Logger  // Optional logger for Pyroscope upload errors. Defaults to stderr — strongly recommended to wire to your app logger or you'll silently drop every profile upload failure.
+	ServiceName     string            // Defaults to "omni-infra-provider-truenas"
+	ServiceVersion  string            // Injected at build time
 }
 
 // Init initializes OpenTelemetry and Pyroscope. Returns a shutdown function
@@ -341,11 +341,11 @@ var stderrSink io.Writer = os.Stderr
 type stderrPyroscopeLogger struct{}
 
 func (stderrPyroscopeLogger) Infof(format string, args ...any) {
-	fmt.Fprintf(stderrSink, "[pyroscope] "+format+"\n", args...)
+	_, _ = fmt.Fprintf(stderrSink, "[pyroscope] "+format+"\n", args...)
 }
 
 func (stderrPyroscopeLogger) Debugf(string, ...any) {} // suppressed
 
 func (stderrPyroscopeLogger) Errorf(format string, args ...any) {
-	fmt.Fprintf(stderrSink, "[pyroscope][error] "+format+"\n", args...)
+	_, _ = fmt.Fprintf(stderrSink, "[pyroscope][error] "+format+"\n", args...)
 }

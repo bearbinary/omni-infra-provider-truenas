@@ -36,7 +36,7 @@ Primary threats we mitigate:
 | MITM on TrueNAS WebSocket steals the API key | Proper TLS cert (not self-signed in production). `TRUENAS_INSECURE_SKIP_VERIFY=false`. Management VLAN. |
 | VM zvols compromised at rest (stolen disk, pool export) | Per-zvol ZFS encryption via `encrypted: true` in MachineClass. |
 | Container escape or compromised image runs with excess host privileges | Distroless base, non-root uid 65534, read-only root, image signing + SBOM, pinned image tag. |
-| Compromised provider binary silently publishes broken images | Cosign keyless signing, SBOM attestation, pipeline smoke test (see [release workflow](../.github/workflows/release.yaml)). |
+| Compromised provider binary silently publishes broken images | Cosign keyless signing, SBOM attestation, pipeline smoke test (see [release workflow](https://github.com/bearbinary/omni-infra-provider-truenas/blob/main/.github/workflows/release.yaml)). |
 
 Out of scope:
 
@@ -184,7 +184,7 @@ The published Docker image applies several baseline defenses:
      ghcr.io/bearbinary/omni-infra-provider-truenas:v0.14.6
    ```
 - **CI pipeline smoke test** — release workflow runs the image before pushing multi-arch. Prevents shipping images that can't even execute (regression caught in v0.14.4; permission-denied at startup on v0.14.1–v0.14.3 from an artifact-upload bug).
-- **Reproducible tag pinning** — always pin to a specific version (`v0.14.6`), never `latest` in production. Per the published [release pipeline](../.github/workflows/release.yaml), tags are immutable.
+- **Reproducible tag pinning** — always pin to a specific version (`v0.14.6`), never `latest` in production. Per the published [release pipeline](https://github.com/bearbinary/omni-infra-provider-truenas/blob/main/.github/workflows/release.yaml), tags are immutable.
 
 ### Kubernetes `SecurityContext` recommendations
 
@@ -261,7 +261,7 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 
 The `InfraProvider` role is the minimum needed — don't use a broader role. Rotate this key alongside the TrueNAS API key on the same schedule.
 
-TLS to Omni: `OMNI_INSECURE_SKIP_VERIFY` defaults to `false` (verified by [`TestEnvDefaults_SafetyCriticalSettings`](../cmd/omni-infra-provider-truenas/env_defaults_test.go)). Keep it that way.
+TLS to Omni: `OMNI_INSECURE_SKIP_VERIFY` defaults to `false` (verified by [`TestEnvDefaults_SafetyCriticalSettings`](https://github.com/bearbinary/omni-infra-provider-truenas/blob/main/cmd/omni-infra-provider-truenas/env_defaults_test.go)). Keep it that way.
 
 ## Hardening checklist
 
