@@ -94,6 +94,14 @@ jobs:
           # annotated tag object isn't in the local clone.
           fetch-tags: true
 
+      # Even with fetch-tags: true, actions/checkout creates a LIGHTWEIGHT
+      # local tag when the workflow is triggered by a tag push — the
+      # annotated tag object is replaced with a direct ref to the commit.
+      # See actions/checkout#1467. Re-fetch the annotated tag object
+      # explicitly so `git tag --verify` can read its signature.
+      - name: Refetch annotated tag object
+        run: git fetch origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}" --force
+
       # Require tags to be GPG/SSH signed. Without this, anyone with push
       # access to a tag namespace can publish a "v*" release through this
       # workflow. Enable required_signatures on the repo ruleset AND the
