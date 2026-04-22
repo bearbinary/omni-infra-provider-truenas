@@ -49,7 +49,11 @@ func TestHealthz_Unhealthy(t *testing.T) {
 	var resp healthResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "error", resp.Status)
-	assert.Contains(t, resp.Error, "unreachable")
+	// Error is intentionally generic — detailed reason is logged server-side
+	// to avoid leaking pool names / IPs to unauthenticated /healthz callers.
+	assert.NotEmpty(t, resp.Error)
+	assert.NotContains(t, resp.Error, "unreachable",
+		"raw upstream error must not leak via the health endpoint")
 }
 
 func TestHealthz_TracksLastOK(t *testing.T) {

@@ -401,10 +401,13 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	// the provisioned record and the joined machine are correlated.
 	machineUUID := generateUUID()
 
-	// Create the VM
+	// Create the VM. Description encodes ownership so Deprovision (and the
+	// adoption path in handleExistingVM) can refuse to touch VMs this provider
+	// didn't create — preventing accidental deletion of look-alike VMs created
+	// by another operator or a second provider instance.
 	vm, err := p.client.CreateVM(ctx, client.CreateVMRequest{
 		Name:        vmName,
-		Description: "Managed by Omni infra provider",
+		Description: omniVMDescription(requestID),
 		UUID:        machineUUID,
 		VCPUs:       data.CPUs,
 		Memory:      data.Memory,
@@ -1076,6 +1079,16 @@ func (p *Provisioner) checkExistingVM(ctx context.Context, logger *zap.Logger, s
 }
 
 func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, vm *client.VM, vmName string) *error {
+	// Refuse to adopt a VM that isn't ours. A same-name VM created out-of-band
+	// (operator manually, second provider instance) would otherwise get taken
+	// over — and destroyed on deprovision. Fail loudly so the operator can
+	// investigate rather than silently inheriting unknown state.
+	if !isOmniManagedVM(vm) {
+		err := fmt.Errorf("refusing to adopt VM %d (%q): description %q does not carry the Omni management marker — a non-provider VM is using the requested name, rename it on TrueNAS or pick a different MachineClass name",
+			vm.ID, vmName, vm.Description)
+		return &err
+	}
+
 	if vm.Status.State == "RUNNING" {
 		logger.Debug("VM is already running", zap.Int("vm_id", vm.ID))
 		p.TrackVMName(vmName)

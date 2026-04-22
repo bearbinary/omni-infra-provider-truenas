@@ -114,7 +114,7 @@ func TestValidate_AdditionalDisks(t *testing.T) {
 		}
 		err := d.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "size must be > 0")
+		assert.Contains(t, err.Error(), "size must be >= 5")
 	})
 
 	t.Run("negative size rejected", func(t *testing.T) {
@@ -124,6 +124,17 @@ func TestValidate_AdditionalDisks(t *testing.T) {
 			AdditionalDisks:  []AdditionalDisk{{Size: -10}},
 		}
 		assert.Error(t, d.Validate())
+	})
+
+	t.Run("below minimum size rejected", func(t *testing.T) {
+		d := Data{
+			Pool:             "tank",
+			NetworkInterface: "br0",
+			AdditionalDisks:  []AdditionalDisk{{Size: 4}},
+		}
+		err := d.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "size must be >= 5")
 	})
 
 	t.Run("unsafe pool name rejected", func(t *testing.T) {
@@ -241,6 +252,39 @@ func TestStorageDiskSize_ZeroDoesNotExpand(t *testing.T) {
 	d.ApplyDefaults(cfg)
 
 	assert.Nil(t, d.AdditionalDisks)
+}
+
+// TestStorageDiskSize_ZeroValidates pins the contract that zero is a valid
+// storage_disk_size meaning "no storage disk" — control planes and other
+// node types that don't want Longhorn-style local storage should pass
+// validation without supplying any value (zero is the schema default).
+func TestStorageDiskSize_ZeroValidates(t *testing.T) {
+	t.Parallel()
+
+	d := Data{
+		Pool:             "tank",
+		NetworkInterface: "br0",
+		StorageDiskSize:  0,
+	}
+
+	assert.NoError(t, d.Validate())
+}
+
+// TestStorageDiskSize_BelowMinimumRejected pins the lower bound: any non-zero
+// value must meet MinDiskSizeGiB. Zero is the only sub-minimum value that
+// passes because it signals "no disk".
+func TestStorageDiskSize_BelowMinimumRejected(t *testing.T) {
+	t.Parallel()
+
+	d := Data{
+		Pool:             "tank",
+		NetworkInterface: "br0",
+		StorageDiskSize:  4,
+	}
+
+	err := d.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "storage_disk_size must be >= 5")
 }
 
 // TestStorageDiskSize_ExpandsWithLonghornVolumeName pins the convention that

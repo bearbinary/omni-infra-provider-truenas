@@ -10,6 +10,74 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidateHost_AcceptsValid(t *testing.T) {
+	t.Parallel()
+
+	valid := []string{
+		"truenas.local",
+		"truenas.local:80",
+		"192.168.1.10",
+		"192.168.1.10:443",
+		"[::1]:443",
+		"localhost",
+		"nas-01.example.com",
+	}
+
+	for _, h := range valid {
+		if err := validateHost(h); err != nil {
+			t.Errorf("validateHost(%q) unexpected error: %v", h, err)
+		}
+	}
+}
+
+func TestValidateHost_RejectsSmuggling(t *testing.T) {
+	t.Parallel()
+
+	invalid := []string{
+		"",
+		"evil.example/@truenas.local",           // path smuggling
+		"evil.example/?host=truenas.local",      // query
+		"user:pass@truenas.local",               // user-info
+		"truenas.local#frag",                    // fragment
+		"https://truenas.local",                 // scheme
+		"truenas.local/path",                    // path
+		"truenas.local with spaces",             // whitespace
+		"tru\nenas.local",                       // newline
+		"truenas_underscore.local",              // underscore (not a valid DNS label char we allow)
+	}
+
+	for _, h := range invalid {
+		if err := validateHost(h); err == nil {
+			t.Errorf("validateHost(%q) should have rejected but returned nil", h)
+		}
+	}
+}
+
+func TestRedactLikelySecrets(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   string
+		want string
+	}{
+		// API-key-shaped tokens get redacted.
+		{"auth failed for 1-abcdefghijklmnopqrstuvwxyz0123456789", "auth failed for [REDACTED]"},
+		// Short tokens (<20 chars) left alone — avoids over-redaction of normal words.
+		{"invalid username", "invalid username"},
+		// Mixed: long token in the middle of a sentence.
+		{"key Bearer_abcdef012345678901234 rejected", "key [REDACTED] rejected"},
+		// No alphanumerics → unchanged.
+		{"internal error", "internal error"},
+	}
+
+	for _, tc := range cases {
+		got := redactLikelySecrets(tc.in)
+		if got != tc.want {
+			t.Errorf("redactLikelySecrets(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestSocketUploadFile_Permissions(t *testing.T) {
 	t.Parallel()
 	// Create a temp dir to simulate filesystem

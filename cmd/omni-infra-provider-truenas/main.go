@@ -68,6 +68,37 @@ func main() {
 	}
 }
 
+// consumeSecretEnv reads an env var, unsets it, and returns the captured value.
+// Once secrets are captured, /proc/<pid>/environ and crash-dump readers can no
+// longer recover them via Environ. Call this immediately before passing the
+// value to a constructor that copies it into memory (ideally into a
+// SecretString wrapper).
+func consumeSecretEnv(name string) string {
+	v := os.Getenv(name)
+	_ = os.Unsetenv(name)
+
+	return v
+}
+
+// isLocalOmniEndpoint returns true if endpoint points at localhost. Used to
+// decide whether PROVIDER_ID is required (multi-tenant SaaS Omni) or optional
+// (self-hosted dev loop).
+func isLocalOmniEndpoint(endpoint string) bool {
+	e := strings.ToLower(endpoint)
+	for _, prefix := range []string{
+		"http://localhost", "https://localhost",
+		"http://127.", "https://127.",
+		"http://[::1]", "https://[::1]",
+		"grpc://localhost", "grpc://127.", "grpc://[::1]",
+	} {
+		if strings.HasPrefix(e, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func run() error {
 	// Load .env file if present — does not override existing env vars.
 	// Silently ignored if .env doesn't exist (Docker/k8s set env vars directly).
@@ -78,6 +109,14 @@ func run() error {
 	//   - Docker: read_only: true in the compose definition
 	//   - Kubernetes: readOnlyRootFilesystem: true in the deployment securityContext
 	//   - godotenv does NOT override existing env vars (existing values take precedence)
+	if envPath, statErr := os.Stat(".env"); statErr == nil && !envPath.IsDir() {
+		abs, _ := os.Getwd()
+		// Emit to stderr before the zap logger is built so operators see exactly
+		// which .env was loaded, from which directory. Helps spot unexpected
+		// CWD-relative loads in containers with a volume-mounted home.
+		_, _ = fmt.Fprintf(os.Stderr, "loading env from %s/.env\n", abs)
+	}
+
 	_ = godotenv.Load()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
@@ -102,16 +141,23 @@ func run() error {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
 
+	// Capture secret-carrying env vars into locals, then unset so they can't be
+	// recovered via /proc/<pid>/environ, core dumps, or child-process inheritance.
+	// Values flow from here into SecretString wrappers or directly into SDK
+	// constructors that copy them.
+	otelHeaders := consumeSecretEnv("OTEL_EXPORTER_OTLP_HEADERS")
+	pyroscopePass := consumeSecretEnv("PYROSCOPE_BASIC_AUTH_PASSWORD")
+
 	// Initialize telemetry (noop if OTEL_EXPORTER_OTLP_ENDPOINT is not set)
 	telemetryShutdown, err := telemetry.Init(ctx, telemetry.Config{
 		OTELEndpoint:    os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		OTELInsecure:    envBool("OTEL_EXPORTER_OTLP_INSECURE", true),
-		OTELHeaders:     parseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+		OTELHeaders:     parseHeaders(otelHeaders),
 		OTELProtocol:    envString("OTEL_EXPORTER_OTLP_PROTOCOL", defaultOTELProtocol),
 		OTELConsole:     envBool("OTEL_CONSOLE_EXPORT", false),
 		PyroscopeURL:    os.Getenv("PYROSCOPE_URL"),
 		PyroscopeUser:   os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
-		PyroscopePass:   os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
+		PyroscopePass:   pyroscopePass,
 		PyroscopeLogger: zapPyroscopeLogger{l: logger.Named("pyroscope")},
 		ServiceName:     envString("OTEL_SERVICE_NAME", "omni-infra-provider-truenas"),
 		ServiceVersion:  version,
@@ -141,11 +187,17 @@ func run() error {
 		return fmt.Errorf("OMNI_ENDPOINT is required")
 	}
 
-	omniServiceAccountKey := truenasclient.NewSecretString(os.Getenv("OMNI_SERVICE_ACCOUNT_KEY"))
+	omniServiceAccountKey := truenasclient.NewSecretString(consumeSecretEnv("OMNI_SERVICE_ACCOUNT_KEY"))
 
 	providerID := os.Getenv("PROVIDER_ID")
 	if providerID != "" {
 		meta.ProviderID = providerID
+	} else if !isLocalOmniEndpoint(omniEndpoint) {
+		// Refuse to run against a non-localhost (typically SaaS) Omni without an
+		// explicit PROVIDER_ID. Two tenants that both default to "truenas" would
+		// share the singleton annotation keyspace and evict each other — and
+		// cross-leak identity via LeaseHeldError.OtherInstanceID. Fail fast.
+		return fmt.Errorf("PROVIDER_ID is required when OMNI_ENDPOINT is not localhost — set PROVIDER_ID=<unique-per-tenant-value>")
 	}
 
 	defaultPool := envString("DEFAULT_POOL", "default")
@@ -156,9 +208,11 @@ func run() error {
 	// Create TrueNAS client. WebSocket transport — requires TRUENAS_HOST + TRUENAS_API_KEY.
 	// TrueNAS 25.10 removed implicit Unix socket auth, so WebSocket with API key is the
 	// only supported transport.
+	truenasHost := os.Getenv("TRUENAS_HOST")
+
 	tnClient, err := truenasclient.New(truenasclient.Config{
-		Host:               os.Getenv("TRUENAS_HOST"),
-		APIKey:             os.Getenv("TRUENAS_API_KEY"),
+		Host:               truenasHost,
+		APIKey:             consumeSecretEnv("TRUENAS_API_KEY"),
 		InsecureSkipVerify: envBool("TRUENAS_INSECURE_SKIP_VERIFY", false),
 		MaxConcurrentCalls: envInt("TRUENAS_MAX_CONCURRENT_CALLS", 8),
 	})
@@ -167,10 +221,15 @@ func run() error {
 	}
 	defer func() { _ = tnClient.Close() }()
 
+	// Log host only on DEBUG — a shared OTEL backend or multi-tenant log sink
+	// gets TrueNAS hostnames as recon data otherwise. Operators who want the
+	// connect confirmation can run at LOG_LEVEL=debug.
 	logger.Info("TrueNAS client connected",
 		zap.String("transport", tnClient.TransportName()),
-		zap.String("host", os.Getenv("TRUENAS_HOST")),
 		zap.Bool("tls_verify", !envBool("TRUENAS_INSECURE_SKIP_VERIFY", false)),
+	)
+	logger.Debug("TrueNAS host detail",
+		zap.String("host", truenasHost),
 	)
 
 	// Create provisioner

@@ -170,9 +170,17 @@ func TestDeprovision_CleanupOrchestration(t *testing.T) {
 		case "vm.stop":
 			return true, nil
 		case "vm.query":
-			return client.VM{ID: 42, Status: client.VMStatus{State: "STOPPED"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "STOPPED"}}, nil
 		case "vm.delete":
 			return true, nil
+		case "pool.dataset.query":
+			// Ownership check: return managed tags so the deprovision path accepts the zvol.
+			return map[string]any{
+				"id": "tank/omni-vms/test-machine",
+				"user_properties": map[string]any{
+					"org.omni:managed": map[string]any{"value": "true"},
+				},
+			}, nil
 		case "pool.dataset.delete":
 			return nil, nil
 		}
@@ -196,7 +204,7 @@ func TestDeprovision_CleanupOrchestration(t *testing.T) {
 	err := p.cleanupVM(context.Background(), logger, 42)
 	require.NoError(t, err)
 
-	err = p.cleanupZvol(context.Background(), logger, "tank/omni-vms/test-machine")
+	err = p.cleanupZvol(context.Background(), logger, "tank/omni-vms/test-machine", "")
 	require.NoError(t, err)
 
 	// Verify call sequence: stop → poll → delete VM → delete zvol

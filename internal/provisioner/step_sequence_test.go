@@ -16,7 +16,8 @@ import (
 
 // callRecorder tracks the sequence and params of client calls.
 type callRecorder struct {
-	calls []recordedCall
+	calls              []recordedCall
+	vmQueryGetResponse func() client.VM
 }
 
 type recordedCall struct {
@@ -35,9 +36,20 @@ func (r *callRecorder) handler(method string, params json.RawMessage) (any, erro
 	case "pool.dataset.create":
 		return &client.Dataset{ID: "default/omni-vms"}, nil
 	case "pool.dataset.query":
-		return map[string]any{"volsize": map[string]any{"parsed": int64(40 * 1024 * 1024 * 1024)}}, nil
+		// Include user_properties so the deprovision ownership check passes
+		// for managed zvols — real TrueNAS returns these when we query our
+		// own datasets, and the test fixture must model that.
+		return map[string]any{
+			"volsize": map[string]any{"parsed": int64(40 * 1024 * 1024 * 1024)},
+			"user_properties": map[string]any{
+				"org.omni:managed":    map[string]any{"value": "true"},
+				"org.omni:request-id": map[string]any{"value": "test-req"},
+			},
+			"id":     "default/omni-vms/test-req",
+			"locked": false,
+		}, nil
 	case "vm.create":
-		return &client.VM{ID: 99, Name: "omni_test"}, nil
+		return &client.VM{ID: 99, Description: omniVMDescriptionPrefix + " (test)", Name: "omni_test"}, nil
 	case "vm.start":
 		return true, nil
 	case "vm.query":
@@ -45,6 +57,14 @@ func (r *callRecorder) handler(method string, params json.RawMessage) (any, erro
 		if err := json.Unmarshal(params, &rawParams); err == nil && len(rawParams) == 1 {
 			return []client.VM{}, nil // FindVMByName: not found
 		}
+
+		// GetVM path — honor a test-provided override (for deprovision flow
+		// that needs a real managed VM) or default to NotFound (for adoption
+		// tests that expect the stale VmId to reset).
+		if r.vmQueryGetResponse != nil {
+			return r.vmQueryGetResponse(), nil
+		}
+
 		return nil, &client.APIError{Code: client.ErrCodeNotFound, Message: "not found"}
 	case "vm.device.create":
 		return &client.Device{ID: 1, VM: 99, Attributes: map[string]any{"mac": "00:11:22:33:44:55"}}, nil
@@ -87,7 +107,18 @@ func (r *callRecorder) hasCall(method string) bool {
 func TestDeprovisionSequence_FullOrchestration(t *testing.T) {
 	t.Parallel()
 
-	rec := &callRecorder{}
+	rec := &callRecorder{
+		// Ownership check in cleanupVM uses GetVM; return a managed VM so the
+		// happy path can proceed to the stop/delete sequence.
+		vmQueryGetResponse: func() client.VM {
+			return client.VM{
+				ID:          42,
+				Name:        "omni_test",
+				Description: omniVMDescriptionPrefix + " (test)",
+				Status:      client.VMStatus{State: "STOPPED"},
+			}
+		},
+	}
 	p := NewProvisioner(client.NewMockClient(rec.handler), ProviderConfig{
 		DefaultPool:             "default",
 		GracefulShutdownTimeout: 50 * time.Millisecond,
@@ -99,7 +130,7 @@ func TestDeprovisionSequence_FullOrchestration(t *testing.T) {
 	err := p.cleanupVM(context.Background(), logger, 42)
 	require.NoError(t, err)
 
-	err = p.cleanupZvol(context.Background(), logger, "default/omni-vms/test-req")
+	err = p.cleanupZvol(context.Background(), logger, "default/omni-vms/test-req", "")
 	require.NoError(t, err)
 
 	methods := rec.methodCalls()

@@ -20,7 +20,7 @@
     "disk_size": {
       "type": "integer",
       "title": "Disk Size (GiB)",
-      "minimum": 10,
+      "minimum": 5,
       "maximum": 1048576,
       "default": 40,
       "description": "Root disk size in GiB (max 1 PiB)"
@@ -50,7 +50,15 @@
       "type": "string",
       "title": "Advertised Subnets",
       "maxLength": 1024,
-      "description": "Pin etcd/kubelet to specific subnets when multiple NICs are present. Comma-separated CIDRs (e.g., 192.168.100.0/24). Required for stable multi-NIC clusters."
+      "description": "Pin etcd/kubelet to specific subnets when multiple NICs are present. Comma-separated CIDRs (e.g., 192.168.100.0/24). Required for stable multi-NIC clusters; auto-detected for single-NIC VMs. Docs: https://github.com/bearbinary/omni-infra-provider-truenas/blob/main/docs/multihoming.md"
+    },
+    "storage_disk_size": {
+      "type": ["integer", "null"],
+      "title": "Storage Disk (GiB)",
+      "minimum": 0,
+      "maximum": 1048576,
+      "default": 0,
+      "description": "Optional. Add a dedicated data disk for persistent storage (Longhorn). Control planes typically leave this at 0 or blank. Minimum size when set is 5 GiB. Install Longhorn via Helm after cluster provisioning. Docs: https://github.com/bearbinary/omni-infra-provider-truenas/blob/main/docs/storage.md"
     },
     "encrypted": {
       "type": "boolean",
@@ -94,9 +102,9 @@
           "size": {
             "type": "integer",
             "title": "Disk Size (GiB)",
-            "minimum": 1,
+            "minimum": 5,
             "maximum": 1048576,
-            "description": "Disk size in GiB"
+            "description": "Disk size in GiB (minimum 5)"
           },
           "pool": {
             "type": "string",
@@ -164,13 +172,6 @@
         },
         "required": ["network_interface"]
       }
-    },
-    "storage_disk_size": {
-      "type": "integer",
-      "title": "Storage Disk (GiB)",
-      "minimum": 1,
-      "maximum": 1048576,
-      "description": "Add a dedicated data disk for persistent storage (Longhorn). Sets the size of an additional virtual disk attached to each VM. Install Longhorn via Helm after cluster provisioning — see docs/storage.md."
     }
   },
   "required": [

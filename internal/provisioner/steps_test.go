@@ -48,7 +48,7 @@ func TestCheckExistingVM_NoVmId_NoExisting(t *testing.T) {
 func TestCheckExistingVM_VmId_Running(t *testing.T) {
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Name: "omni_test", Status: client.VMStatus{State: "RUNNING"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Name: "omni_test", Status: client.VMStatus{State: "RUNNING"}}, nil
 		}
 
 		return nil, nil
@@ -66,7 +66,7 @@ func TestCheckExistingVM_VmId_Stopped(t *testing.T) {
 	started := false
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Name: "omni_test", Status: client.VMStatus{State: "STOPPED"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Name: "omni_test", Status: client.VMStatus{State: "STOPPED"}}, nil
 		}
 
 		if method == "vm.start" {
@@ -116,7 +116,7 @@ func TestCheckExistingVM_FoundByName_Running(t *testing.T) {
 			var rawParams []json.RawMessage
 			if err := json.Unmarshal(params, &rawParams); err == nil && len(rawParams) == 1 {
 				// Name query — return a matching VM
-				return []client.VM{{ID: 99, Name: "omni_test", Status: client.VMStatus{State: "RUNNING"}}}, nil
+				return []client.VM{{ID: 99, Name: "omni_test", Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}}, nil
 			}
 
 			// ID query with get:true — not found
@@ -138,7 +138,7 @@ func TestCheckExistingVM_FoundByName_Running(t *testing.T) {
 
 func TestHandleExistingVM_Running(t *testing.T) {
 	p := testProvisioner(nil)
-	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}
+	vm := &client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}
 
 	result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
 
@@ -156,7 +156,7 @@ func TestHandleExistingVM_Stopped_StartSuccess(t *testing.T) {
 		return nil, nil
 	})
 
-	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "STOPPED"}}
+	vm := &client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "STOPPED"}}
 	result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
 
 	require.NotNil(t, result)
@@ -415,7 +415,7 @@ func TestHandleExistingVM_ErrorState_CircuitBreaker(t *testing.T) {
 
 	p := NewProvisioner(client.NewMockClient(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "ERROR"}}, nil
 		}
 
 		if method == "vm.update" {
@@ -439,7 +439,7 @@ func TestHandleExistingVM_ErrorState_CircuitBreaker(t *testing.T) {
 		PollInterval:       10 * time.Millisecond,
 	})
 
-	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}
+	vm := &client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "ERROR"}}
 
 	// First 3 errors should retry
 	for i := 0; i < 3; i++ {
@@ -469,7 +469,7 @@ func TestHandleExistingVM_Running_ResetsErrorCount(t *testing.T) {
 	p.recordVMError(42)
 
 	// VM reaches RUNNING — should clear errors
-	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}
+	vm := &client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}
 	result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
 
 	require.NotNil(t, result)
@@ -484,7 +484,7 @@ func TestHandleExistingVM_Running_ResetsErrorCount(t *testing.T) {
 func TestCircuitBreaker_Disabled(t *testing.T) {
 	p := NewProvisioner(client.NewMockClient(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "ERROR"}}, nil
 		}
 
 		return nil, nil
@@ -493,7 +493,7 @@ func TestCircuitBreaker_Disabled(t *testing.T) {
 		MaxErrorRecoveries: -1, // Disabled
 	})
 
-	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}
+	vm := &client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "ERROR"}}
 
 	// Should retry indefinitely without deprovisioning
 	for i := 0; i < 100; i++ {
@@ -524,7 +524,7 @@ func TestHandleExistingVM_Stopped_StartFails(t *testing.T) {
 		return nil, nil
 	})
 
-	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "STOPPED"}}
+	vm := &client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "STOPPED"}}
 	result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
 
 	require.NotNil(t, result)

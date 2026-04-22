@@ -68,9 +68,42 @@ func TestMaybeResizeZvol_ResizeFails_Fatal(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to resize zvol")
 }
 
+// managedZvolQueryResponse returns the shape of a managed-by-Omni zvol as
+// reported by pool.dataset.query. Used by cleanup tests so the deprovision
+// ownership check accepts the test fixture.
+func managedZvolQueryResponse() any {
+	return map[string]any{
+		"user_properties": map[string]any{
+			"org.omni:managed": map[string]any{"value": "true"},
+		},
+	}
+}
+
+// poolDatasetQueryResponseByArity dispatches a pool.dataset.query reply based
+// on the filter-param arity. The client uses:
+//   - 2 params (filter + {"get": true}) for GetDatasetUserProperty / IsDatasetLocked — expects a single object
+//   - 1 param  (filter alone)           for DatasetExists                         — expects an array
+//
+// Mocks that need to differentiate the two callers can pass `single` for the
+// 2-param case and `list` for the 1-param case.
+func poolDatasetQueryResponseByArity(params json.RawMessage, single, list any) any {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(params, &raw); err == nil && len(raw) == 1 {
+		return list
+	}
+
+	return single
+}
+
 func TestCleanupAdditionalZvol_NotFound_Idempotent(t *testing.T) {
-	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "pool.dataset.delete" {
+	p := testProvisioner(func(method string, params json.RawMessage) (any, error) {
+		switch method {
+		case "pool.dataset.query":
+			// Ownership GET (2-param filter) returns a not-managed empty;
+			// DatasetExists (1-param filter) returns an empty array → dataset
+			// is gone → cleanupZvol short-circuits to no-op.
+			return poolDatasetQueryResponseByArity(params, map[string]any{}, []any{}), nil
+		case "pool.dataset.delete":
 			return nil, &client.APIError{Code: client.ErrCodeNotFound, Message: "not found"}
 		}
 
@@ -78,31 +111,43 @@ func TestCleanupAdditionalZvol_NotFound_Idempotent(t *testing.T) {
 	})
 
 	// Additional zvol already gone — should not error
-	err := p.cleanupZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1")
+	err := p.cleanupZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1", "")
 	assert.NoError(t, err, "deleting nonexistent additional zvol should be idempotent")
 }
 
 func TestCleanupAdditionalZvol_DeleteFails_Fatal(t *testing.T) {
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "pool.dataset.delete" {
+		switch method {
+		case "pool.dataset.query":
+			return managedZvolQueryResponse(), nil
+		case "pool.dataset.delete":
 			return nil, errors.New("disk I/O error")
 		}
 
 		return nil, nil
 	})
 
-	err := p.cleanupZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1")
+	err := p.cleanupZvol(context.Background(), testLogger(), "ssd/omni-vms/test-disk-1", "")
 	assert.Error(t, err, "real delete failure should be fatal")
 }
 
 func TestCleanupVM_StopFails_ContinuesDelete(t *testing.T) {
 	deleted := false
-	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "vm.stop" {
+	p := testProvisioner(func(method string, params json.RawMessage) (any, error) {
+		switch method {
+		case "vm.query":
+			// Ownership check gets a managed VM.
+			var rawParams []json.RawMessage
+			if err := json.Unmarshal(params, &rawParams); err == nil && len(rawParams) >= 1 {
+				return client.VM{
+					ID:          42,
+					Description: omniVMDescriptionPrefix + " (test)",
+					Status:      client.VMStatus{State: "STOPPED"},
+				}, nil
+			}
+		case "vm.stop":
 			return nil, &client.APIError{Code: client.ErrCodeNotFound, Message: "not found"}
-		}
-
-		if method == "vm.delete" {
+		case "vm.delete":
 			deleted = true
 
 			return true, nil
@@ -117,14 +162,19 @@ func TestCleanupVM_StopFails_ContinuesDelete(t *testing.T) {
 }
 
 func TestCleanupZvol_NotFound_Idempotent(t *testing.T) {
-	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
-		if method == "pool.dataset.delete" {
+	p := testProvisioner(func(method string, params json.RawMessage) (any, error) {
+		switch method {
+		case "pool.dataset.query":
+			// No user_properties (ownership fails), DatasetExists returns
+			// empty array (treated as already gone → no-op).
+			return poolDatasetQueryResponseByArity(params, map[string]any{}, []any{}), nil
+		case "pool.dataset.delete":
 			return nil, &client.APIError{Code: client.ErrCodeNotFound, Message: "not found"}
 		}
 
 		return nil, nil
 	})
 
-	err := p.cleanupZvol(context.Background(), testLogger(), "tank/nonexistent")
+	err := p.cleanupZvol(context.Background(), testLogger(), "tank/nonexistent", "")
 	assert.NoError(t, err, "deleting nonexistent zvol should be idempotent")
 }

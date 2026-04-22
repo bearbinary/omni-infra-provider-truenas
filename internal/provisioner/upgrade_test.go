@@ -17,7 +17,7 @@ func TestResetNVRAMIfNeeded_ErrorState(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "ERROR"}}, nil
 		}
 
 		if method == "vm.update" {
@@ -46,7 +46,7 @@ func TestResetNVRAMIfNeeded_RunningState_Noop(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
 		}
 
 		if method == "vm.update" {
@@ -68,7 +68,7 @@ func TestHandleExistingVM_ErrorState_TriggersNVRAMReset(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "ERROR"}}, nil
 		}
 
 		if method == "vm.update" {
@@ -84,7 +84,7 @@ func TestHandleExistingVM_ErrorState_TriggersNVRAMReset(t *testing.T) {
 		return nil, nil
 	})
 
-	vm := &client.VM{ID: 42, Status: client.VMStatus{State: "ERROR"}}
+	vm := &client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "ERROR"}}
 	result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
 
 	require.NotNil(t, result)

@@ -81,8 +81,14 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		// Return a generic status to unauthenticated callers. The underlying
+		// error includes pool names, IPs, and request-ID fragments that are
+		// reconnaissance data for an attacker who reaches /healthz via a
+		// misconfigured Service or Ingress. Detail stays in server-side logs.
+		s.logger.Warn("health check failed", zap.Error(err))
+
 		resp.Status = "error"
-		resp.Error = err.Error()
+		resp.Error = "check failed (see provider logs)"
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 

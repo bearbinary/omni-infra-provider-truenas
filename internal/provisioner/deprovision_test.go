@@ -32,7 +32,7 @@ func TestCleanupVM_GracefulShutdown_VMStopsInTime(t *testing.T) {
 			return true, nil
 		case "vm.query":
 			// Return STOPPED after graceful signal
-			return client.VM{ID: 42, Status: client.VMStatus{State: "STOPPED"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "STOPPED"}}, nil
 		case "vm.delete":
 			return true, nil
 		default:
@@ -69,7 +69,7 @@ func TestCleanupVM_GracefulShutdown_Timeout_ForcesStop(t *testing.T) {
 			return true, nil
 		case "vm.query":
 			// VM never stops gracefully — stays RUNNING
-			return client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
 		case "vm.delete":
 			return true, nil
 		default:
@@ -92,7 +92,7 @@ func TestCleanupVM_ContextCancelled_DuringGraceful(t *testing.T) {
 		case "vm.stop":
 			return true, nil
 		case "vm.query":
-			return client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
 		case "vm.delete":
 			return true, nil
 		default:
@@ -126,7 +126,7 @@ func TestCleanupVM_VMAlreadyStopped(t *testing.T) {
 		case "vm.stop":
 			return true, nil
 		case "vm.query":
-			return client.VM{ID: 42, Status: client.VMStatus{State: "STOPPED"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "STOPPED"}}, nil
 		case "vm.delete":
 			return true, nil
 		default:

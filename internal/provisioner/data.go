@@ -194,10 +194,70 @@ func validateSafeName(field, value string) error {
 	return nil
 }
 
+// MinDiskSizeGiB is the minimum allowed size for any VM-attached disk (root or additional).
+const MinDiskSizeGiB = 5
+
+// MaxDiskSizeGiB mirrors the JSON schema ceiling (1 PiB). Schema is the UX-level
+// gate; this Go-side check is defense-in-depth for callers that bypass schema
+// validation (direct COSI edits, legacy MachineClass payloads).
+const MaxDiskSizeGiB = 1048576
+
+// MaxCPUs and MaxMemoryMiB mirror the schema ceilings and protect int arithmetic
+// downstream (byte conversion, pool capacity planning) from silent overflow.
+const (
+	MaxCPUs       = 512
+	MaxMemoryMiB  = 16777216
+	MinMemoryMiB  = 1024
+)
+
 // Validate checks the Data config for logical errors.
 func (d *Data) Validate() error {
+	if d.CPUs < 0 {
+		return fmt.Errorf("cpus must be >= 0, got %d", d.CPUs)
+	}
+
+	if d.CPUs > MaxCPUs {
+		return fmt.Errorf("cpus must be <= %d, got %d", MaxCPUs, d.CPUs)
+	}
+
+	if d.Memory < 0 {
+		return fmt.Errorf("memory must be >= 0, got %d", d.Memory)
+	}
+
+	if d.Memory != 0 && d.Memory < MinMemoryMiB {
+		return fmt.Errorf("memory must be >= %d MiB when set, got %d", MinMemoryMiB, d.Memory)
+	}
+
+	if d.Memory > MaxMemoryMiB {
+		return fmt.Errorf("memory must be <= %d MiB, got %d", MaxMemoryMiB, d.Memory)
+	}
+
+	if d.DiskSize < 0 {
+		return fmt.Errorf("disk_size must be >= 0, got %d", d.DiskSize)
+	}
+
+	if d.DiskSize != 0 && d.DiskSize < MinDiskSizeGiB {
+		return fmt.Errorf("disk_size must be >= %d GiB, got %d", MinDiskSizeGiB, d.DiskSize)
+	}
+
+	if d.DiskSize > MaxDiskSizeGiB {
+		return fmt.Errorf("disk_size must be <= %d GiB, got %d", MaxDiskSizeGiB, d.DiskSize)
+	}
+
 	if d.StorageDiskSize < 0 {
 		return fmt.Errorf("storage_disk_size must be >= 0, got %d", d.StorageDiskSize)
+	}
+
+	if d.StorageDiskSize > 0 && d.StorageDiskSize < MinDiskSizeGiB {
+		return fmt.Errorf("storage_disk_size must be >= %d GiB when set, got %d", MinDiskSizeGiB, d.StorageDiskSize)
+	}
+
+	if d.StorageDiskSize > MaxDiskSizeGiB {
+		return fmt.Errorf("storage_disk_size must be <= %d GiB, got %d", MaxDiskSizeGiB, d.StorageDiskSize)
+	}
+
+	if err := validateExtensions(d.Extensions); err != nil {
+		return err
 	}
 
 	// Validate names used in filesystem paths to prevent path traversal
@@ -230,8 +290,12 @@ func (d *Data) Validate() error {
 	seenVolumeNames := make(map[string]int)
 
 	for i, disk := range d.AdditionalDisks {
-		if disk.Size <= 0 {
-			return fmt.Errorf("additional_disks[%d]: size must be > 0", i)
+		if disk.Size < MinDiskSizeGiB {
+			return fmt.Errorf("additional_disks[%d]: size must be >= %d GiB, got %d", i, MinDiskSizeGiB, disk.Size)
+		}
+
+		if disk.Size > MaxDiskSizeGiB {
+			return fmt.Errorf("additional_disks[%d]: size must be <= %d GiB, got %d", i, MaxDiskSizeGiB, disk.Size)
 		}
 
 		if disk.Pool != "" {

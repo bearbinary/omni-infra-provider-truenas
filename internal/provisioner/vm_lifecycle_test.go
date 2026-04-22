@@ -21,7 +21,7 @@ func TestVerifyVMExists_VMPresent(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
 		}
 		return nil, nil
 	})
@@ -125,7 +125,7 @@ func TestHealthCheck_AlreadyFinalized_VMStillExists(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
 		}
 		return nil, nil
 	})
@@ -175,7 +175,7 @@ func TestDeprovision_VMAlreadyGone_Succeeds(t *testing.T) {
 	err := p.cleanupVM(context.Background(), zap.NewNop(), 42)
 	require.NoError(t, err, "should succeed when VM is already gone")
 
-	err = p.cleanupZvol(context.Background(), zap.NewNop(), "tank/omni-vms/test")
+	err = p.cleanupZvol(context.Background(), zap.NewNop(), "tank/omni-vms/test", "")
 	require.NoError(t, err, "should succeed when zvol is already gone")
 }
 
@@ -194,7 +194,7 @@ func TestDeprovision_ZvolEmpty_Succeeds(t *testing.T) {
 
 	p := testProvisioner(nil)
 
-	err := p.cleanupZvol(context.Background(), zap.NewNop(), "")
+	err := p.cleanupZvol(context.Background(), zap.NewNop(), "", "")
 	require.NoError(t, err)
 }
 
@@ -215,6 +215,17 @@ func TestDeprovision_AdditionalZvols_CleanedUp(t *testing.T) {
 			return true, nil
 		}
 
+		if method == "pool.dataset.query" {
+			// Return the management ownership tags so the deprovision path
+			// accepts these zvols as ours.
+			return map[string]any{
+				"user_properties": map[string]any{
+					"org.omni:managed":    map[string]any{"value": "true"},
+					"org.omni:request-id": map[string]any{"value": "test-request"},
+				},
+			}, nil
+		}
+
 		return nil, nil
 	}), ProviderConfig{DefaultPool: "tank"})
 
@@ -227,11 +238,11 @@ func TestDeprovision_AdditionalZvols_CleanedUp(t *testing.T) {
 	}
 
 	for _, path := range additionalPaths {
-		err := p.cleanupZvol(context.Background(), logger, path)
+		err := p.cleanupZvol(context.Background(), logger, path, "")
 		require.NoError(t, err)
 	}
 
-	err := p.cleanupZvol(context.Background(), logger, "tank/omni-vms/test-request")
+	err := p.cleanupZvol(context.Background(), logger, "tank/omni-vms/test-request", "")
 	require.NoError(t, err)
 
 	require.Len(t, deletedPaths, 3)
@@ -305,7 +316,7 @@ func TestLifecycle_ProviderRestart_VMStillRunning(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "RUNNING"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
 		}
 		return nil, nil
 	})
@@ -323,7 +334,7 @@ func TestLifecycle_ProviderRestart_VMStopped(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Status: client.VMStatus{State: "STOPPED"}}, nil
+			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "STOPPED"}}, nil
 		}
 		return nil, nil
 	})

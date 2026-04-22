@@ -7,8 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,7 +30,84 @@ const (
 	maxBackoff           = 30 * time.Second
 	closeTimeout         = 10 * time.Second
 	reconnectCooldown    = 30 * time.Second // Minimum time between reconnect bursts
+
+	// wsMaxMessageBytes caps a single WebSocket frame. TrueNAS replies (even
+	// large `pool.dataset.query` results) fit well under this ceiling; the cap
+	// is a DoS guard against a malicious or compromised server that returns
+	// multi-GiB frames to OOM the provider.
+	wsMaxMessageBytes = 16 << 20
 )
+
+// isLoopbackHost returns true when host is a loopback literal or an IP that
+// resolves to loopback. Used to quiet the cleartext-fallback warning on
+// dev/CI setups, which legitimately use ws://127.0.0.1.
+func isLoopbackHost(host string) bool {
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+
+	if hostname == "localhost" {
+		return true
+	}
+
+	if ip := net.ParseIP(hostname); ip != nil {
+		return ip.IsLoopback()
+	}
+
+	return false
+}
+
+// validateHost rejects TRUENAS_HOST values that would let an attacker smuggle a
+// different destination into the Bearer-token upload URL. Accepts bare host or
+// host:port; rejects schemes, paths, user-info, query, and fragment components.
+func validateHost(host string) error {
+	if host == "" {
+		return fmt.Errorf("host is empty")
+	}
+
+	if strings.ContainsAny(host, "/?#@ \t\r\n") {
+		return fmt.Errorf("host %q must be a bare hostname or host:port (no scheme, path, or user-info)", host)
+	}
+
+	u, err := url.Parse("https://" + host)
+	if err != nil {
+		return fmt.Errorf("host %q is not a valid hostname: %w", host, err)
+	}
+
+	if u.Host != host {
+		return fmt.Errorf("host %q normalized to %q — use a bare hostname or host:port", host, u.Host)
+	}
+
+	if u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("host %q must be a bare hostname or host:port", host)
+	}
+
+	// Extract hostname without port; allow IP literals and DNS labels.
+	hostname := u.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("host %q has no hostname component", host)
+	}
+
+	// IPv4/IPv6 literals are fine as-is.
+	if net.ParseIP(hostname) != nil {
+		return nil
+	}
+
+	// DNS labels: letters, digits, hyphens, dots. No underscores or other surprises.
+	for _, r := range hostname {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '.':
+		default:
+			return fmt.Errorf("host %q contains invalid character %q", host, r)
+		}
+	}
+
+	return nil
+}
 
 // normalizeParams ensures params are sent as a JSON array (TrueNAS middleware expects positional params).
 func normalizeParams(params any) any {
@@ -87,6 +168,10 @@ type wsError struct {
 
 // dialWebSocket establishes a WebSocket connection to TrueNAS, trying TLS first.
 func dialWebSocket(host string, insecureSkipVerify bool) (*websocket.Conn, error) {
+	if err := validateHost(host); err != nil {
+		return nil, err
+	}
+
 	dialer := websocket.Dialer{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: insecureSkipVerify, //nolint:gosec
@@ -94,9 +179,9 @@ func dialWebSocket(host string, insecureSkipVerify bool) (*websocket.Conn, error
 		HandshakeTimeout: 10 * time.Second,
 	}
 
-	url := fmt.Sprintf("wss://%s/websocket", host)
+	wsURL := fmt.Sprintf("wss://%s/websocket", host)
 
-	conn, resp, err := dialer.Dial(url, nil)
+	conn, resp, err := dialer.Dial(wsURL, nil)
 	if err != nil {
 		// Only fall back to unencrypted ws:// if TLS verification is explicitly disabled.
 		// This prevents accidentally sending the API key over an unencrypted connection.
@@ -109,9 +194,21 @@ func dialWebSocket(host string, insecureSkipVerify bool) (*websocket.Conn, error
 			return nil, fmt.Errorf("failed to connect to %s%s: %w — if TrueNAS uses a self-signed cert, set TRUENAS_INSECURE_SKIP_VERIFY=true", host, statusInfo, err)
 		}
 
-		url = fmt.Sprintf("ws://%s/websocket", host)
+		// Cleartext fallback — loudly warn so an operator who set
+		// TRUENAS_INSECURE_SKIP_VERIFY=true for a dev cert issue does not
+		// silently downgrade a production deploy. The API key and control-plane
+		// traffic are now transiting cleartext. Suppressed for loopback because
+		// dev/CI setups hit ws://127.0.0.1 legitimately.
+		if !isLoopbackHost(host) {
+			slog.Warn("truenas websocket falling back to unencrypted ws:// — API key is sent in cleartext",
+				slog.String("host", host),
+				slog.String("remediation", "unset TRUENAS_INSECURE_SKIP_VERIFY or fix the TLS cert"),
+			)
+		}
 
-		conn, resp, err = dialer.Dial(url, nil)
+		wsURL = fmt.Sprintf("ws://%s/websocket", host)
+
+		conn, resp, err = dialer.Dial(wsURL, nil)
 		if err != nil {
 			statusInfo := ""
 			if resp != nil {
@@ -125,8 +222,10 @@ func dialWebSocket(host string, insecureSkipVerify bool) (*websocket.Conn, error
 	if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
 		_ = conn.Close()
 
-		return nil, fmt.Errorf("unexpected HTTP status %d from %s", resp.StatusCode, url)
+		return nil, fmt.Errorf("unexpected HTTP status %d from %s", resp.StatusCode, wsURL)
 	}
+
+	conn.SetReadLimit(wsMaxMessageBytes)
 
 	return conn, nil
 }
@@ -148,6 +247,11 @@ func newWSTransport(host string, apiKey SecretString, insecureSkipVerify bool) (
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: insecureSkipVerify, //nolint:gosec
 				},
+			},
+			// Never auto-follow redirects: a malicious or misconfigured server
+			// could 3xx us into re-sending the Bearer token to a different host.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
 			},
 			Timeout: 5 * time.Minute,
 		},
@@ -173,6 +277,8 @@ func (t *wsTransport) Name() string {
 }
 
 // Close waits for in-flight calls to complete (up to 10s), then closes the connection.
+// The final close itself is bounded so a half-open TCP (no RST, no FIN) can't wedge
+// shutdown — we set SO_LINGER=0 and then run Close under a short deadline.
 func (t *wsTransport) Close() error {
 	done := make(chan struct{})
 
@@ -186,7 +292,26 @@ func (t *wsTransport) Close() error {
 	case <-time.After(closeTimeout):
 	}
 
-	return t.conn.Close()
+	// Drop unsent bytes immediately (SO_LINGER=0) on the underlying TCP socket
+	// so a dead peer doesn't block the Close call.
+	if underlying := t.conn.UnderlyingConn(); underlying != nil {
+		if tcpConn, ok := underlying.(*net.TCPConn); ok {
+			_ = tcpConn.SetLinger(0)
+		}
+	}
+
+	closeDone := make(chan error, 1)
+
+	go func() {
+		closeDone <- t.conn.Close()
+	}()
+
+	select {
+	case err := <-closeDone:
+		return err
+	case <-time.After(closeTimeout):
+		return fmt.Errorf("websocket close timed out after %s", closeTimeout)
+	}
 }
 
 // reconnect closes the current connection and establishes a new one with exponential backoff.
@@ -302,7 +427,11 @@ func (t *wsTransport) authenticate() error {
 	t.conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
 
 	if resp.Error != nil {
-		return fmt.Errorf("auth error: %s", resp.Error.Reason)
+		// Sanitize: TrueNAS middleware has historically echoed request params
+		// back in error reasons. If the Reason string contains a long
+		// alphanumeric substring that resembles an API key, redact it before
+		// wrapping into an error that may be logged upstream.
+		return fmt.Errorf("auth error: %s", redactLikelySecrets(resp.Error.Reason))
 	}
 
 	var result bool
@@ -465,8 +594,21 @@ func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.R
 			return
 		}
 
-		dataJSON := fmt.Sprintf(`{"method": "filesystem.put", "params": [%q, {"mode": 493}]}`, destPath)
-		if _, err = dataPart.Write([]byte(dataJSON)); err != nil {
+		// Build the filesystem.put envelope via json.Marshal rather than
+		// string formatting; %q produces Go-quoted strings which diverge from
+		// JSON string rules for some Unicode code points. destPath is
+		// provisioner-sourced today, but belt-and-braces — never hand-roll JSON.
+		dataJSON, merr := json.Marshal(map[string]any{
+			"method": "filesystem.put",
+			"params": []any{destPath, map[string]any{"mode": 493}},
+		})
+		if merr != nil {
+			pw.CloseWithError(merr)
+
+			return
+		}
+
+		if _, err = dataPart.Write(dataJSON); err != nil {
 			pw.CloseWithError(err)
 
 			return
@@ -488,7 +630,11 @@ func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.R
 		_ = writer.Close()
 	}()
 
-	uploadURL := fmt.Sprintf("https://%s/_upload/", t.host)
+	// Build the URL via net/url to make structural guarantees explicit —
+	// Host was checked by validateHost at construction so this is redundant,
+	// but hand-formatted URLs have bitten us before (fmt.Sprintf + unvalidated
+	// host = bearer exfil). Never again.
+	uploadURL := (&url.URL{Scheme: "https", Host: t.host, Path: "/_upload/"}).String()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, pr)
 	if err != nil {

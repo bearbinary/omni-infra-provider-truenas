@@ -58,16 +58,32 @@ func TestSmoke_MissingOmniEndpoint(t *testing.T) {
 }
 
 // TestSmoke_MissingTrueNASConnection verifies the binary fails cleanly when
-// TRUENAS_HOST is not configured.
+// TRUENAS_HOST is not configured. Uses a localhost Omni endpoint so the new
+// required-PROVIDER_ID check doesn't short-circuit this scenario.
 func TestSmoke_MissingTrueNASConnection(t *testing.T) {
 	// Cannot use t.Parallel — t.Setenv mutates process env
-	t.Setenv("OMNI_ENDPOINT", "https://fake.example.com")
+	t.Setenv("OMNI_ENDPOINT", "https://localhost:9000")
+	t.Setenv("PROVIDER_ID", "")
 	t.Setenv("TRUENAS_HOST", "")
 
 	err := run()
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "TRUENAS_HOST is required", "should fail with clear config error")
+}
+
+// TestSmoke_MissingProviderIDOnRemoteOmni verifies the binary fails fast when
+// running against a non-localhost Omni endpoint without an explicit PROVIDER_ID.
+// Prevents multi-tenant lease collisions on the default "truenas" provider id.
+func TestSmoke_MissingProviderIDOnRemoteOmni(t *testing.T) {
+	t.Setenv("OMNI_ENDPOINT", "https://fake.example.com")
+	t.Setenv("PROVIDER_ID", "")
+	t.Setenv("TRUENAS_HOST", "")
+
+	err := run()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PROVIDER_ID is required")
 }
 
 // TestSmoke_VersionParser verifies the TrueNAS version parser handles edge cases.

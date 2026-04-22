@@ -16,7 +16,7 @@ import (
 )
 
 // Deprovision tears down the VM and cleans up storage.
-func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machine *resources.Machine, _ *infra.MachineRequest) (err error) {
+func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machine *resources.Machine, req *infra.MachineRequest) (err error) {
 	ctx, span := provTracer.Start(ctx, "deprovision",
 		trace.WithAttributes(attribute.Int("vm_id", int(machine.TypedSpec().Value.VmId))),
 	)
@@ -36,6 +36,13 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 	start := time.Now()
 	state := machine.TypedSpec().Value
 
+	// Ownership-traced request-id for zvol checks. May be empty on very old
+	// MachineRequests; in that case we fall back to the managed=true tag only.
+	var requestID string
+	if req != nil {
+		requestID = req.Metadata().ID()
+	}
+
 	if err := p.cleanupVM(ctx, logger, int(state.VmId)); err != nil {
 		return err
 	}
@@ -45,12 +52,12 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 
 	// Clean up additional data disks first (order doesn't matter, but root disk last)
 	for _, zvolPath := range state.AdditionalZvolPaths {
-		if err := p.cleanupZvol(cleanupCtx, logger, zvolPath); err != nil {
+		if err := p.cleanupZvol(cleanupCtx, logger, zvolPath, requestID); err != nil {
 			return err
 		}
 	}
 
-	if err := p.cleanupZvol(cleanupCtx, logger, state.ZvolPath); err != nil {
+	if err := p.cleanupZvol(cleanupCtx, logger, state.ZvolPath, requestID); err != nil {
 		return err
 	}
 
@@ -79,6 +86,24 @@ func (p *Provisioner) cleanupVM(ctx context.Context, logger *zap.Logger, vmID in
 
 	if vmID == 0 {
 		return nil
+	}
+
+	// Ownership check: refuse to touch a VM that isn't ours. A name collision
+	// (second provider, manual create, stale state) could otherwise cause us
+	// to shut down and delete something we didn't create.
+	vm, err := p.client.GetVM(ctx, vmID)
+	if err != nil {
+		if isNotFound(err) {
+			logger.Debug("VM not found during cleanup — nothing to do", zap.Int("vm_id", vmID))
+			return nil
+		}
+
+		return fmt.Errorf("failed to read VM %d for ownership check: %w", vmID, err)
+	}
+
+	if !isOmniManagedVM(vm) {
+		return fmt.Errorf("refusing to deprovision VM %d (%q): description %q does not match Omni management marker — a name collision or state corruption has mixed up ownership, investigate on TrueNAS before retrying",
+			vmID, vm.Name, vm.Description)
 	}
 
 	// Graceful shutdown: try ACPI signal first, then force after timeout
@@ -174,7 +199,7 @@ loop:
 	return false
 }
 
-func (p *Provisioner) cleanupZvol(ctx context.Context, logger *zap.Logger, zvolPath string) error {
+func (p *Provisioner) cleanupZvol(ctx context.Context, logger *zap.Logger, zvolPath, requestID string) error {
 	stepStart := time.Now()
 	defer func() {
 		if telemetry.DeprovisionStepDuration != nil {
@@ -184,6 +209,22 @@ func (p *Provisioner) cleanupZvol(ctx context.Context, logger *zap.Logger, zvolP
 
 	if zvolPath == "" {
 		return nil
+	}
+
+	// Ownership check: the zvol's ZFS user properties must match our
+	// management tags. Without this, a corrupted/colliding ZvolPath in the
+	// Machine state could cause us to destroy unrelated data.
+	if err := verifyZvolOwnership(ctx, p.client, zvolPath, requestID); err != nil {
+		// Special-case: if the dataset doesn't exist anymore, treat as success
+		// (already deleted). Only ownership-mismatch on an existing dataset is
+		// a refusal.
+		exists, existsErr := p.client.DatasetExists(ctx, zvolPath)
+		if existsErr == nil && !exists {
+			logger.Debug("zvol already gone during cleanup — nothing to do", zap.String("path", zvolPath))
+			return nil
+		}
+
+		return fmt.Errorf("refusing to delete zvol %q: %w", zvolPath, err)
 	}
 
 	logger.Debug("deleting zvol", zap.String("path", zvolPath))

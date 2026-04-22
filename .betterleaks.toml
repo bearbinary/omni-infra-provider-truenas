@@ -3,15 +3,24 @@ title = "omni-infra-provider-truenas betterleaks config"
 [extend]
 useDefault = true
 
+# Tight allowlist: only suppress scans in paths that contain obvious example
+# values, test fixtures, or AI-agent scratch dirs. `docs/**` is deliberately
+# NOT blanket-allowlisted — a leaked key in a troubleshooting snippet must be
+# caught. Add specific doc files here if they legitimately need to include
+# example credentials.
 [allowlist]
 description = "Project-wide allowlist"
 paths = [
   '''\.env\.example''',
+  '''\.env\.test\.example''',
   '''\.agents/.*''',
   '''\.claude/.*''',
-  '''docs/.*\.md''',
   '''llms.*\.txt''',
   '''AGENT\.md''',
   '''CLAUDE\.md''',
-  '''testdata/.*''',
+  '''internal/.*/testdata/.*''',
+  # Historical note: the baseline suppresses one example API key that was
+  # committed in .env.test.example on 2026-04-06 (commit db87e9255). Rotate
+  # that key if it ever referred to a real TrueNAS instance — it remains in
+  # git history even after the file was cleaned up.
 ]
