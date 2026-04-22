@@ -312,13 +312,17 @@ jobs:
           IMAGE="ghcr.io/${{ github.repository }}@${DIGEST}"
           EXPECTED="${{ steps.version.outputs.tag }}"
 
+          # Use the tag (not the multi-arch index digest) to reference the
+          # image across platforms — pulling the same digest under two
+          # platforms fails with "cannot overwrite digest" because Docker
+          # stores each image by digest and refuses to rebind it.
+          TAGGED="ghcr.io/${{ github.repository }}:${{ steps.version.outputs.tag }}"
           for platform in linux/amd64 linux/arm64; do
             echo "--- smoke test ${platform}"
-            # Pre-pull silently so 'docker run' stderr doesn't get mixed into
-            # the --version output on a cache miss. Compare ONLY the binary's
-            # stdout — stderr from Docker progress is irrelevant to the check.
-            docker pull --quiet --platform "${platform}" "${IMAGE}" >/dev/null
-            OUTPUT=$(docker run --rm --platform "${platform}" "${IMAGE}" --version)
+            # Pre-pull silently so 'docker run' stderr (cache-miss progress)
+            # doesn't get interleaved into the --version stdout we compare.
+            docker pull --quiet --platform "${platform}" "${TAGGED}" >/dev/null
+            OUTPUT=$(docker run --rm --platform "${platform}" "${TAGGED}" --version)
             if [ "${OUTPUT}" != "${EXPECTED}" ]; then
               echo "::error::Multi-arch smoke test failed on ${platform}: expected ${EXPECTED}, got ${OUTPUT}"
               exit 1
