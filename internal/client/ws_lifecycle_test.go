@@ -318,9 +318,14 @@ func TestWS_ConcurrentCallRaceStress(t *testing.T) {
 	require.NoError(t, err)
 	defer transport.Close()
 
+	// The point of the test is to exercise the reader/writer split under
+	// concurrent cancellation, not to stress the race detector. Keep the call
+	// count modest — 32 is enough to prove the pending map drains while
+	// staying well under the wall-clock budget on loaded GHA runners, where
+	// larger counts intermittently timed out (v0.15.1, v0.15.2 releases).
 	const (
-		goroutines = 8
-		perG       = 20
+		goroutines = 4
+		perG       = 8
 	)
 
 	var wg sync.WaitGroup
@@ -366,10 +371,10 @@ func TestWS_ConcurrentCallRaceStress(t *testing.T) {
 		transport.pendingMu.Unlock()
 
 		assert.Equal(t, 0, remaining, "pending map leaked after stress; expected 0")
-	case <-time.After(90 * time.Second):
-		// Loaded CI runners under -race can legitimately take >20s to drain
-		// 160 Call() invocations with mixed 5ms/200ms deadlines. The deadlock
-		// signal we care about is "never finishes," not "finishes slowly."
+	case <-time.After(180 * time.Second):
+		// Generous deadline so a slow CI runner under -race doesn't trigger
+		// a false positive. The deadlock signal we care about is
+		// "never finishes," not "finishes slowly."
 		t.Fatal("stress test deadlocked — reader/writer split has a regression")
 	}
 }
