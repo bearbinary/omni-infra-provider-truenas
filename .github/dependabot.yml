@@ -1,0 +1,38 @@
+version: 2
+
+# Dependabot is configured to keep SHA-pinned GitHub Actions and Go module
+# versions up-to-date. Without this, the SHA pins in .github/workflows/*.yaml
+# would eventually drift behind security fixes. Dependabot opens PRs with the
+# new SHA in the `uses:` line (not a floating tag), preserving the pin model.
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "deps"
+    # Group OpenTelemetry updates together because they release in lockstep
+    # and piecemeal bumps leave the module graph inconsistent.
+    groups:
+      opentelemetry:
+        patterns:
+          - "go.opentelemetry.io/*"
+      siderolabs:
+        patterns:
+          - "github.com/siderolabs/*"

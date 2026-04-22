@@ -6,8 +6,19 @@ fullnameOverride: ""
 image:
   repository: ghcr.io/bearbinary/omni-infra-provider-truenas
   # -- Overrides the image tag. Defaults to `v<Chart.AppVersion>`.
-  # tag: "v0.13.0"
+  # tag: "v0.15.0"
+  # -- Pin to a specific image digest instead of a tag. Recommended for
+  # production: a digest is immutable, so a compromised or retagged upstream
+  # image cannot change what you deploy. Obtain the digest from the release
+  # page's cosign attestation or `docker inspect` and format it exactly as
+  # `sha256:<64hex>`. When set, `digest` overrides `tag` and the deployment
+  # references `<repository>@<digest>`.
+  # digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   pullPolicy: IfNotPresent
+  # -- cosign public-key / keyless verification is documented in
+  # docs/hardening.md. Enable `cosign verify ghcr.io/bearbinary/omni-infra-provider-truenas@<digest>`
+  # in your cluster admission controller (e.g., Kyverno, connaisseur) before
+  # rolling out a production release.
 
 ## @section Omni Connection
 # -- Omni control plane endpoint (required)

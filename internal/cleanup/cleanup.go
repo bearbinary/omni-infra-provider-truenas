@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
 
@@ -253,11 +254,19 @@ func (cl *Cleaner) cleanupOrphanZvols(ctx context.Context, managedZvols []client
 	}
 
 	for _, zvol := range managedZvols {
-		// Check if the corresponding VM still exists
-		vmName := "omni_" + strings.ReplaceAll(zvol.RequestID, "-", "_")
-		if vmNames[vmName] {
+		// Check if the corresponding VM still exists. Try both the v0.15+
+		// namespaced name and the legacy v0.14 shape so orphan detection keeps
+		// working across an upgrade. The zvol ownership tag is the
+		// authoritative answer; matching either name just tells us "VM still
+		// exists under either naming convention".
+		newVMName := meta.BuildVMName(meta.ProviderID, zvol.RequestID)
+		legacyVMName := "omni_" + strings.ReplaceAll(zvol.RequestID, "-", "_")
+
+		if vmNames[newVMName] || vmNames[legacyVMName] {
 			continue
 		}
+
+		vmName := newVMName
 
 		// VM is gone but zvol still exists — orphaned from a partial deprovision
 		cl.logger.Info("removing orphan zvol (VM deleted)",

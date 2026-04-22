@@ -137,6 +137,89 @@ func TestValidate_AdditionalDisks(t *testing.T) {
 		assert.Contains(t, err.Error(), "size must be >= 5")
 	})
 
+	t.Run("above maximum size rejected", func(t *testing.T) {
+		d := Data{
+			Pool:             "tank",
+			NetworkInterface: "br0",
+			AdditionalDisks:  []AdditionalDisk{{Size: MaxDiskSizeGiB + 1}},
+		}
+		err := d.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "size must be <=")
+	})
+}
+
+// TestValidate_NumericBounds is the single source of truth for the knob
+// bounds the v0.15 hardening pass added. Each sub-case exercises one field
+// and both edges (negative + over-max) so regressions that remove a bound
+// surface immediately.
+func TestValidate_NumericBounds(t *testing.T) {
+	t.Parallel()
+
+	base := func() Data {
+		return Data{
+			Pool:             "tank",
+			NetworkInterface: "br0",
+		}
+	}
+
+	t.Run("cpus negative rejected", func(t *testing.T) {
+		d := base()
+		d.CPUs = -1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("cpus above max rejected", func(t *testing.T) {
+		d := base()
+		d.CPUs = MaxCPUs + 1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("memory negative rejected", func(t *testing.T) {
+		d := base()
+		d.Memory = -10
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("memory below minimum (but non-zero) rejected", func(t *testing.T) {
+		d := base()
+		d.Memory = MinMemoryMiB - 1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("memory above max rejected", func(t *testing.T) {
+		d := base()
+		d.Memory = MaxMemoryMiB + 1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("disk_size negative rejected", func(t *testing.T) {
+		d := base()
+		d.DiskSize = -1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("disk_size above max rejected", func(t *testing.T) {
+		d := base()
+		d.DiskSize = MaxDiskSizeGiB + 1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("storage_disk_size above max rejected", func(t *testing.T) {
+		d := base()
+		d.StorageDiskSize = MaxDiskSizeGiB + 1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("zero values are accepted (rely on ApplyDefaults)", func(t *testing.T) {
+		d := base()
+		d.CPUs = 0
+		d.Memory = 0
+		d.DiskSize = 0
+		d.StorageDiskSize = 0
+		require.NoError(t, d.Validate())
+	})
+
 	t.Run("unsafe pool name rejected", func(t *testing.T) {
 		d := Data{
 			Pool:             "tank",

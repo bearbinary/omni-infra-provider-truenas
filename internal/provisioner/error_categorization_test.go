@@ -45,5 +45,5 @@ func TestRecordProvisionError_Categories(t *testing.T) {
 func TestRecordProvisionError_NilError(t *testing.T) {
 	t.Parallel()
 	// Should not panic
-	recordProvisionError(context.Background(), nil)
+	recordProvisionError(context.Background(), nil, nil)
 }

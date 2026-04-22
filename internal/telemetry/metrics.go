@@ -71,6 +71,12 @@ var (
 	// File upload
 	ISOUploadBytes metric.Int64Counter
 
+	// Supply-chain: TOFU hash mismatches on Talos ISO download. A non-zero
+	// value indicates either a factory.talos.dev compromise, a MITM on the
+	// download path, or a legitimate image re-publish under the same URL —
+	// all cases require operator attention.
+	ISOHashMismatches metric.Int64Counter
+
 	// Health check
 	HealthCheckErrors metric.Int64Counter
 
@@ -111,18 +117,25 @@ func initMetrics() {
 	ProvisionDuration, _ = meter.Float64Histogram("truenas.provision.duration",
 		metric.WithDescription("Duration of full VM provision in seconds"),
 		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600),
 	)
 	DeprovisionDuration, _ = meter.Float64Histogram("truenas.deprovision.duration",
 		metric.WithDescription("Duration of full VM deprovision in seconds"),
 		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(1, 5, 10, 30, 60, 120, 300, 600),
 	)
 	APICallDuration, _ = meter.Float64Histogram("truenas.api.duration",
 		metric.WithDescription("Duration of TrueNAS API calls in seconds"),
 		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
 	)
 	ISODownloadDuration, _ = meter.Float64Histogram("truenas.iso.download.duration",
 		metric.WithDescription("Duration of ISO download in seconds"),
 		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(1, 5, 10, 30, 60, 120, 300, 600, 900),
+	)
+	ISOHashMismatches, _ = meter.Int64Counter("truenas.iso.hash_mismatches",
+		metric.WithDescription("Total ISO downloads whose SHA-256 did not match the trust-on-first-use value — indicates possible supply-chain compromise"),
 	)
 
 	// Connection & resilience
@@ -148,6 +161,7 @@ func initMetrics() {
 	StepDuration, _ = meter.Float64Histogram("truenas.provision.step.duration",
 		metric.WithDescription("Duration of individual provision steps"),
 		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300),
 	)
 
 	// Error categorization
@@ -186,6 +200,7 @@ func initMetrics() {
 	DeprovisionStepDuration, _ = meter.Float64Histogram("truenas.deprovision.step.duration",
 		metric.WithDescription("Duration of individual deprovision steps"),
 		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120),
 	)
 
 	// Host health gauges

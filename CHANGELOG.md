@@ -4,6 +4,82 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.15.0] — Security hardening pass + observability corrections (validation, transport, secrets, ownership, extensions, TOFU ISO, fencing, WS mutex split, CI SHA-pinning, histogram buckets, singleton malformed-200 workaround)
+
+### Observability
+- **Histogram buckets now match the recorded unit** — All six `Float64Histogram` instruments in `internal/telemetry/metrics.go` (`truenas.api.duration`, `truenas.provision.duration`, `truenas.deprovision.duration`, `truenas.iso.download.duration`, `truenas.provision.step.duration`, `truenas.deprovision.step.duration`) now pass `metric.WithExplicitBucketBoundaries(...)` explicitly. Previously the OTel SDK defaults (`[0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]`) were treated as milliseconds against a metric unit of seconds, pushing every call <5s into the first populated bucket and making `histogram_quantile()` return the bucket midpoint (~2.5s p50, ~4.95s p99) regardless of real latency. Real average for `pool.query` is ~19ms; dashboards were reading ~250× too high. New boundaries: API `[1ms…30s]`, provision `[5s…1h]`, deprovision `[1s…10m]`, ISO download `[1s…15m]`, step `[100ms…5m]`, deprovision step `[100ms…2m]`.
+- **Provision errors are now logged at Error level with their category** — `recordProvisionError` in `internal/provisioner/steps.go` previously only incremented the `truenas_provision_errors_total` counter and attached the error to the active span. The counter was observable but the error text was not — leaving operators with a number but no way to find the root cause in Loki. Function now also emits `logger.Error("provision error", zap.String("error_category", …), zap.Error(err))`. Signature gained a `*zap.Logger` parameter; all four call sites (createSchematic, uploadISO, createVM, healthCheck) updated.
+
+### Resilience
+- **Singleton lease release tolerates upstream siderolabs/omni#2642** — `Lease.Release` previously surfaced the Omni gRPC-gateway's `"unexpected HTTP status code received from server: 200 (OK); malformed header: missing HTTP content-type"` response as a Warn, leaving operators to believe the heartbeat/instance-id annotations were stuck on the resource and that the successor would have to wait `staleAfter` to take over. The response body actually writes successfully on the server — the gRPC client rejects an otherwise-valid 200 because the gateway omitted `Content-Type`. `isMalformed200` in `internal/singleton/singleton.go` detects the specific signature (both `200` and the malformed-header substring) and the Release path now logs Info and returns. Narrow predicate: a 502 with the same malformed-header marker is still treated as a real failure. `TestIsMalformed200` pins six cases including wrapped errors and the non-200 negative.
+
+### Breaking
+- **VM names now embed provider ID** — `omni_<requestID>` → `omni_<providerID>_<requestID>`. Prevents two providers sharing a TrueNAS host from racing on VM names. `BuildVMName` collapses any run of underscores produced by sanitization (unicode, punctuation) across both segments and trims trailing underscores, so the name is deterministic regardless of provider-id punctuation — a pre-release QA defect that produced `omni__req` / `omni___req` for empty or pure-punctuation provider IDs was fixed in this same version. See [`docs/upgrading.md#upgrading-to-v015`](docs/upgrading.md#upgrading-to-v015) for the migration path — existing v0.14 VMs will not be adopted; drain before upgrade or accept a cluster recreate.
+- **`PROVIDER_ID` required for non-localhost `OMNI_ENDPOINT`** — fail-fast on startup otherwise. Prevents multi-tenant lease collision on the default `"truenas"` ID. `isLocalOmniEndpoint` uses boundary-aware prefix matching (next char must be `:`, `/`, `?`, `#`, end-of-string, or digit after `127.`) so a deceptive `https://localhost-attacker.example` endpoint cannot slip past the guard and suppress the PROVIDER_ID requirement — a pre-release QA defect fixed in this same version.
+
+### Security — Critical / High
+- **Deprovision ownership check** (Critical) — VM description embeds request ID; `cleanupVM` refuses VMs whose description doesn't carry the `Managed by Omni infra provider` marker. `cleanupZvol` verifies `org.omni:managed=true` and `org.omni:request-id` match before deletion. `handleExistingVM` refuses adoption of non-Omni VMs. Prevents accidental deletion after name collision or state corruption.
+- **Talos extension allowlist** (High) — `extensions:` entries must appear on the built-in vetted list in [`internal/provisioner/extensions.go`](internal/provisioner/extensions.go) or be explicitly opted-in with `ALLOW_UNSIGNED_EXTENSIONS=true`. Structural checks (`..`, whitespace, empty string) always apply. Stops a semi-compromised MachineClass author from running arbitrary kernel modules inside Talos.
+- **ISO TOFU supply-chain hash pinning** (High) — SHA-256 of every downloaded Talos ISO is recorded as a ZFS user property on the cache dataset. Subsequent downloads compare; mismatch marks the stored hash `POISONED-` and fails the provision. Protects against factory.talos.dev swap / MITM scenarios.
+- **SecretString passphrase redaction in recorder** (High) — Cassettes written by `RecordingTransport` now scrub `passphrase`, `password`, `api_key`, `apikey`, `token`, `secret` anywhere a JSON field name *contains* any of those substrings. The substring form is load-bearing: a first cut used exact-match and missed the provider's own `org.omni:passphrase` property when it echoed back in a `pool.dataset.query` response — the pre-release QA pass caught it and the fix shipped in the same version. Methods whose first positional param IS the secret (`auth.login_with_api_key`, etc.) have every positional param blanked. Existing cassette `TestIntegration_AdditionalDisks_EncryptedLifecycle` scrubbed.
+- **Singleton lease epoch fencing + server-time fallback** (High) — Each lease write includes a monotonically-increasing `bearbinary.com/singleton-epoch` annotation. Staleness computation falls back to COSI's server-observed `Metadata().Updated()` when the heartbeat annotation is missing, preparing for eventual client-clock-immune operation.
+- **WebSocket mutex split** (Medium) — Replaces single call-mutex with a reader goroutine + per-request pending map + short-held write lock. Slow RPCs no longer cascade timeouts; `ctx` cancellation unblocks waiters immediately. New `TestWSChaos_ConcurrentCalls_DoNotSerialize` and `TestWSChaos_CtxCancelDoesNotWaitForMutex` pin the behavior.
+- **`TRUENAS_HOST` validation + upload URL hardening** (Medium) — `validateHost` rejects schemes, paths, user-info, query, fragments before anything reaches the bearer-token upload path. `uploadClient.CheckRedirect` returns `http.ErrUseLastResponse` so a 3xx can't forward credentials. Upload URL built via `net/url` rather than `fmt.Sprintf`.
+- **WebSocket read size cap (16 MiB)** — Malicious or compromised server frames cannot OOM the provider.
+- **`filesystem.put` body via `json.Marshal`** — Hand-rolled `fmt.Sprintf %q` JSON replaced; no Unicode corner-case divergence between Go quoting and JSON.
+- **`slog.Warn` on cleartext `ws://` fallback** — Loud warning when `TRUENAS_INSECURE_SKIP_VERIFY=true` downgrades to cleartext. Suppressed for loopback so dev/CI is quiet.
+- **SO_LINGER + bounded `Close()` deadline** — Half-open TCPs no longer wedge provider shutdown.
+- **Env secret scrubbing** (Medium) — `TRUENAS_API_KEY`, `OMNI_SERVICE_ACCOUNT_KEY`, `PYROSCOPE_BASIC_AUTH_PASSWORD`, `OTEL_EXPORTER_OTLP_HEADERS` captured into local vars and then `os.Unsetenv`'d immediately. `/proc/<pid>/environ` and core dumps can no longer recover them.
+- **Auth error reason scrubbing** — Long alphanumeric substrings (key-shaped) in server-returned error reasons are redacted before wrapping into Go errors.
+- **`/healthz` returns generic error** — Raw TrueNAS error text (pool names, IPs) stays in server-side logs only.
+
+### Security — Validation hardening
+- `Data.Validate` rejects negative / overflow `cpus`, `memory`, `disk_size`, `storage_disk_size`; caps `additional_disks[i].size` at `MaxDiskSizeGiB` (1 PiB). Defense-in-depth against callers that bypass schema validation.
+
+### Security — Supply chain
+- **All third-party GitHub Actions pinned by full commit SHA**. Dependabot `package-ecosystem: github-actions` added to keep pins fresh. Blocks tag-move attacks on actions with `id-token: write` / `contents: write` scope.
+- **`govulncheck` pinned to `@v1.1.4`** (was `@latest`).
+- **Tag signature verification** in release workflow (`git tag --verify`) — require signed tags before releasing.
+- **Multi-arch image smoke test** after GHCR push — pulls both `linux/amd64` and `linux/arm64` digests and runs `--version` under QEMU.
+- **`anchore/sbom-action` pinned by SHA** instead of the floating `@v0` preview channel.
+- **`make generate` CI check** — regenerates protobuf-backed code in a container with pinned `protoc` + `protoc-gen-go` and fails on diff. Stops a maintainer (or compromised account) from smuggling divergent `specs.pb.go`.
+- **Helm chart `image.digest` override** + cosign verification recipe documented in `docs/hardening.md`. Production deployments can pin to an immutable digest and gate rollouts on cosign-verify via Kyverno / connaisseur.
+- **betterleaks allowlist tightened** — blanket `docs/**` allowlist removed; scoped to specific files only. Historical example API key entry in the baseline flagged for rotation verification.
+
+### Docs
+- **`docs/hardening.md` v0.15 security model section** — documents ISO TOFU recovery, extension allowlist override, singleton epoch, ZFS passphrase trust model (known weakness: passphrase stored on the zvol it protects, acknowledged and scheduled for KEK-wrapping in v0.16+).
+- **`docs/upgrading.md#upgrading-to-v015`** — breaking-change migration guide.
+
+### QA — Test coverage and bugs caught before release
+
+Added ~60 new test functions across nine files during a dedicated QA pass. The new tests flushed out three real defects that were introduced earlier in this same release cycle; all three were fixed before merge.
+
+**Defects caught and fixed:**
+- **Recorder passphrase redaction was exact-match only** — fields under namespaced keys like `org.omni:passphrase` (the property the provider writes on encrypted zvols) did not match the exact-name allowlist, so passphrases echoed back in a `pool.dataset.query` response would have landed on disk in a cassette recording. Fixed by switching `sensitiveFieldNames` from `map[string]bool` to a substring list and wrapping matches in `isSensitiveFieldName`. `TestRecordingTransport_E2E_RedactsResultField` pins the repair.
+- **`BuildVMName` failed to collapse underscores across the provider-id / request-id boundary** — an empty `providerID` produced `omni__req_1`; a `providerID` sanitized to pure punctuation produced `omni___req_1`. Fixed by post-concatenation `__` collapse and trailing-underscore trim in `internal/resources/meta/meta.go:27`. `TestBuildVMName_EdgeCases` covers unicode, empty, pure-punctuation, long, and legacy-prefix inputs.
+- **`isLocalOmniEndpoint` bypassed by deceptive subdomain** — `https://localhost-hijacker.example` matched the `https://localhost` prefix and would have dropped the multi-tenant `PROVIDER_ID` requirement on startup. Fixed with boundary-aware prefix matching (next char must be `:`, `/`, `?`, `#`, end-of-string, or digit after `127.`). `TestIsLocalOmniEndpoint_CorrectlyRejectsDeceptiveSubdomain` pins the exact exploit vector; `TestIsLocalOmniEndpoint_TableDriven` covers the full lookup surface.
+
+**New test files:**
+- `internal/provisioner/ownership_test.go` — 13 cases: `isOmniManagedVM` nil/prefix/legacy/mid-string, `omniVMDescription` format, `verifyZvolOwnership` managed-missing / managed-false / request-id mismatch / empty-expected / legacy-zvol / read-error.
+- `internal/provisioner/iso_tofu.go` + `iso_tofu_test.go` — extracted TOFU decision into `classifyTOFU` + `cachedISOPoisoned` + `poisonMarker` helpers, tested directly; plus MockClient integration test for the POISON-marker round-trip through `SetDatasetUserProperty` / `GetDatasetUserProperty`.
+- `internal/provisioner/data_test.go` (additions) — `TestValidate_NumericBounds` table: negative / over-max CPUs, Memory, DiskSize, StorageDiskSize; upper-bound on `additional_disks[i].size`.
+- `internal/provisioner/testhelpers_test.go` — shared `managedVM` / `managedVMWithName` / `managedVMPtr` / `managedZvolQueryResult` helpers. Existing scattered boilerplate across `chaos_test.go`, `steps_test.go`, `vm_lifecycle_test.go`, `deprovision_test.go`, `step_integration_test.go`, `upgrade_test.go` refactored to use them.
+- `internal/singleton/epoch_test.go` — 11 cases: epoch starts at 1, bumps on takeover (stale / unclaimed / malformed heartbeat), preserved on re-entrant acquire, detected-under-us as stolen during Run refresh, cleared by Release, and the `leaseAge` fallback to `Metadata().Updated()` for legacy pre-v0.15 resources.
+- `internal/client/ws_lifecycle_test.go` — 6 cases for the v0.15 reader goroutine + pending map: pending-entry cleanup on ctx-cancel (50 concurrent calls, assert map empty), reader exits on Close, all pending fail on conn drop, orphan response dropped silently, ctx deadline beats the 30s default, and a race-enabled concurrent-calls stress test.
+- `internal/client/ws_transport_edges_test.go` — 4 cases: Close bounded on half-open TCP, `SetReadLimit` rejects oversized frames, upload `CheckRedirect` refuses 3xx + bearer not forwarded, upload body JSON-valid for Unicode paths.
+- `internal/client/recorder_replay_e2e_test.go` — 8 cases: recorder end-to-end redaction of request params / response result / sensitive-method positional args; `ReplayTransport.SetStrictParams` off-by-default preserves existing cassette behavior, on-catches-mismatch, on-structural-order-insensitive; `isLoopbackHost` table covering localhost / 127.x / `[::1]` + guard against substring-match regression.
+- `internal/resources/meta/meta_test.go` (additions) — 5 sub-cases: unicode, empty, invalid-only, very-long, legacy-prefix shape.
+- `internal/health/health_test.go` (additions) — 4 sub-cases: pool name, internal IP, request-id UUID, VM name all scrubbed from `/healthz` response body.
+- `cmd/omni-infra-provider-truenas/secret_env_test.go` — `consumeSecretEnv` unsets after read, missing-var returns empty; `isLocalOmniEndpoint` table + dedicated deceptive-subdomain guard.
+
+**Production refactors for testability:**
+- `ReplayTransport.t` changed from `*testing.T` to a narrow `testReporter` interface. Lets tests substitute a recording fake for the strict-params mismatch path without hijacking the enclosing test's failure state.
+- TOFU decision logic extracted from `stepUploadISO` into package-level `classifyTOFU` / `cachedISOPoisoned` / `poisonMarker` so the decision table is unit-testable without a real HTTP server + TrueNAS mock.
+
+Full suite (including `-race`) passes. `make lint` is clean.
+
+
+
 ## [v0.14.7] — Empirically-verified API key setup, hardening guide, metrics-server docs, regression guards
 
 ### Security / Documentation
@@ -392,6 +468,8 @@ helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.15.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.0
+[v0.15.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.0
 [v0.14.7]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.7
 [v0.14.6]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.6
 [v0.14.5]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.5

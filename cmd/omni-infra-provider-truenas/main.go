@@ -83,15 +83,41 @@ func consumeSecretEnv(name string) string {
 // isLocalOmniEndpoint returns true if endpoint points at localhost. Used to
 // decide whether PROVIDER_ID is required (multi-tenant SaaS Omni) or optional
 // (self-hosted dev loop).
+//
+// The check is hostname-boundary aware: `https://localhost-hijacker.example`
+// must NOT match as local. Each prefix is therefore checked with a required
+// trailing separator (`:` for port form, `/` for path form, or end-of-string
+// for bare-host form).
 func isLocalOmniEndpoint(endpoint string) bool {
 	e := strings.ToLower(endpoint)
-	for _, prefix := range []string{
-		"http://localhost", "https://localhost",
-		"http://127.", "https://127.",
-		"http://[::1]", "https://[::1]",
-		"grpc://localhost", "grpc://127.", "grpc://[::1]",
-	} {
-		if strings.HasPrefix(e, prefix) {
+
+	prefixes := []string{
+		"http://localhost", "https://localhost", "grpc://localhost",
+		"http://127.", "https://127.", "grpc://127.",
+		"http://[::1]", "https://[::1]", "grpc://[::1]",
+	}
+
+	for _, prefix := range prefixes {
+		if !strings.HasPrefix(e, prefix) {
+			continue
+		}
+
+		// What comes after the prefix must be a port separator, path, query,
+		// fragment, or end-of-string — otherwise we've matched a deceptive
+		// name like "localhost-hijacker.example".
+		rest := e[len(prefix):]
+		if rest == "" {
+			return true
+		}
+
+		switch rest[0] {
+		case ':', '/', '?', '#':
+			return true
+		}
+
+		// Special case: 127.X prefix matches if the next char is a digit
+		// (part of an IPv4 octet). 127.foo is never a valid IP so reject.
+		if strings.HasSuffix(prefix, "127.") && rest[0] >= '0' && rest[0] <= '9' {
 			return true
 		}
 	}

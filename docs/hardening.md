@@ -285,6 +285,60 @@ For a new deployment, work top-down:
 | — | TrueNAS audit log ingestion + Prometheus alerts imported | ☐ |
 | — | Release notifications subscribed (GitHub repo Watch → Releases only) | ☐ |
 
+## v0.15 security model
+
+These are the invariants the v0.15 security hardening pass established. Each one is enforced by the provider at runtime; operators should understand them before modifying state on TrueNAS by hand.
+
+### ZFS encryption passphrase storage (known weakness)
+
+When `encrypted: true` is set on a MachineClass, the provider generates a per-zvol passphrase via `crypto/rand` and stores it as a ZFS user property (`org.omni:passphrase`) on the same zvol. This is a **defense against physical disk theft, not against TrueNAS admins**: any user with `pool.dataset.query` access on that dataset can read the passphrase in one call.
+
+If your threat model includes a TrueNAS administrator, do not enable `encrypted: true` — it does not protect against them. Future work (`v0.16+`): wrap the passphrase with a provider-held KEK supplied via env var, so the on-disk user property becomes ciphertext the provider alone can unwrap. Tracked in `docs/backlog.md`.
+
+### ISO supply chain (TOFU)
+
+Starting in v0.15 the provider records the SHA-256 of each Talos ISO downloaded from `factory.talos.dev` as a ZFS user property (`org.omni:iso-sha256-<imageID>`) on the ISO cache dataset. On subsequent cache-miss downloads, the hash is re-derived and compared:
+
+- **First time** — trust on first use (TOFU): record hash, continue.
+- **Match** — continue.
+- **Mismatch** — the recorded hash is overwritten with `POISONED-<new-hash>` and the provision fails loudly. The on-disk ISO is left in place (no `filesystem.unlink` in the client today).
+
+To recover from a poisoned ISO after investigating the mismatch:
+
+```
+# On TrueNAS CLI, after verifying the upstream image yourself:
+cli -c "storage dataset query user_properties" | grep iso-sha256   # find the property
+# Remove both the ISO file and the property manually via Shell + `zfs inherit`.
+```
+
+Then retry the provision. This intentionally surfaces operator action rather than silently trusting a changed image.
+
+### Singleton lease fencing epoch
+
+Each lease write includes a monotonically-increasing epoch annotation (`bearbinary.com/singleton-epoch`). A new holder takes epoch = `prior_epoch + 1`. Today the epoch is observability-only — it appears in logs and helps operators diagnose split-brain incidents by reading the `infra.ProviderStatus` metadata:
+
+```
+omnictl get providerstatus truenas -o yaml | yq '.metadata.annotations'
+```
+
+Future work: tag TrueNAS writes with the epoch so a stale holder's late writes can be rejected downstream.
+
+Staleness is computed from a client-written heartbeat annotation. When the annotation is missing (e.g., legacy state from pre-v0.15), the COSI-server-observed `Metadata().Updated()` is used as a fallback. Using server time as the primary source everywhere is planned but not yet possible without restructuring the test clock abstraction — tracked in `docs/backlog.md`.
+
+### Talos extension allowlist
+
+`extensions:` entries must appear on the built-in allowlist in [`internal/provisioner/extensions.go`](https://github.com/bearbinary/omni-infra-provider-truenas/blob/main/internal/provisioner/extensions.go) or the provider refuses to provision. Operators who legitimately use a custom schematic ID can bypass with `ALLOW_UNSIGNED_EXTENSIONS=true`, but should understand that no supply-chain review has been done for the bypassed extension.
+
+Structural checks (empty strings, `..` segments, whitespace) are always applied, bypass or not.
+
+### Deprovision ownership check
+
+The provider refuses to deprovision a VM whose `description` does not start with `Managed by Omni infra provider` AND whose root zvol is not tagged `org.omni:managed=true`. If you see this error, it means the stored `VmId` / `ZvolPath` in the Machine state points to a resource that isn't ours. Investigate on TrueNAS before doing anything else — a name collision, manually-created VM, or stale state is the most likely cause.
+
+### VM name change in v0.15 (breaking)
+
+VM names now embed the provider ID: `omni_<providerID>_<requestID>` instead of the prior `omni_<requestID>`. This change is incompatible with existing deployments — see [Upgrading](upgrading.md#upgrading-to-v015) for the migration path.
+
 ## Known gaps (upstream-dependent)
 
 These require TrueNAS fixes before we can narrow further:

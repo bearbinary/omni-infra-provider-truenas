@@ -146,10 +146,50 @@ func (c *Client) IsDatasetLocked(ctx context.Context, path string) (bool, error)
 	return ds.Locked, nil
 }
 
+// SetDatasetUserProperty sets or updates a single ZFS user property on a dataset.
+// Used to record per-dataset ownership tags and, as of v0.15, ISO content hashes
+// that back the TOFU (trust-on-first-use) supply-chain check for Talos images.
+// JSON-RPC method: pool.dataset.update
+func (c *Client) SetDatasetUserProperty(ctx context.Context, path, key, value string) error {
+	params := []any{
+		path,
+		map[string]any{
+			"user_properties_update": []map[string]any{
+				{"key": key, "value": value},
+			},
+		},
+	}
+
+	if err := c.call(ctx, "pool.dataset.update", params, nil); err != nil {
+		return fmt.Errorf("pool.dataset.update %q (set %s) failed: %w", path, key, err)
+	}
+
+	return nil
+}
+
 // GetDatasetUserProperty reads a single ZFS user property from a dataset.
 // Returns empty string if the property is not set.
 // JSON-RPC method: pool.dataset.query with filter
+//
+// Callers that need more than one property on the same dataset should use
+// GetDatasetUserProperties instead — it fetches all properties in a single
+// round-trip, halving (or better) the RPC cost compared to issuing
+// GetDatasetUserProperty once per key.
 func (c *Client) GetDatasetUserProperty(ctx context.Context, path, property string) (string, error) {
+	props, err := c.GetDatasetUserProperties(ctx, path)
+	if err != nil {
+		return "", err
+	}
+
+	return props[property], nil
+}
+
+// GetDatasetUserProperties returns every ZFS user property set on a dataset
+// in a single pool.dataset.query round-trip. Missing datasets are treated
+// as empty (no error). Callers that need to read multiple properties on
+// the same dataset should prefer this over repeated GetDatasetUserProperty
+// calls to avoid N-way RPC amplification under high-fanout cleanup.
+func (c *Client) GetDatasetUserProperties(ctx context.Context, path string) (map[string]string, error) {
 	filter := []any{
 		[]any{[]any{"id", "=", path}},
 		map[string]any{"get": true},
@@ -162,14 +202,15 @@ func (c *Client) GetDatasetUserProperty(ctx context.Context, path, property stri
 	}
 
 	if err := c.call(ctx, "pool.dataset.query", filter, &ds); err != nil {
-		return "", fmt.Errorf("pool.dataset.query %q failed: %w", path, err)
+		return nil, fmt.Errorf("pool.dataset.query %q failed: %w", path, err)
 	}
 
-	if prop, ok := ds.UserProperties[property]; ok {
-		return prop.Value, nil
+	out := make(map[string]string, len(ds.UserProperties))
+	for k, v := range ds.UserProperties {
+		out[k] = v.Value
 	}
 
-	return "", nil
+	return out, nil
 }
 
 // EnsureDataset creates a FILESYSTEM dataset if it doesn't exist.

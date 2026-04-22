@@ -25,6 +25,52 @@ For TrueNAS Docker-Compose-on-host deployments (installed via Apps > Discover > 
 
 ## Version Notes
 
+### Upgrading to v0.15
+
+v0.15 is a security-hardening release with **one breaking change** and several new invariants that may surface pre-existing state issues.
+
+#### Breaking: VM names now namespaced by provider ID
+
+Prior to v0.15 VM names were `omni_<requestID>`. From v0.15 onward they are `omni_<providerID>_<requestID>`. This prevents two providers sharing a TrueNAS host from racing on VM names.
+
+**Impact on upgrade:**
+
+- Existing v0.14 VMs **will not be adopted** by a v0.15 provider. The provider will try to create a new VM with the namespaced name, find nothing, and attempt to create — which then collides with the zvol already in use.
+- Existing v0.14 VMs **will not be automatically cleaned up**. The cleanup scanner matches both shapes (legacy `omni_<reqID>` and new `omni_<providerID>_<reqID>`) so orphan detection still works, but the VM will be orphaned in Omni until you drain or delete it.
+
+**Recommended upgrade path:**
+
+1. Drain MachineRequests from the current provider (scale the MachineSet to zero, or delete nodes one by one from Omni) before upgrading.
+2. Wait for all v0.14 VMs to be deprovisioned normally.
+3. Upgrade the provider image to v0.15.
+4. Scale the MachineSet back up. New VMs get the namespaced naming.
+
+If you can tolerate a full cluster recreate (small homelab, preview environment), skip straight to the image bump and let your state reconverge.
+
+#### New: PROVIDER_ID is required for remote Omni
+
+If `OMNI_ENDPOINT` is not localhost, `PROVIDER_ID` is now required — the provider fails fast on startup otherwise. This prevents two tenants that both default to the hardcoded `"truenas"` ID from sharing the same singleton lease annotation keyspace.
+
+If you were running the default provider ID before, pick a unique value and set it in your deployment:
+
+```yaml
+# values.yaml (Helm)
+provider:
+  id: "truenas-prod-dc1"
+```
+
+#### New: Talos extension allowlist
+
+MachineClass `extensions:` entries must now appear on the [built-in allowlist](https://github.com/bearbinary/omni-infra-provider-truenas/blob/main/internal/provisioner/extensions.go) or the provider refuses to provision. If you legitimately use a custom schematic ID, set `ALLOW_UNSIGNED_EXTENSIONS=true` on the provider deployment and understand that no supply-chain review has been done for bypassed extensions.
+
+#### New: Deprovision ownership check
+
+v0.15 refuses to deprovision a VM whose description doesn't contain `Managed by Omni infra provider` or whose zvol isn't tagged `org.omni:managed=true`. If you see this error, the provider's stored state is pointing at a resource it didn't create — investigate before retrying. Most commonly this happens when a VM was manually renamed on TrueNAS, or a second provider instance wrote conflicting state.
+
+#### New: ISO TOFU hash pinning
+
+The provider records the SHA-256 of each Talos ISO on first download. Subsequent downloads are compared against the recorded hash; a mismatch fails the provision and marks the ISO `POISONED`. If you see a `POISONED` error, see [`docs/hardening.md`](hardening.md#iso-supply-chain-tofu) for the recovery recipe.
+
 ### Upgrading to the boot-order fix (v0.14.2)
 
 **Existing VMs provisioned on v0.14.1 or earlier need a one-time boot-order

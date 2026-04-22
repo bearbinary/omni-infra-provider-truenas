@@ -1,27 +1,29 @@
 name: E2E Tests
 
-# Runs end-to-end tests against a real TrueNAS instance on a schedule.
-# Requires repository secrets: TRUENAS_TEST_HOST, TRUENAS_TEST_API_KEY, TRUENAS_TEST_POOL, TRUENAS_TEST_NETWORK_INTERFACE
+# Manual-trigger only. GitHub-hosted runners cannot reach a home/lab TrueNAS,
+# and we do not want live TrueNAS credentials sitting in a public repo's
+# secrets store. Real E2E is operator-run locally (`make test-integration`)
+# against your own TrueNAS. Cassette-replay integration tests in ci.yaml
+# cover the API surface without hardware.
+#
+# Requires repository secrets (only if you choose to wire a self-hosted
+# runner later): TRUENAS_TEST_HOST, TRUENAS_TEST_API_KEY, TRUENAS_TEST_POOL,
+# TRUENAS_TEST_NETWORK_INTERFACE.
 
 on:
-  schedule:
-    # Run every day at 3am UTC
-    - cron: "0 3 * * *"
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
 
 permissions:
   contents: read
-  # Required by the failure-notifier step to open an issue when E2E breaks.
-  issues: write
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
 
@@ -32,58 +34,17 @@ jobs:
           TRUENAS_TEST_POOL: ${{ secrets.TRUENAS_TEST_POOL }}
           TRUENAS_TEST_NETWORK_INTERFACE: ${{ secrets.TRUENAS_TEST_NETWORK_INTERFACE }}
         run: |
-          # Missing secrets used to `exit 0`, which made the daily E2E run
-          # report green even when the test harness couldn't authenticate —
-          # classic false-green failure mode. Now we fail loudly so a
-          # rotated/unset secret page someone instead of hiding the gap.
           if [ -z "$TRUENAS_TEST_HOST" ]; then
-            echo "::error::E2E secrets missing: set TRUENAS_TEST_HOST, TRUENAS_TEST_API_KEY, TRUENAS_TEST_POOL, TRUENAS_TEST_NETWORK_INTERFACE in repository secrets."
+            echo "::error::E2E secrets missing. This workflow is manual-only and expects a self-hosted runner with network reach to TrueNAS. See docs/testing.md."
             exit 1
           fi
           make test-e2e
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2e-results
           path: _out/test-results/
           retention-days: 7
           if-no-files-found: ignore
-
-      # Open a GitHub issue on scheduled-run failure. Without this, a red
-      # 3am E2E sits unread until a human happens to open the Actions tab.
-      # `workflow_dispatch` runs don't page — they're interactive.
-      - name: Notify on failure (scheduled runs only)
-        if: failure() && github.event_name == 'schedule'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const today = new Date().toISOString().slice(0, 10);
-            const title = `E2E failed on ${today}`;
-
-            const { data: existing } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'e2e-failure',
-            });
-            if (existing.some(i => i.title === title)) {
-              core.info(`Issue already open for ${today}, skipping.`);
-              return;
-            }
-
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              labels: ['e2e-failure'],
-              body: [
-                `Scheduled E2E run failed.`,
-                ``,
-                `Run: ${runUrl}`,
-                ``,
-                `Common causes: rotated TRUENAS_TEST_API_KEY, TrueNAS host unreachable, test pool deleted, provider regression. Check the run logs and the uploaded \`e2e-results\` artifact before closing.`,
-              ].join('\n'),
-            });

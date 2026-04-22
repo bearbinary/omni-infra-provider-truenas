@@ -6,8 +6,17 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"testing"
 )
+
+// testReporter is the subset of testing.T the replay transport actually uses.
+// Isolating the surface lets tests substitute a recording fake for the
+// strict-params mismatch path without depending on the full testing.TB API.
+type testReporter interface {
+	Helper()
+	Fatalf(format string, args ...any)
+	Errorf(format string, args ...any)
+	Logf(format string, args ...any)
+}
 
 // ReplayTransport plays back recorded JSON-RPC interactions from a cassette.
 // It matches sequentially by method name — each Call advances a cursor.
@@ -16,7 +25,7 @@ type ReplayTransport struct {
 	cassette     *Cassette
 	cursor       int
 	mu           sync.Mutex
-	t            *testing.T
+	t            testReporter
 	strictParams bool
 }
 
@@ -32,7 +41,7 @@ func (t *ReplayTransport) SetStrictParams(strict bool) {
 }
 
 // NewReplayTransport loads a cassette and creates a replay transport.
-func NewReplayTransport(t *testing.T, cassettePath string) *ReplayTransport {
+func NewReplayTransport(t testReporter, cassettePath string) *ReplayTransport {
 	t.Helper()
 
 	cassette, err := LoadCassette(cassettePath)
@@ -151,7 +160,7 @@ func (t *ReplayTransport) UploadFile(_ context.Context, _ string, _ io.Reader, _
 }
 
 // AssertAllConsumed fails the test if not all interactions were replayed.
-func (t *ReplayTransport) AssertAllConsumed(tb *testing.T) {
+func (t *ReplayTransport) AssertAllConsumed(tb testReporter) {
 	tb.Helper()
 
 	t.mu.Lock()

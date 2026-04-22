@@ -90,6 +90,51 @@ func TestHealthz_TracksLastOK(t *testing.T) {
 	assert.Equal(t, lastOK, resp2.LastOK, "lastOK should be preserved from the successful call")
 }
 
+// TestHealthz_PoolNameNotLeaked pins the scrubbing contract: an upstream
+// error carrying reconnaissance data (pool names, internal IPs, request
+// IDs) must NOT appear in the /healthz response body. Operators get the
+// detail via server logs; unauthenticated callers see only a generic
+// "check failed" message.
+func TestHealthz_PoolNameNotLeaked(t *testing.T) {
+	t.Parallel()
+
+	// Scenarios that have actually shown up in the provider's logs over
+	// v0.13–v0.14. Each embeds either a pool name, an IP, or a request ID.
+	leakyErrors := []string{
+		`pool "ssd-prod-secrets" not found on TrueNAS`,
+		`connection refused dialing 10.0.42.17:80`,
+		`vm.query for request-id 11111111-2222-3333-4444-555555555555 failed`,
+		`Invalid VM name: omni_prod_secrets_cluster`,
+	}
+
+	for _, upstream := range leakyErrors {
+		upstream := upstream
+		t.Run(upstream, func(t *testing.T) {
+			t.Parallel()
+
+			s := NewServer(func(_ context.Context) error {
+				return fmt.Errorf("%s", upstream)
+			}, zap.NewNop())
+
+			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+			w := httptest.NewRecorder()
+			s.handleHealthz(w, req)
+
+			require.Equal(t, http.StatusServiceUnavailable, w.Code)
+
+			var resp healthResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+			assert.NotContains(t, resp.Error, upstream,
+				"upstream error text must not leak to unauthenticated /healthz callers")
+			// The response must still indicate "something is wrong" or
+			// observability pipelines can't tell healthy from unhealthy.
+			assert.Equal(t, "error", resp.Status)
+			assert.NotEmpty(t, resp.Error)
+		})
+	}
+}
+
 func TestReadyz_SameAsHealthz(t *testing.T) {
 	t.Parallel()
 

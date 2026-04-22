@@ -21,7 +21,7 @@ func TestVerifyVMExists_VMPresent(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
+			return managedVM(42, "RUNNING"), nil
 		}
 		return nil, nil
 	})
@@ -125,7 +125,7 @@ func TestHealthCheck_AlreadyFinalized_VMStillExists(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
+			return managedVM(42, "RUNNING"), nil
 		}
 		return nil, nil
 	})
@@ -218,12 +218,7 @@ func TestDeprovision_AdditionalZvols_CleanedUp(t *testing.T) {
 		if method == "pool.dataset.query" {
 			// Return the management ownership tags so the deprovision path
 			// accepts these zvols as ours.
-			return map[string]any{
-				"user_properties": map[string]any{
-					"org.omni:managed":    map[string]any{"value": "true"},
-					"org.omni:request-id": map[string]any{"value": "test-request"},
-				},
-			}, nil
+			return managedZvolQueryResult("test-request"), nil
 		}
 
 		return nil, nil
@@ -316,7 +311,7 @@ func TestLifecycle_ProviderRestart_VMStillRunning(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "RUNNING"}}, nil
+			return managedVM(42, "RUNNING"), nil
 		}
 		return nil, nil
 	})
@@ -334,7 +329,7 @@ func TestLifecycle_ProviderRestart_VMStopped(t *testing.T) {
 
 	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
 		if method == "vm.query" {
-			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "STOPPED"}}, nil
+			return managedVM(42, "STOPPED"), nil
 		}
 		return nil, nil
 	})

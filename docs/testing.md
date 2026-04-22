@@ -6,6 +6,21 @@ This document covers how to test the Omni TrueNAS infrastructure provider at eve
 
 ---
 
+## Where tests run
+
+| Tier | Where | How |
+|---|---|---|
+| Unit | CI + local | `make test` |
+| Integration (cassette replay) | CI + local | `make test` (no hardware needed) |
+| Integration (live TrueNAS) | **Local only** | `make test-integration` with env vars set |
+| End-to-end (live TrueNAS + Omni) | **Local only** | See Phase 2 below |
+
+**CI does not run live TrueNAS tests.** Two reasons: (1) GitHub-hosted runners cannot reach a home/lab TrueNAS, and (2) storing live TrueNAS credentials in a public repo's secret store widens the blast radius of any token leak. The `.github/workflows/e2e.yaml` workflow is `workflow_dispatch`-only as a placeholder for future self-hosted runner use — it is not scheduled.
+
+Cassette-replay integration tests in CI cover the JSON-RPC surface against recorded TrueNAS responses, so schema drift is still caught without real hardware.
+
+---
+
 ## Unit Tests
 
 Run anytime, no external dependencies:

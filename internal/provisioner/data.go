@@ -205,9 +205,9 @@ const MaxDiskSizeGiB = 1048576
 // MaxCPUs and MaxMemoryMiB mirror the schema ceilings and protect int arithmetic
 // downstream (byte conversion, pool capacity planning) from silent overflow.
 const (
-	MaxCPUs       = 512
-	MaxMemoryMiB  = 16777216
-	MinMemoryMiB  = 1024
+	MaxCPUs      = 512
+	MaxMemoryMiB = 16777216
+	MinMemoryMiB = 1024
 )
 
 // Validate checks the Data config for logical errors.

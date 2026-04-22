@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/bearbinary/omni-infra-provider-truenas/api/specs"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/resources/meta"
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
 )
 
@@ -86,7 +88,7 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			recordProvisionError(ctx, err)
+			recordProvisionError(ctx, logger, err)
 		} else {
 			span.SetStatus(codes.Ok, "")
 		}
@@ -150,7 +152,7 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			recordProvisionError(ctx, err)
+			recordProvisionError(ctx, logger, err)
 		} else {
 			span.SetStatus(codes.Ok, "")
 		}
@@ -196,6 +198,8 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 	isoDataset := data.BasePath() + "/talos-iso"
 	isoPath := "/mnt/" + isoDataset + "/" + isoFileName
 
+	isoHashProperty := "org.omni:iso-sha256-" + imageID
+
 	// Use singleflight to prevent concurrent downloads of the same ISO
 	_, err, _ = p.isoGroup.Do(imageID, func() (any, error) {
 		// Check if ISO already exists
@@ -205,6 +209,17 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 		}
 
 		if exists {
+			// Cache hit — ensure the stored hash hasn't been poisoned by a
+			// previous mismatch. This protects against the scenario where a
+			// prior provision detected a factory compromise and marked the
+			// on-disk ISO as tainted; we refuse to reuse it until the
+			// operator has cleaned up (no filesystem.unlink in the client
+			// today — see docs/hardening.md for the manual cleanup recipe).
+			storedHash, _ := p.client.GetDatasetUserProperty(ctx, isoDataset, isoHashProperty)
+			if cachedISOPoisoned(storedHash) {
+				return nil, fmt.Errorf("ISO %s is marked POISONED from a prior factory-compromise detection — delete %s on TrueNAS and retry (see docs/hardening.md)", imageID, isoPath)
+			}
+
 			logger.Debug("ISO already exists, skipping download", zap.String("path", isoPath))
 			if telemetry.ISOCacheHits != nil {
 				telemetry.ISOCacheHits.Add(ctx, 1)
@@ -228,11 +243,23 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 			telemetry.ISOCacheMisses.Add(ctx, 1)
 		}
 
+		// TOFU (trust-on-first-use) supply-chain hash: on the first download
+		// for this imageID we just record the SHA-256. On subsequent
+		// downloads (cache loss + re-provision), we compare against the
+		// recorded hash. Mismatch means someone changed the bytes under the
+		// same factory URL — the ISO is treated as compromised.
+		expectedHash, _ := p.client.GetDatasetUserProperty(ctx, isoDataset, isoHashProperty)
+
+		if cachedISOPoisoned(expectedHash) {
+			return nil, fmt.Errorf("ISO %s is marked POISONED from a prior factory-compromise detection — delete %s on TrueNAS and retry", imageID, isoPath)
+		}
+
 		isoStart := time.Now()
 
 		logger.Info("downloading Talos ISO",
 			zap.String("url", imageURL.String()),
 			zap.String("dest", isoPath),
+			zap.Bool("tofu_pinned", expectedHash != ""),
 		)
 
 		// Download ISO from image factory
@@ -251,16 +278,56 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 			return nil, fmt.Errorf("ISO download returned status %d", resp.StatusCode)
 		}
 
+		// Compute SHA-256 while streaming to TrueNAS so we don't buffer the
+		// entire ISO in memory. Hash is only usable after upload completes.
+		hasher := sha256.New()
+		teed := io.TeeReader(resp.Body, hasher)
+
 		// Upload to TrueNAS
-		if err := p.client.UploadFile(ctx, isoPath, resp.Body, resp.ContentLength); err != nil {
+		if err := p.client.UploadFile(ctx, isoPath, teed, resp.ContentLength); err != nil {
 			return nil, fmt.Errorf("failed to upload ISO to TrueNAS: %w", err)
+		}
+
+		downloadedHash := hex.EncodeToString(hasher.Sum(nil))
+
+		if classifyTOFU(expectedHash, downloadedHash) == tofuMismatch {
+			// Mismatch: mark the stored hash with POISONED- prefix so a
+			// future provision refuses to use this ISO (cache hit branch
+			// checks the poison marker). Fail the current provision loudly.
+			_ = p.client.SetDatasetUserProperty(ctx, isoDataset, isoHashProperty, poisonMarker(downloadedHash))
+
+			if telemetry.ISOHashMismatches != nil {
+				telemetry.ISOHashMismatches.Add(ctx, 1)
+			}
+
+			logger.Error("ISO hash mismatch — possible supply-chain compromise at factory.talos.dev",
+				zap.String("image_id", imageID),
+				zap.String("expected_sha256", expectedHash),
+				zap.String("got_sha256", downloadedHash),
+				zap.String("iso_path", isoPath),
+			)
+
+			return nil, fmt.Errorf("ISO hash mismatch for %s: expected %s, got %s — delete %s and rotate factory trust before retrying", imageID, expectedHash, downloadedHash, isoPath)
+		}
+
+		// Record the hash so future downloads of this imageID are verified.
+		// Non-fatal: if the set fails we still return success because the
+		// upload succeeded and the hash comparison is a best-effort defense.
+		if err := p.client.SetDatasetUserProperty(ctx, isoDataset, isoHashProperty, downloadedHash); err != nil {
+			logger.Warn("failed to record ISO hash for TOFU verification — future downloads will re-establish trust-on-first-use",
+				zap.String("image_id", imageID),
+				zap.Error(err),
+			)
 		}
 
 		if telemetry.ISODownloadDuration != nil {
 			telemetry.ISODownloadDuration.Record(ctx, time.Since(isoStart).Seconds())
 		}
 
-		logger.Info("ISO uploaded successfully", zap.String("path", isoPath))
+		logger.Info("ISO uploaded successfully",
+			zap.String("path", isoPath),
+			zap.String("sha256", downloadedHash),
+		)
 
 		return nil, nil
 	})
@@ -281,7 +348,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			if telemetry.VMsErrored != nil {
 				telemetry.VMsErrored.Add(ctx, 1)
 			}
-			recordProvisionError(ctx, err)
+			recordProvisionError(ctx, logger, err)
 		} else {
 			span.SetStatus(codes.Ok, "")
 		}
@@ -289,7 +356,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		span.End()
 	}()
 	state := pctx.State.TypedSpec().Value
-	vmName := "omni_" + strings.ReplaceAll(pctx.GetRequestID(), "-", "_")
+	vmName := meta.BuildVMName(meta.ProviderID, pctx.GetRequestID())
 
 	// Check if VM already exists (by ID or name) — handles restarts and idempotency
 	if result := p.checkExistingVM(ctx, logger, state, vmName); result != nil {
@@ -747,7 +814,7 @@ func (p *Provisioner) stepHealthCheck(ctx context.Context, logger *zap.Logger, p
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			recordProvisionError(ctx, err)
+			recordProvisionError(ctx, logger, err)
 		} else {
 			span.SetStatus(codes.Ok, "")
 		}
@@ -821,13 +888,23 @@ func recordStepDuration(ctx context.Context, step string, start time.Time) {
 	}
 }
 
-// recordProvisionError categorizes and records a provision error.
-func recordProvisionError(ctx context.Context, err error) {
-	if telemetry.ProvisionErrors == nil || err == nil {
+// recordProvisionError categorizes, logs, and records a provision error.
+func recordProvisionError(ctx context.Context, logger *zap.Logger, err error) {
+	if err == nil {
 		return
 	}
 
-	telemetry.ProvisionErrors.Add(ctx, 1, telemetry.WithErrorCategory(categorizeError(err)))
+	category := categorizeError(err)
+	if logger != nil {
+		logger.Error("provision error",
+			zap.String("error_category", category),
+			zap.Error(err),
+		)
+	}
+
+	if telemetry.ProvisionErrors != nil {
+		telemetry.ProvisionErrors.Add(ctx, 1, telemetry.WithErrorCategory(category))
+	}
 }
 
 // categorizeError returns a category string for a provision error.

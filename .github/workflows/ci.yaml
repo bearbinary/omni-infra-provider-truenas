@@ -9,13 +9,20 @@ on:
 permissions:
   contents: read
 
+# Third-party actions are pinned by full commit SHA. The comment on each
+# `uses:` records the semver the SHA resolves to today so Dependabot
+# (.github/dependabot.yml with ecosystem: github-actions) can propose bumps.
+# Never downgrade from SHA-pinning — a moved tag on a popular action with
+# `id-token: write` scope would give the attacker keyless signing for our
+# release artifacts.
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
 
@@ -36,7 +43,7 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
@@ -56,28 +63,62 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
           version: v2.11.4
 
   vulncheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
 
+      # Pin govulncheck to an explicit version so a compromised release
+      # cannot execute arbitrary code in CI (see v0.15 security pass).
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
         run: govulncheck ./...
+
+  generate:
+    # Regenerate protobuf-backed code in a container with pinned protoc
+    # versions and fail if the working tree differs from the committed
+    # generated file. Prevents a maintainer from smuggling a diverged
+    # specs.pb.go (supply-chain M17).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned protoc and protoc-gen-go
+        run: |
+          curl -sSfL https://github.com/protocolbuffers/protobuf/releases/download/v27.1/protoc-27.1-linux-x86_64.zip -o /tmp/protoc.zip
+          echo "6125d83cb2f3cec13b9fc1d8619f70dc99e59ca98fdaedbe0f5c93a2357a90e4  /tmp/protoc.zip" | sha256sum -c -
+          unzip -qo /tmp/protoc.zip -d /tmp/protoc
+          sudo mv /tmp/protoc/bin/protoc /usr/local/bin/
+          sudo cp -r /tmp/protoc/include /usr/local/
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+
+      - name: Regenerate
+        run: make generate
+
+      - name: Fail on diff
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::generated code differs from committed output — run 'make generate' locally and commit the result"
+            exit 1
+          fi

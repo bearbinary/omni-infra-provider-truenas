@@ -873,7 +873,16 @@ func TestIntegration_AdditionalDisks_EncryptedLifecycle(t *testing.T) {
 	})
 
 	zvolName := parentDS + "/" + uniqueName("encr")
-	passphrase := "integration-test-passphrase-1234567890abcdef"
+	// The RecordingTransport redacts passphrase-shaped fields before writing
+	// cassettes. In replay mode the stored value reads back as "[REDACTED]";
+	// in live/record mode the caller supplies the real value. Keep the local
+	// variable tied to what the cassette will carry so the round-trip
+	// assertion is meaningful in both modes — see SECURITY.md for the full
+	// trust model on ZFS encryption passphrase storage.
+	passphrase := "[REDACTED]"
+	if !isReplayMode() {
+		passphrase = "integration-test-passphrase-1234567890abcdef"
+	}
 
 	props := OmniManagedProperties("test-req")
 	props = append(props, UserProperty{Key: "org.omni:passphrase", Value: passphrase})
@@ -886,7 +895,9 @@ func TestIntegration_AdditionalDisks_EncryptedLifecycle(t *testing.T) {
 		c.DeleteDataset(context.Background(), zvolName) //nolint:errcheck
 	})
 
-	// Verify passphrase was stored
+	// Verify passphrase was stored. In replay mode, the stored value is the
+	// redaction placeholder (cassette was scrubbed). In live mode, round-trip
+	// equality still holds.
 	stored, err := c.GetDatasetUserProperty(ctx, zvolName, "org.omni:passphrase")
 	require.NoError(t, err)
 	assert.Equal(t, passphrase, stored, "stored passphrase should match")
@@ -1045,9 +1056,9 @@ func TestIntegration_WebSocketReconnect(t *testing.T) {
 		t.Skip("not using WebSocket transport")
 	}
 
-	ws.mu.Lock()
-	ws.conn.Close() // Kill the connection
-	ws.mu.Unlock()
+	ws.connMu.Lock()
+	ws.conn.Close() // Kill the connection — reader goroutine will observe, fail pending, exit.
+	ws.connMu.Unlock()
 
 	// Next call should trigger reconnect and succeed
 	err = c.Ping(ctx)

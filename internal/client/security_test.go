@@ -35,15 +35,15 @@ func TestValidateHost_RejectsSmuggling(t *testing.T) {
 
 	invalid := []string{
 		"",
-		"evil.example/@truenas.local",           // path smuggling
-		"evil.example/?host=truenas.local",      // query
-		"user:pass@truenas.local",               // user-info
-		"truenas.local#frag",                    // fragment
-		"https://truenas.local",                 // scheme
-		"truenas.local/path",                    // path
-		"truenas.local with spaces",             // whitespace
-		"tru\nenas.local",                       // newline
-		"truenas_underscore.local",              // underscore (not a valid DNS label char we allow)
+		"evil.example/@truenas.local",      // path smuggling
+		"evil.example/?host=truenas.local", // query
+		"user:pass@truenas.local",          // user-info
+		"truenas.local#frag",               // fragment
+		"https://truenas.local",            // scheme
+		"truenas.local/path",               // path
+		"truenas.local with spaces",        // whitespace
+		"tru\nenas.local",                  // newline
+		"truenas_underscore.local",         // underscore (not a valid DNS label char we allow)
 	}
 
 	for _, h := range invalid {

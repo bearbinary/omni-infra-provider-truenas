@@ -42,17 +42,22 @@ func isOmniManagedVM(vm *client.VM) bool {
 // cause the check to fail. Zvols created before the tagging feature (pre
 // v0.10.0) will fail this check — operators upgrading from those versions
 // must set `org.omni:managed=true` manually or delete the zvols from TrueNAS.
+//
+// Issues a single pool.dataset.query to fetch both ownership properties
+// at once. An earlier implementation did two separate GetDatasetUserProperty
+// calls — unnecessary RPC amplification in a deprovision loop that can run
+// across dozens of VMs.
 func verifyZvolOwnership(ctx context.Context, c *client.Client, zvolPath, requestID string) error {
 	if zvolPath == "" {
 		return fmt.Errorf("zvol path is empty")
 	}
 
-	managed, err := c.GetDatasetUserProperty(ctx, zvolPath, "org.omni:managed")
+	props, err := c.GetDatasetUserProperties(ctx, zvolPath)
 	if err != nil {
-		return fmt.Errorf("failed to read ownership property on %q: %w", zvolPath, err)
+		return fmt.Errorf("failed to read ownership properties on %q: %w", zvolPath, err)
 	}
 
-	if managed != "true" {
+	if managed := props["org.omni:managed"]; managed != "true" {
 		return fmt.Errorf("zvol %q is not tagged org.omni:managed=true (got %q) — refusing to delete", zvolPath, managed)
 	}
 
@@ -60,12 +65,7 @@ func verifyZvolOwnership(ctx context.Context, c *client.Client, zvolPath, reques
 		return nil
 	}
 
-	storedID, err := c.GetDatasetUserProperty(ctx, zvolPath, "org.omni:request-id")
-	if err != nil {
-		return fmt.Errorf("failed to read request-id property on %q: %w", zvolPath, err)
-	}
-
-	if storedID != "" && storedID != requestID {
+	if storedID := props["org.omni:request-id"]; storedID != "" && storedID != requestID {
 		return fmt.Errorf("zvol %q has request-id %q, expected %q — refusing to delete", zvolPath, storedID, requestID)
 	}
 

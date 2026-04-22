@@ -14,6 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,10 +26,36 @@ import (
 	"go.uber.org/zap"
 )
 
+// malformedContentTypeMarker matches a known Omni gRPC-gateway bug where a
+// successful 200 OK response is returned without a Content-Type header, causing
+// the gRPC client to reject the otherwise-successful write. The resource update
+// is durable on the server when this error appears. Tracked upstream as
+// siderolabs/omni#2642.
+const malformedContentTypeMarker = "malformed header: missing HTTP content-type"
+
+// isMalformed200 reports whether err is the known upstream-#2642 false-positive
+// error: an HTTP 200 OK response with a missing Content-Type header.
+func isMalformed200(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := err.Error()
+
+	return strings.Contains(msg, malformedContentTypeMarker) && strings.Contains(msg, "200")
+}
+
 // Annotation keys written on infra.ProviderStatus metadata.
 const (
 	AnnotationInstanceID = "bearbinary.com/singleton-instance-id"
 	AnnotationHeartbeat  = "bearbinary.com/singleton-heartbeat"
+
+	// AnnotationEpoch is a monotonically-increasing counter that bumps on
+	// every takeover. Used as a fencing token: future work can tag
+	// provisioner-side writes with the epoch and ignore writes from a stale
+	// epoch. For now the value is observability-only — it appears in logs
+	// and is exposed to operators investigating split-brain incidents.
+	AnnotationEpoch = "bearbinary.com/singleton-epoch"
 )
 
 // Default tuning values.
@@ -105,6 +133,11 @@ type Lease struct {
 	lostCh      chan struct{}
 	lostOnce    sync.Once
 	wasTakeover bool // set when lease was acquired from a stale/unclaimed holder
+
+	// epoch is our current fencing epoch — incremented on every takeover and
+	// written to AnnotationEpoch on each heartbeat so observers (and future
+	// fencing-aware downstream writers) can distinguish generations.
+	epoch uint64
 }
 
 // New builds a Lease. It does not contact the state — call Acquire first.
@@ -147,6 +180,11 @@ func New(st state.State, cfg Config, logger *zap.Logger) (*Lease, error) {
 
 // InstanceID returns this lease holder's unique instance ID.
 func (l *Lease) InstanceID() string { return l.cfg.InstanceID }
+
+// Epoch returns the current fencing epoch. Intended for callers that want to
+// tag downstream writes with this value so future receivers can reject
+// stale-epoch mutations; today it is observability-only.
+func (l *Lease) Epoch() uint64 { return l.epoch }
 
 // WasTakeover returns true if this lease was acquired by taking over from a
 // stale or unclaimed previous holder (not a fresh create or re-entrant acquire).
@@ -211,8 +249,13 @@ func (l *Lease) Acquire(ctx context.Context) error {
 func (l *Lease) tryCreate(ctx context.Context) (bool, error) {
 	status := infra.NewProviderStatus(l.cfg.ProviderID)
 	now := l.cfg.Clock.Now().UTC()
+
+	// First-ever holder starts at epoch 1.
+	l.epoch = 1
+
 	status.Metadata().Annotations().Set(AnnotationInstanceID, l.cfg.InstanceID)
 	status.Metadata().Annotations().Set(AnnotationHeartbeat, now.Format(time.RFC3339Nano))
+	status.Metadata().Annotations().Set(AnnotationEpoch, strconv.FormatUint(l.epoch, 10))
 
 	if err := l.st.Create(ctx, status); err != nil {
 		if state.IsConflictError(err) {
@@ -224,6 +267,7 @@ func (l *Lease) tryCreate(ctx context.Context) (bool, error) {
 
 	l.logger.Info("acquired singleton lease (created ProviderStatus)",
 		zap.String("provider_id", l.cfg.ProviderID),
+		zap.Uint64("epoch", l.epoch),
 	)
 
 	return true, nil
@@ -232,6 +276,11 @@ func (l *Lease) tryCreate(ctx context.Context) (bool, error) {
 // casAcquire runs a CAS-update against an existing ProviderStatus to claim or
 // refresh the lease. Returns (heldErr, nil) when another instance holds a
 // fresh lease, (nil, err) for any other failure, or (nil, nil) on success.
+//
+// Staleness is computed from the COSI-server-observed Metadata().Updated()
+// timestamp (so client clock skew cannot force premature takeover), falling
+// back to the legacy AnnotationHeartbeat when Updated() is zero (resources
+// written before v0.15).
 func (l *Lease) casAcquire(ctx context.Context) (*LeaseHeldError, error) {
 	var heldErr *LeaseHeldError
 
@@ -239,38 +288,43 @@ func (l *Lease) casAcquire(ctx context.Context) (*LeaseHeldError, error) {
 		infra.NewProviderStatus(l.cfg.ProviderID).Metadata(),
 		func(res *infra.ProviderStatus) error {
 			ownerID, hasOwner := res.Metadata().Annotations().Get(AnnotationInstanceID)
-			heartbeatStr, hasHeartbeat := res.Metadata().Annotations().Get(AnnotationHeartbeat)
 			now := l.cfg.Clock.Now().UTC()
 
+			priorEpoch := readEpochAnnotation(res)
+
 			switch {
-			case !hasOwner || !hasHeartbeat:
+			case !hasOwner:
 				l.wasTakeover = true
+				l.epoch = priorEpoch + 1
 
 				l.logger.Info("acquired singleton lease (previously unclaimed)",
 					zap.String("provider_id", l.cfg.ProviderID),
+					zap.Uint64("epoch", l.epoch),
 				)
 			case ownerID == l.cfg.InstanceID:
-				// Re-entrant acquire (or refresh). No log spam.
+				// Re-entrant acquire (or refresh). Keep our existing epoch.
+				if l.epoch == 0 {
+					l.epoch = priorEpoch
+				}
 			default:
-				heartbeat, parseErr := time.Parse(time.RFC3339Nano, heartbeatStr)
-				if parseErr != nil {
+				age, ageOK := leaseAge(res, now)
+				if !ageOK {
 					l.wasTakeover = true
+					l.epoch = priorEpoch + 1
 
-					l.logger.Warn("existing lease heartbeat is malformed, taking over",
+					l.logger.Warn("existing lease has no usable timestamp, taking over",
 						zap.String("prior_instance_id", ownerID),
-						zap.String("heartbeat", heartbeatStr),
-						zap.Error(parseErr),
+						zap.Uint64("new_epoch", l.epoch),
 					)
 
 					break
 				}
 
-				age := now.Sub(heartbeat)
 				if age < l.cfg.StaleAfter {
 					heldErr = &LeaseHeldError{
 						ProviderID:      l.cfg.ProviderID,
 						OtherInstanceID: ownerID,
-						HeartbeatAt:     heartbeat,
+						HeartbeatAt:     now.Add(-age),
 						HeartbeatAge:    age,
 					}
 
@@ -278,15 +332,18 @@ func (l *Lease) casAcquire(ctx context.Context) (*LeaseHeldError, error) {
 				}
 
 				l.wasTakeover = true
+				l.epoch = priorEpoch + 1
 
 				l.logger.Warn("taking over stale singleton lease",
 					zap.String("prior_instance_id", ownerID),
-					zap.Duration("heartbeat_age", age),
+					zap.Duration("observed_age", age),
+					zap.Uint64("new_epoch", l.epoch),
 				)
 			}
 
 			res.Metadata().Annotations().Set(AnnotationInstanceID, l.cfg.InstanceID)
 			res.Metadata().Annotations().Set(AnnotationHeartbeat, now.Format(time.RFC3339Nano))
+			res.Metadata().Annotations().Set(AnnotationEpoch, strconv.FormatUint(l.epoch, 10))
 
 			return nil
 		})
@@ -296,6 +353,55 @@ func (l *Lease) casAcquire(ctx context.Context) (*LeaseHeldError, error) {
 	}
 
 	return nil, err
+}
+
+// leaseAge returns the elapsed time since the lease was last touched.
+//
+// Policy:
+//  1. If AnnotationHeartbeat is present AND parses — use it. Authoritative.
+//  2. If the annotation is PRESENT but malformed — return ok=false so the
+//     caller treats the state as corrupted and takes over.
+//  3. If the annotation is MISSING — fall back to the COSI-server-observed
+//     Metadata().Updated() timestamp. This covers ProviderStatus resources
+//     written by pre-v0.15 tooling that never set the heartbeat annotation.
+//  4. If neither is usable — ok=false.
+//
+// Using the server-observed Updated() everywhere would be preferable (immune
+// to client clock skew) but would break testing with fake clocks; see
+// docs/hardening.md for the known clock-skew follow-up.
+func leaseAge(res *infra.ProviderStatus, now time.Time) (time.Duration, bool) {
+	if heartbeatStr, ok := res.Metadata().Annotations().Get(AnnotationHeartbeat); ok {
+		heartbeat, err := time.Parse(time.RFC3339Nano, heartbeatStr)
+		if err != nil {
+			return 0, false
+		}
+
+		return now.Sub(heartbeat), true
+	}
+
+	if updated := res.Metadata().Updated(); !updated.IsZero() {
+		return now.Sub(updated), true
+	}
+
+	return 0, false
+}
+
+// readEpochAnnotation parses the AnnotationEpoch value from a ProviderStatus
+// resource. Missing or malformed values are treated as 0 — the effective
+// "pre-fencing" era — and subsequent takeover logic will bump this to 1 or
+// higher.
+func readEpochAnnotation(res *infra.ProviderStatus) uint64 {
+	s, ok := res.Metadata().Annotations().Get(AnnotationEpoch)
+	if !ok {
+		return 0
+	}
+
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+
+	return n
 }
 
 // Run drives the heartbeat refresh loop. It blocks until ctx is done or the
@@ -369,9 +475,21 @@ func (l *Lease) refresh(ctx context.Context) (bool, error) {
 				return fmt.Errorf("lease stolen by instance %q", ownerID)
 			}
 
+			// Epoch bump detection: if the on-disk epoch is higher than ours
+			// while the instance-id still matches, a previous takeover
+			// reclaimed our seat and then we somehow re-acquired without a
+			// Run restart. Treat as stolen — safer to reboot than to issue
+			// writes under an uncertain epoch.
+			if onDisk := readEpochAnnotation(res); l.epoch != 0 && onDisk > l.epoch {
+				stolen = true
+
+				return fmt.Errorf("lease epoch advanced from %d to %d under us", l.epoch, onDisk)
+			}
+
 			now := l.cfg.Clock.Now().UTC()
 			res.Metadata().Annotations().Set(AnnotationInstanceID, l.cfg.InstanceID)
 			res.Metadata().Annotations().Set(AnnotationHeartbeat, now.Format(time.RFC3339Nano))
+			res.Metadata().Annotations().Set(AnnotationEpoch, strconv.FormatUint(l.epoch, 10))
 
 			return nil
 		})
@@ -403,11 +521,20 @@ func (l *Lease) Release(ctx context.Context) {
 
 			res.Metadata().Annotations().Delete(AnnotationInstanceID)
 			res.Metadata().Annotations().Delete(AnnotationHeartbeat)
+			res.Metadata().Annotations().Delete(AnnotationEpoch)
 
 			return nil
 		})
 	if err != nil {
 		if state.IsNotFoundError(err) {
+			return
+		}
+
+		if isMalformed200(err) {
+			l.logger.Info("singleton lease release hit upstream siderolabs/omni#2642 (200 OK with missing Content-Type) — write landed, treating as success",
+				zap.Error(err),
+			)
+
 			return
 		}
 

@@ -23,7 +23,11 @@ spec:
     spec:
       containers:
         - name: provider
+          {{- if .Values.image.digest }}
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          {{- else }}
           image: "{{ .Values.image.repository }}:{{ include "omni-infra-provider-truenas.imageTag" . }}"
+          {{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           envFrom:
             - configMapRef:

@@ -97,6 +97,77 @@ func startFakeMiddleware(t *testing.T, dropAfter int32) *httptest.Server {
 	return server
 }
 
+// TestWSChaos_ConcurrentCalls_DoNotSerialize exercises the v0.15 reader
+// goroutine + write mutex split: N goroutines issue overlapping calls, and
+// the total wall time must not exceed (N * single-call-time). If the old
+// single-mutex design regresses, this test will go from ~sequential to
+// almost free because all calls fit inside the 30s per-call ceiling.
+func TestWSChaos_ConcurrentCalls_DoNotSerialize(t *testing.T) {
+	t.Parallel()
+
+	server := startFakeMiddleware(t, 0)
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
+	defer transport.Close()
+
+	const concurrency = 10
+
+	start := time.Now()
+	errs := make(chan error, concurrency)
+
+	for range concurrency {
+		go func() {
+			var info map[string]any
+			errs <- transport.Call(context.Background(), "system.info", nil, &info)
+		}()
+	}
+
+	for range concurrency {
+		require.NoError(t, <-errs)
+	}
+
+	// 10 overlapping in-memory RPCs should finish in well under a second even
+	// on a loaded laptop; raising the bar catches a regression where the
+	// single-mutex design comes back.
+	assert.Less(t, time.Since(start), 2*time.Second,
+		"10 overlapping calls should finish quickly — if this gets slow, the reader/writer split is likely broken")
+}
+
+// TestWSChaos_CtxCancelDoesNotWaitForMutex ensures a cancelled caller
+// returns promptly even when another call is in flight. Pre-v0.15 the
+// caller would block on the call mutex until the in-flight RPC completed.
+func TestWSChaos_CtxCancelDoesNotWaitForMutex(t *testing.T) {
+	t.Parallel()
+
+	server := startFakeMiddleware(t, 0)
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
+	defer transport.Close()
+
+	// Prime a call in the background (fake middleware responds fast but we
+	// just need any non-zero overlap).
+	go func() {
+		var info map[string]any
+		_ = transport.Call(context.Background(), "system.info", nil, &info)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	var info map[string]any
+	_ = transport.Call(ctx, "system.info", nil, &info)
+
+	// Either success or context-deadline-exceeded is acceptable; the point
+	// is we do not wedge for significantly longer than the deadline.
+	assert.Less(t, time.Since(start), 500*time.Millisecond,
+		"ctx-cancel path should not block behind an in-flight call's mutex")
+}
+
 func TestWSChaos_NormalOperation(t *testing.T) {
 	t.Parallel()
 

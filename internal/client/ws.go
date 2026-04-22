@@ -12,8 +12,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -131,16 +133,44 @@ func normalizeParams(params any) any {
 //   - Initial "connect" handshake required
 //   - Messages use "msg" field ("method", "result", "connected")
 //   - Method calls wrapped with "msg": "method"
+//
+// Concurrency model (v0.15+):
+//   - A single reader goroutine owns all reads from the websocket.Conn and
+//     demultiplexes responses to per-request channels keyed by request ID.
+//   - writeMu serializes writes (gorilla/websocket forbids concurrent writes).
+//   - connMu guards connection swap on reconnect; read-held for call path,
+//     write-held for reconnect.
+//
+// This replaces the earlier design where one big mutex wrapped both the
+// write and read, causing cascading timeouts when one slow call blocked
+// others, and leaving context cancellation unable to unblock waiters.
 type wsTransport struct {
-	conn               *websocket.Conn
+	connMu sync.RWMutex
+	conn   *websocket.Conn
+	authed bool
+
+	// writeSem is a 1-slot semaphore gating writes to conn (gorilla/websocket
+	// forbids concurrent writes). Implemented as a channel rather than a
+	// sync.Mutex so acquisition can honor ctx cancellation in a single
+	// select without spawning a goroutine per Call.
+	writeSem chan struct{}
+
+	// Pending-call registry. Keyed by request ID; each entry is a buffered
+	// (cap=1) channel that the reader goroutine sends the full response on.
+	pendingMu sync.Mutex
+	pending   map[string]chan *wsResponse
+
+	// Reader goroutine lifecycle. Re-initialized on every reconnect.
+	readerDone chan struct{}
+	readerErr  error // guarded by pendingMu
+
 	apiKey             SecretString
 	host               string
 	insecureSkipVerify bool
-	mu                 sync.Mutex
 	wg                 sync.WaitGroup
-	authed             bool
 	lastReconnect      time.Time    // Circuit breaker: minimum time between reconnect bursts
 	uploadClient       *http.Client // Reused for file uploads to benefit from connection pooling
+	closed             bool         // guarded by connMu (write side)
 }
 
 // TrueNAS WebSocket message types.
@@ -242,6 +272,8 @@ func newWSTransport(host string, apiKey SecretString, insecureSkipVerify bool) (
 		apiKey:             apiKey,
 		host:               host,
 		insecureSkipVerify: insecureSkipVerify,
+		pending:            make(map[string]chan *wsResponse),
+		writeSem:           make(chan struct{}, 1),
 		uploadClient: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
@@ -257,19 +289,103 @@ func newWSTransport(host string, apiKey SecretString, insecureSkipVerify bool) (
 		},
 	}
 
-	if err := t.connect(); err != nil {
+	// Handshake + auth use synchronous reads under deadline before the reader
+	// goroutine takes over. Once the reader is started, all reads go through
+	// the demultiplexer.
+	if err := t.handshakeAndAuth(); err != nil {
 		_ = conn.Close()
 
-		return nil, fmt.Errorf("connect handshake failed: %w", err)
+		return nil, err
+	}
+
+	t.startReader()
+
+	return t, nil
+}
+
+// handshakeAndAuth runs the initial DDP connect + auth.login_with_api_key
+// sequence on a freshly-dialed connection. Must be called before the reader
+// goroutine is started.
+func (t *wsTransport) handshakeAndAuth() error {
+	if err := t.connect(); err != nil {
+		return fmt.Errorf("connect handshake failed: %w", err)
 	}
 
 	if err := t.authenticate(); err != nil {
-		_ = conn.Close()
-
-		return nil, fmt.Errorf("authentication failed: %w", err)
+		return fmt.Errorf("authentication failed: %w", err)
 	}
 
-	return t, nil
+	return nil
+}
+
+// startReader launches the goroutine that owns all reads on the current
+// connection. Responses are demuxed to pending entries by request ID;
+// connection errors fail every in-flight caller and set readerErr. Must be
+// called after a successful handshake, with no prior reader running.
+func (t *wsTransport) startReader() {
+	t.readerDone = make(chan struct{})
+
+	go t.readLoop(t.conn, t.readerDone)
+}
+
+// readLoop is the reader goroutine. It exits when the connection returns an
+// error (typically: peer closed, Close() called, or network fault) and fails
+// all pending calls with that error. A new reader is started on reconnect.
+func (t *wsTransport) readLoop(conn *websocket.Conn, done chan struct{}) {
+	defer close(done)
+
+	for {
+		var resp wsResponse
+		if err := conn.ReadJSON(&resp); err != nil {
+			t.pendingMu.Lock()
+			t.readerErr = err
+
+			for id, ch := range t.pending {
+				// Non-blocking send: the cap-1 channel guarantees delivery
+				// unless a response was already delivered, in which case the
+				// waiter has already consumed it.
+				select {
+				case ch <- &wsResponse{ID: id, Error: &wsError{Error: -1, Reason: "connection lost: " + err.Error()}}:
+				default:
+				}
+			}
+
+			t.pendingMu.Unlock()
+
+			return
+		}
+
+		t.pendingMu.Lock()
+		ch, ok := t.pending[resp.ID]
+		t.pendingMu.Unlock()
+
+		if !ok {
+			// Orphan response (late arrival after ctx-cancel); drop silently.
+			continue
+		}
+
+		select {
+		case ch <- &resp:
+		default:
+			// Channel full means a duplicate response for this ID — drop.
+		}
+	}
+}
+
+// registerPending allocates a channel for a request ID and adds it to the
+// pending map. Returns the channel + a cleanup closure.
+func (t *wsTransport) registerPending(reqID string) (<-chan *wsResponse, func()) {
+	ch := make(chan *wsResponse, 1)
+
+	t.pendingMu.Lock()
+	t.pending[reqID] = ch
+	t.pendingMu.Unlock()
+
+	return ch, func() {
+		t.pendingMu.Lock()
+		delete(t.pending, reqID)
+		t.pendingMu.Unlock()
+	}
 }
 
 func (t *wsTransport) Name() string {
@@ -292,9 +408,14 @@ func (t *wsTransport) Close() error {
 	case <-time.After(closeTimeout):
 	}
 
+	t.connMu.Lock()
+	t.closed = true
+	conn := t.conn
+	t.connMu.Unlock()
+
 	// Drop unsent bytes immediately (SO_LINGER=0) on the underlying TCP socket
 	// so a dead peer doesn't block the Close call.
-	if underlying := t.conn.UnderlyingConn(); underlying != nil {
+	if underlying := conn.UnderlyingConn(); underlying != nil {
 		if tcpConn, ok := underlying.(*net.TCPConn); ok {
 			_ = tcpConn.SetLinger(0)
 		}
@@ -303,7 +424,7 @@ func (t *wsTransport) Close() error {
 	closeDone := make(chan error, 1)
 
 	go func() {
-		closeDone <- t.conn.Close()
+		closeDone <- conn.Close()
 	}()
 
 	select {
@@ -314,11 +435,19 @@ func (t *wsTransport) Close() error {
 	}
 }
 
-// reconnect closes the current connection and establishes a new one with exponential backoff.
-// Must be called with t.mu held.
+// reconnect closes the current connection, waits for the reader goroutine to
+// drain (failing all pending calls), and establishes a new connection with
+// exponential backoff. Takes connMu write lock for the duration so no caller
+// can observe a half-transition.
 func (t *wsTransport) reconnect() error {
+	t.connMu.Lock()
+	defer t.connMu.Unlock()
+
+	if t.closed {
+		return fmt.Errorf("transport is closed")
+	}
+
 	// Circuit breaker: prevent rapid reconnect cycling under persistent failures.
-	// If we reconnected recently, wait for the cooldown period first.
 	if sinceLastReconnect := time.Since(t.lastReconnect); sinceLastReconnect < reconnectCooldown {
 		wait := reconnectCooldown - sinceLastReconnect
 		time.Sleep(wait)
@@ -330,8 +459,16 @@ func (t *wsTransport) reconnect() error {
 		telemetry.WSReconnects.Add(context.Background(), 1)
 	}
 
-	_ = t.conn.Close()
+	// Close old conn. The reader goroutine will observe the error, fail all
+	// pending calls, and exit.
+	oldConn := t.conn
+	oldReaderDone := t.readerDone
+	_ = oldConn.Close()
 	t.authed = false
+
+	if oldReaderDone != nil {
+		<-oldReaderDone
+	}
 
 	var lastErr error
 	backoff := initialBackoff
@@ -354,21 +491,20 @@ func (t *wsTransport) reconnect() error {
 
 		t.conn = conn
 
-		if err := t.connect(); err != nil {
+		if err := t.handshakeAndAuth(); err != nil {
 			_ = t.conn.Close()
 			lastErr = err
 
 			continue
 		}
 
-		if err := t.authenticate(); err != nil {
-			_ = t.conn.Close()
-			lastErr = err
+		// Reset the reader error before starting a fresh reader so new calls
+		// don't inherit the previous connection's failure.
+		t.pendingMu.Lock()
+		t.readerErr = nil
+		t.pendingMu.Unlock()
 
-			continue
-		}
-
-		t.authed = true
+		t.startReader()
 
 		return nil
 	}
@@ -444,42 +580,41 @@ func (t *wsTransport) authenticate() error {
 	return nil
 }
 
-var wsRequestCounter int64
-var wsRequestMu sync.Mutex
+// wsRequestCounter is the monotonic source of JSON-RPC request IDs. Uses
+// atomic.Int64 instead of a mutex because each Call issues exactly one
+// increment — the mutex-plus-counter form was a net loss under the race
+// detector and a wash in production.
+var wsRequestCounter atomic.Int64
 
 func nextWSRequestID() string {
-	wsRequestMu.Lock()
-	defer wsRequestMu.Unlock()
-
-	wsRequestCounter++
-
-	return fmt.Sprintf("%d", wsRequestCounter)
+	return strconv.FormatInt(wsRequestCounter.Add(1), 10)
 }
 
-// Call sends a method call over the WebSocket and reads the response.
+// Call sends a method call over the WebSocket and awaits the response.
 // On connection failure, attempts to reconnect and retry once.
+//
+// Unlike the pre-v0.15 implementation, this Call blocks only on its own
+// pending channel + its own ctx — it does NOT serialize behind a call-global
+// mutex, so a slow call on one goroutine can't stall unrelated calls on
+// other goroutines, and ctx cancellation unblocks the waiter immediately.
 func (t *wsTransport) Call(ctx context.Context, method string, params any, result any) error {
 	t.wg.Add(1)
 	defer t.wg.Done()
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if !t.authed {
-		if err := t.reconnect(); err != nil {
-			return fmt.Errorf("not authenticated and reconnect failed: %w", err)
-		}
-	}
-
+	// Fast-path: try once, reconnect + retry on connection errors.
 	err := t.doCall(ctx, method, params, result)
 	if err == nil {
 		return nil
 	}
 
-	// If the call failed due to a connection issue, try to reconnect and retry once.
-	// API errors (from TrueNAS) are not retryable.
+	// API errors (from TrueNAS middleware) are not retryable.
 	var apiErr *APIError
 	if isAPIError(err, &apiErr) {
+		return err
+	}
+
+	// ctx cancellations are not retryable either.
+	if ctx.Err() != nil {
 		return err
 	}
 
@@ -493,9 +628,14 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 	return t.doCall(ctx, method, params, result)
 }
 
-// doCall performs a single WebSocket call without reconnect logic.
+// doCall performs a single WebSocket call against the currently-held
+// connection without reconnect logic. Writes are serialized by writeMu;
+// reads are demultiplexed by the reader goroutine.
 func (t *wsTransport) doCall(ctx context.Context, method string, params any, result any) error {
 	reqID := nextWSRequestID()
+
+	respCh, cleanup := t.registerPending(reqID)
+	defer cleanup()
 
 	req := wsRequest{
 		Msg:    "method",
@@ -504,30 +644,80 @@ func (t *wsTransport) doCall(ctx context.Context, method string, params any, res
 		Params: normalizeParams(params),
 	}
 
-	deadline := time.Now().Add(30 * time.Second)
-	if d, ok := ctx.Deadline(); ok {
-		deadline = d
+	if err := t.writeRequest(ctx, req); err != nil {
+		return err
 	}
 
-	t.conn.SetWriteDeadline(deadline) //nolint:errcheck
-	t.conn.SetReadDeadline(deadline)  //nolint:errcheck
+	// Default deadline mirrors the legacy behavior so callers without a ctx
+	// deadline still get a 30s ceiling instead of hanging indefinitely.
+	var timeoutCh <-chan time.Time
+	if _, ok := ctx.Deadline(); !ok {
+		timer := time.NewTimer(30 * time.Second)
+		defer timer.Stop()
+		timeoutCh = timer.C
+	}
 
-	if err := t.conn.WriteJSON(req); err != nil {
+	// Snapshot the current reader's done channel. If reconnect happens while
+	// we're waiting, the snapshot closes and we return promptly (with the
+	// reader error) so the caller can retry against the new connection.
+	t.connMu.RLock()
+	readerDone := t.readerDone
+	t.connMu.RUnlock()
+
+	select {
+	case resp := <-respCh:
+		return t.handleResponse(resp, result)
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timeoutCh:
+		return fmt.Errorf("call %q timed out after 30s", method)
+	case <-readerDone:
+		t.pendingMu.Lock()
+		readerErr := t.readerErr
+		t.pendingMu.Unlock()
+
+		if readerErr != nil {
+			return fmt.Errorf("connection lost during call: %w", readerErr)
+		}
+
+		return fmt.Errorf("connection lost during call")
+	}
+}
+
+// writeRequest serializes a JSON-RPC request onto the current connection
+// using a 1-slot semaphore (writeSem). Acquisition honors ctx cancellation
+// via a single select — no goroutine spawned, no heap allocation for the
+// common uncontended path. Release is a single channel receive.
+func (t *wsTransport) writeRequest(ctx context.Context, req wsRequest) error {
+	select {
+	case t.writeSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	defer func() { <-t.writeSem }()
+
+	t.connMu.RLock()
+	conn := t.conn
+	authed := t.authed
+	t.connMu.RUnlock()
+
+	if !authed {
+		return fmt.Errorf("not authenticated")
+	}
+
+	writeDeadline := time.Now().Add(30 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(writeDeadline) {
+		writeDeadline = d
+	}
+
+	_ = conn.SetWriteDeadline(writeDeadline)
+
+	if err := conn.WriteJSON(req); err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 
-	for {
-		var resp wsResponse
-		if err := t.conn.ReadJSON(&resp); err != nil {
-			return fmt.Errorf("failed to read response: %w", err)
-		}
-
-		if resp.ID != reqID {
-			continue
-		}
-
-		return t.handleResponse(&resp, result)
-	}
+	return nil
 }
 
 func (t *wsTransport) handleResponse(resp *wsResponse, result any) error {

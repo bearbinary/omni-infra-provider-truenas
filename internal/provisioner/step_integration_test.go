@@ -170,7 +170,7 @@ func TestDeprovision_CleanupOrchestration(t *testing.T) {
 		case "vm.stop":
 			return true, nil
 		case "vm.query":
-			return client.VM{ID: 42, Description: omniVMDescriptionPrefix + " (test)", Status: client.VMStatus{State: "STOPPED"}}, nil
+			return managedVM(42, "STOPPED"), nil
 		case "vm.delete":
 			return true, nil
 		case "pool.dataset.query":
