@@ -68,8 +68,17 @@ func TestStopVM_Force(t *testing.T) {
 }
 
 func TestDeleteVM_Success(t *testing.T) {
-	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
+	c := newMockClient(t, func(method string, params json.RawMessage) (any, *jsonRPCError) {
 		assert.Equal(t, "vm.delete", method)
+
+		// Pin the exact param shape TrueNAS 25.10 accepts. A prior version
+		// shipped {"force":true, "force_after_timeout":true} and was rejected
+		// with EINVAL "Extra inputs are not permitted", stopping every VM it
+		// tried to delete without ever completing the delete.
+		var payload []json.RawMessage
+		require.NoError(t, json.Unmarshal(params, &payload))
+		require.Len(t, payload, 2, "vm.delete expects [id, opts]")
+		assert.JSONEq(t, `{"force":true}`, string(payload[1]))
 
 		return true, nil
 	})

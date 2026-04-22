@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.15.2] — Emergency: drop invalid `force_after_timeout` from `vm.delete`
+
+### Fixes
+- **Remove invalid `force_after_timeout: true` from `DeleteVM` options** — v0.15.1 passed `{force: true, force_after_timeout: true}` to `vm.delete`, but TrueNAS 25.10 rejects the second option: `truenas api error (code 11): [EINVAL] options.force_after_timeout: Extra inputs are not permitted`. That option exists on `vm.stop`, not `vm.delete`. Live impact: on every Deprovision retry the provider first `StopVM`'d the target (graceful ACPI, succeeded), then `DeleteVM` failed at the schema check. VMs ended up **stopped but not deleted**, the SDK held the finalizer, and the loop replayed every 15s — causing `truenas_shutdown_graceful_total` to climb 195× in 3h and leaving previously-running cluster members powered off. `DeleteVM` now passes only `{force: true}`. `TestDeleteVM_Success` pins the exact param shape to block this regression returning.
+
 ## [v0.15.1] — Post-release stuck-teardown fixes from Grafana audit + CI protoc pin
 
 ### Fixes
@@ -478,6 +483,7 @@ helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.15.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.2
 [v0.15.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.1
 [v0.15.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.0
 [v0.14.7]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.7
