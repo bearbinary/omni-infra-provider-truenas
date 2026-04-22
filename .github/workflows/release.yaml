@@ -102,6 +102,14 @@ jobs:
       - name: Refetch annotated tag object
         run: git fetch origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}" --force
 
+      # SSH-signed tags require an allowed-signers file so git can map a
+      # signature back to a trusted identity. The file is committed to the
+      # repo at .github/allowed_signers and point git at it here. Rotate
+      # entries by PR if a maintainer's signing key changes.
+      - name: Configure SSH allowed signers
+        run: |
+          git config gpg.ssh.allowedSignersFile "${GITHUB_WORKSPACE}/.github/allowed_signers"
+
       # Require tags to be GPG/SSH signed. Without this, anyone with push
       # access to a tag namespace can publish a "v*" release through this
       # workflow. Enable required_signatures on the repo ruleset AND the
