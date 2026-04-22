@@ -193,7 +193,7 @@ jobs:
       # broken image never reaches users. BuildKit cache (type=gha) makes
       # the second multi-arch build a near-no-op for the native-arch layer.
       - name: Build image locally for smoke test
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           load: true
@@ -267,7 +267,7 @@ jobs:
       # Only reached if the smoke test + invariant checks passed. Multi-arch build pushed to GHCR.
       - name: Build and push Docker image
         id: docker-push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           push: true
