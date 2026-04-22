@@ -33,6 +33,7 @@ func isOmniManagedVM(vm *client.VM) bool {
 	return strings.HasPrefix(vm.Description, omniVMDescriptionPrefix)
 }
 
+
 // verifyZvolOwnership reads the ownership ZFS user properties from a zvol and
 // returns nil iff the zvol is tagged as Omni-managed and (when requestID is
 // non-empty) its recorded request-id matches. Used by the deprovision path to

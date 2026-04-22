@@ -205,8 +205,8 @@ func TestCleanupOrphanVMs_DeletesOrphans(t *testing.T) {
 		switch method {
 		case "vm.query":
 			return []client.VM{
-				{ID: 1, Name: "omni_active_vm"},
-				{ID: 2, Name: "omni_orphan_vm"},
+				{ID: 1, Name: "omni_active_vm", Description: "Managed by Omni infra provider (request-id: active-vm)"},
+				{ID: 2, Name: "omni_orphan_vm", Description: "Managed by Omni infra provider (request-id: orphan-vm)"},
 				{ID: 3, Name: "not_omni_vm"},
 			}, nil
 		case "vm.stop":
@@ -271,7 +271,7 @@ func TestCleanupOrphanVMs_StopFails_StillDeletes(t *testing.T) {
 	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
 		switch method {
 		case "vm.query":
-			return []client.VM{{ID: 1, Name: "omni_orphan"}}, nil
+			return []client.VM{{ID: 1, Name: "omni_orphan", Description: "Managed by Omni infra provider (request-id: orphan)"}}, nil
 		case "vm.stop":
 			return nil, &client.APIError{Code: 99, Message: "stop failed"}
 		case "vm.delete":
@@ -445,7 +445,7 @@ func TestCleanupOrphanVMs_CrashAfterZvolDelete_CleansUpVM(t *testing.T) {
 	cl := testCleaner(func(method string, _ json.RawMessage) (any, error) {
 		switch method {
 		case "vm.query":
-			return []client.VM{{ID: 42, Name: "omni_crashed_provision"}}, nil
+			return []client.VM{{ID: 42, Name: "omni_crashed_provision", Description: "Managed by Omni infra provider (request-id: crashed-provision)"}}, nil
 		case "vm.stop":
 			return nil, nil
 		case "vm.delete":
@@ -611,11 +611,13 @@ func TestRunOnce_MixedScenario_CorrectCleanup(t *testing.T) {
 			}, nil
 		case "vm.query":
 			return []client.VM{
-				{ID: 1, Name: "omni_active_cp"},
-				{ID: 2, Name: "omni_active_worker"},
-				{ID: 3, Name: "omni_orphan_vm"},   // No zvol → orphan
-				{ID: 4, Name: "plex_server"},      // Not omni_ → ignore
-				{ID: 5, Name: "omni_deep_active"}, // Has zvol at deep path → keep
+				// Descriptions follow omniVMDescription format; cleanup reads
+				// request-id from description (not from name) post-v0.15.3.
+				{ID: 1, Name: "omni_active_cp", Description: "Managed by Omni infra provider (request-id: active-cp)"},
+				{ID: 2, Name: "omni_active_worker", Description: "Managed by Omni infra provider (request-id: active-worker)"},
+				{ID: 3, Name: "omni_orphan_vm", Description: "Managed by Omni infra provider (request-id: orphan-vm)"}, // No zvol → orphan
+				{ID: 4, Name: "plex_server"}, // Not omni_ → ignore
+				{ID: 5, Name: "omni_deep_active", Description: "Managed by Omni infra provider (request-id: deep-active)"}, // Has zvol → keep
 			}, nil
 		case "vm.stop":
 			return nil, nil

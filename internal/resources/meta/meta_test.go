@@ -117,6 +117,57 @@ func TestBuildVMName_EdgeCases(t *testing.T) {
 	}
 }
 
+func TestParseRequestIDFromDescription(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		desc string
+		want string
+	}{
+		{
+			name: "canonical v0.15+ description",
+			desc: "Managed by Omni infra provider (request-id: talos-preview-control-planes-abc123)",
+			want: "talos-preview-control-planes-abc123",
+		},
+		{
+			name: "legacy v0.14 description (no request-id suffix)",
+			desc: "Managed by Omni infra provider",
+			want: "",
+		},
+		{
+			name: "empty",
+			desc: "",
+			want: "",
+		},
+		{
+			name: "description without marker",
+			desc: "some unrelated description",
+			want: "",
+		},
+		{
+			name: "marker present but unclosed",
+			desc: "Managed by Omni infra provider (request-id: broken",
+			want: "",
+		},
+		{
+			name: "request-id contains numbers and dashes",
+			desc: "Managed by Omni infra provider (request-id: 019db6a1-8974-7bd9-a689-509a79254f09)",
+			want: "019db6a1-8974-7bd9-a689-509a79254f09",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := ParseRequestIDFromDescription(tc.desc); got != tc.want {
+				t.Errorf("ParseRequestIDFromDescription(%q) = %q, want %q", tc.desc, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsOmniVMName(t *testing.T) {
 	t.Parallel()
 

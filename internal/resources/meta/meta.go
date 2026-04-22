@@ -51,3 +51,35 @@ func BuildVMName(providerID, requestID string) string {
 func IsOmniVMName(name string) bool {
 	return strings.HasPrefix(name, "omni_")
 }
+
+// ParseRequestIDFromDescription extracts the request-id suffix embedded in
+// an Omni-managed VM description (the provider writes "Managed by Omni infra
+// provider (request-id: <id>)"). Returns "" when the suffix is absent — e.g.,
+// for legacy v0.14 VMs whose description was the bare prefix with no
+// request-id suffix. Callers MUST treat an empty return as "unknown," not
+// "no request id," and either skip the VM or fall back to another identifier.
+//
+// This is the authoritative path for reading the request-id back off a
+// running VM. Deriving the request-id from the VM name
+// (`strings.ReplaceAll(strings.TrimPrefix(name, "omni_"), "_", "-")`) silently
+// miscomputes it on v0.15+ VMs because it leaves the `<providerID>_` segment
+// in place — that was the root cause of cleanupOrphanVMs deleting
+// freshly-provisioned VMs after the v0.15.0 VM-name namespacing change,
+// fixed in v0.15.3.
+func ParseRequestIDFromDescription(description string) string {
+	const marker = "(request-id: "
+
+	i := strings.Index(description, marker)
+	if i < 0 {
+		return ""
+	}
+
+	rest := description[i+len(marker):]
+
+	j := strings.IndexByte(rest, ')')
+	if j < 0 {
+		return ""
+	}
+
+	return rest[:j]
+}

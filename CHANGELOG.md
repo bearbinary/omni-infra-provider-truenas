@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.15.3] — Stop orphan cleanup from deleting freshly-created v0.15+ VMs
+
+### Fixes (Critical)
+- **`cleanupOrphanVMs` now reads the request-id from the VM description instead of name-deriving it** — The hourly orphan sweep was deleting healthy, newly-provisioned VMs because v0.15.0 changed the VM name format from `omni_<requestID>` to `omni_<providerID>_<requestID>` but the cleanup code still derived the expected request-id as `strings.ReplaceAll(strings.TrimPrefix(name, "omni_"), "_", "-")`. That produced `truenas-talos-preview-control-planes-abc` for a VM whose zvol was tagged `org.omni:request-id=talos-preview-control-planes-abc` — no match → flagged as orphan → stopped + deleted. Live impact: every v0.15+ cluster member was destroyed within an hour of provision finishing, log-visible as `created VM → VM started → removing orphan VM (backing zvol not found)` on the same VM ID. Fixed by parsing the request-id out of the VM description (`"Managed by Omni infra provider (request-id: X)"`) via new `meta.ParseRequestIDFromDescription` — the description is the canonical store and is not affected by the name namespacing change. VMs without a parseable request-id are now skipped (legacy v0.14 look-alikes are safer as manual-cleanup than as accidental-delete). `TestParseRequestIDFromDescription` pins six parsing cases; existing `TestCleanupOrphanVMs_*` tests updated with description-bearing mocks. `TestIntegration_OrphanVMCleanup` skipped under replay until its cassette is re-recorded against a live TrueNAS.
+
 ## [v0.15.2] — Emergency: drop invalid `force_after_timeout` from `vm.delete`
 
 ### Fixes
@@ -483,6 +488,7 @@ helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.15.3]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.3
 [v0.15.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.2
 [v0.15.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.1
 [v0.15.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.0

@@ -194,13 +194,33 @@ func (cl *Cleaner) cleanupOrphanVMs(ctx context.Context, managedZvols []client.M
 	}
 
 	for _, vm := range vms {
-		if !strings.HasPrefix(vm.Name, "omni_") {
+		if !meta.IsOmniVMName(vm.Name) {
 			continue
 		}
 
-		// Derive the request ID from the VM name.
-		// VM name: "omni_talos_xxx_yyy" → request ID: "talos-xxx-yyy"
-		requestID := strings.ReplaceAll(strings.TrimPrefix(vm.Name, "omni_"), "_", "-")
+		// Authoritative source for request-id is the VM description written
+		// at create time by `omniVMDescription`. Name-based derivation (which
+		// this code used pre-v0.15.3) silently miscomputes the id on v0.15+
+		// VMs because it leaves the `<providerID>_` namespacing segment in
+		// place — e.g., `omni_truenas_talos_preview_cp_abc` was derived as
+		// `truenas-talos-preview-cp-abc` which never matched any real zvol's
+		// `org.omni:request-id`, so EVERY v0.15+ VM was mis-flagged as an
+		// orphan and deleted on the next cleanup cycle. Observed in prod
+		// post-v0.15.0: 7+ freshly-created cluster members killed by the
+		// orphan sweep minutes after provision finished.
+		requestID := meta.ParseRequestIDFromDescription(vm.Description)
+		if requestID == "" {
+			// Either a legacy v0.14 VM whose description was the bare prefix
+			// with no `(request-id: …)` suffix, or a look-alike that happens
+			// to start with `omni_` but isn't ours. Neither is safe to delete
+			// from this path — skip and leave for manual operator cleanup.
+			cl.logger.Debug("skipping VM without request-id in description",
+				zap.String("name", vm.Name),
+				zap.Int("id", vm.ID),
+			)
+
+			continue
+		}
 
 		// Check if a backing zvol with this request ID still exists.
 		if managedRequestIDs[requestID] {
