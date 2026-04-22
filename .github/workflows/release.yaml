@@ -314,7 +314,11 @@ jobs:
 
           for platform in linux/amd64 linux/arm64; do
             echo "--- smoke test ${platform}"
-            OUTPUT=$(docker run --rm --platform "${platform}" "${IMAGE}" --version 2>&1)
+            # Pre-pull silently so 'docker run' stderr doesn't get mixed into
+            # the --version output on a cache miss. Compare ONLY the binary's
+            # stdout — stderr from Docker progress is irrelevant to the check.
+            docker pull --quiet --platform "${platform}" "${IMAGE}" >/dev/null
+            OUTPUT=$(docker run --rm --platform "${platform}" "${IMAGE}" --version)
             if [ "${OUTPUT}" != "${EXPECTED}" ]; then
               echo "::error::Multi-arch smoke test failed on ${platform}: expected ${EXPECTED}, got ${OUTPUT}"
               exit 1
