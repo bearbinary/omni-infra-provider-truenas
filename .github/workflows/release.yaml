@@ -88,6 +88,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          # actions/checkout does not fetch tag *objects* by default even at
+          # fetch-depth: 0 — only refs/heads. `git tag --verify` then fails
+          # with "cannot verify a non-tag object of type commit" because the
+          # annotated tag object isn't in the local clone.
+          fetch-tags: true
 
       # Require tags to be GPG/SSH signed. Without this, anyone with push
       # access to a tag namespace can publish a "v*" release through this
