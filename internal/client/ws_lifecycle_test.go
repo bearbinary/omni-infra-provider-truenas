@@ -366,7 +366,10 @@ func TestWS_ConcurrentCallRaceStress(t *testing.T) {
 		transport.pendingMu.Unlock()
 
 		assert.Equal(t, 0, remaining, "pending map leaked after stress; expected 0")
-	case <-time.After(20 * time.Second):
+	case <-time.After(90 * time.Second):
+		// Loaded CI runners under -race can legitimately take >20s to drain
+		// 160 Call() invocations with mixed 5ms/200ms deadlines. The deadlock
+		// signal we care about is "never finishes," not "finishes slowly."
 		t.Fatal("stress test deadlocked — reader/writer split has a regression")
 	}
 }
