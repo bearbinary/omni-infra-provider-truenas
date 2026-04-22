@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.15.1] — Post-release stuck-teardown fixes from Grafana audit + CI protoc pin
+
+### Fixes
+- **`recordProvisionError` no longer treats the SDK's `RequeueError` as a failure** — v0.15.0 changed `recordProvisionError` to log every provision step error at Error level and bump `truenas_provision_errors_total`. That applied to `*controller.RequeueError` too, whose `Error()` string is just `"requeue in <duration>"` — a benign retry signal, not a failure. Live evidence from bearbinary.grafana.net after the v0.15.0 rollout showed 9 MachineRequests each producing a storm of Error-level "provision error" log lines with `error_category="unknown"` that were actually normal step waits, drowning out real failures and polluting the errors counter. Fixed in `internal/provisioner/steps.go`: if the error is a `RequeueError`, unwrap via `.Err()`; log + count only when the inner error is non-nil, otherwise return silently. `TestRecordProvisionError_RequeueUnwrap` pins the three cases (pure requeue, requeue wrapping a real error, non-requeue pass-through).
+- **`client.IsNotFound` now recognises TrueNAS's `MatchNotFound()` response** — `vm.query`, `pool.dataset.query`, `disk.query` and the other `query` methods return `{code: 22, message: "MatchNotFound()"}` (NOT code 2 / ENOENT) when called with `{"get": true}` and the filter matches zero rows. `IsNotFound` only matched code 2, so the v0.15.0 ownership check in `cleanupVM` propagated `failed to read VM N for ownership check: MatchNotFound()` on every Deprovision call for a VM already deleted externally — the SDK then requeued the teardown forever, holding the finalizer and leaving Machines stuck in `tearing down`. Production impact observed post-v0.15.0 rollout: 7 machines from the talos-preview teardown cycle wedged with destroy-never-completed because their VM IDs had been removed on TrueNAS out-of-band. Fixed in `internal/client/truenas.go`: `IsNotFound` now also accepts code 22 when the message contains `MatchNotFound`. Keeps a genuine EINVAL (code 22 with any other message) as a real error. `TestIsNotFound` extended with both cases.
+- **`DeleteVM` passes `{force: true, force_after_timeout: true}`** — `vm.delete` with no options internally stops the VM first and refuses with `EFAULT VM state is currently not 'RUNNING / SUSPENDED'` if the VM is in a transitional state (STOPPING, LOCKED, STARTING, …). That was the exact path orphan cleanup ran into during the stuck-teardown aftermath, producing `failed to delete orphan VM (id=638): truenas api error (code 14)` and making orphan cleanup pointless for the VMs it was most needed for. Forcing the delete skips the precondition, which is the correct behavior for a provider that owns the VMs and is tearing them down.
+
+### CI
+- **Correct the pinned SHA256 for `protoc-27.1-linux-x86_64.zip` in `.github/workflows/ci.yaml`** — v0.15.0 shipped with `6125d83c…`, which doesn't match the artifact published on the `v27.1` release (the correct SHA is `8970e3d8…`). Every post-v0.15.0 CI `make generate` job failed at the `sha256sum -c -` gate before it ever invoked protoc. Verified by downloading the actual artifact and confirming it's a real 9.4 MB Linux x86_64 `bin/protoc` + the standard `include/` tree.
+
 ## [v0.15.0] — Security hardening pass + observability corrections (validation, transport, secrets, ownership, extensions, TOFU ISO, fencing, WS mutex split, CI SHA-pinning, histogram buckets, singleton malformed-200 workaround)
 
 ### Observability
@@ -468,7 +478,7 @@ helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
-[v0.15.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.0
+[v0.15.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.1
 [v0.15.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.0
 [v0.14.7]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.7
 [v0.14.6]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.14.6

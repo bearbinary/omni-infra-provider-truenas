@@ -107,7 +107,12 @@ jobs:
       - name: Install pinned protoc and protoc-gen-go
         run: |
           curl -sSfL https://github.com/protocolbuffers/protobuf/releases/download/v27.1/protoc-27.1-linux-x86_64.zip -o /tmp/protoc.zip
-          echo "6125d83cb2f3cec13b9fc1d8619f70dc99e59ca98fdaedbe0f5c93a2357a90e4  /tmp/protoc.zip" | sha256sum -c -
+          # SHA256 of protoc-27.1-linux-x86_64.zip from
+          # https://github.com/protocolbuffers/protobuf/releases/tag/v27.1
+          # Pin mutation = a "refresh the sha256 and continue" signal, not a
+          # free pass — rotate only when the release on GitHub is verified
+          # still authored by the protobuf maintainers.
+          echo "8970e3d8bbd67d53768fe8c2e3971bdd71e51cfe2001ca06dacad17258a7dae3  /tmp/protoc.zip" | sha256sum -c -
           unzip -qo /tmp/protoc.zip -d /tmp/protoc
           sudo mv /tmp/protoc/bin/protoc /usr/local/bin/
           sudo cp -r /tmp/protoc/include /usr/local/

@@ -2,10 +2,15 @@ package provisioner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/cosi-project/runtime/pkg/controller"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestRecordProvisionError_Categories(t *testing.T) {
@@ -46,4 +51,56 @@ func TestRecordProvisionError_NilError(t *testing.T) {
 	t.Parallel()
 	// Should not panic
 	recordProvisionError(context.Background(), nil, nil)
+}
+
+// TestRecordProvisionError_RequeueUnwrap verifies that RequeueError is handled
+// correctly. Without unwrapping, every step-wait signal would land as an
+// Error-level log line with error_category=unknown and bump the
+// truenas_provision_errors_total counter — a regression introduced in the
+// initial v0.15.0 recordProvisionError change and fixed in v0.15.1.
+func TestRecordProvisionError_RequeueUnwrap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		err      error
+		wantLogs int    // number of error-level log lines expected
+		wantMsg  string // substring that must appear in the one log line, when wantLogs==1
+	}{
+		{
+			name:     "pure requeue with nil inner",
+			err:      controller.NewRequeueError(nil, 15*time.Second),
+			wantLogs: 0,
+		},
+		{
+			name:     "requeue wrapping a real error",
+			err:      controller.NewRequeueError(errors.New("pool \"tank\" not found"), 15*time.Second),
+			wantLogs: 1,
+			wantMsg:  `pool "tank" not found`,
+		},
+		{
+			name:     "non-requeue error passes through",
+			err:      errors.New("failed to delete VM 42"),
+			wantLogs: 1,
+			wantMsg:  "failed to delete VM 42",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			core, sink := observer.New(zap.ErrorLevel)
+			logger := zap.New(core)
+
+			recordProvisionError(context.Background(), logger, tc.err)
+
+			entries := sink.FilterMessage("provision error").All()
+			assert.Len(t, entries, tc.wantLogs)
+
+			if tc.wantLogs == 1 {
+				assert.Contains(t, entries[0].ContextMap()["error"], tc.wantMsg)
+			}
+		})
+	}
 }

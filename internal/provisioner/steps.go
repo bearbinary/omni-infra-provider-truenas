@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cosi-project/runtime/pkg/controller"
 	"github.com/google/uuid"
 	"github.com/siderolabs/omni/client/pkg/constants"
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
@@ -889,9 +891,30 @@ func recordStepDuration(ctx context.Context, step string, start time.Time) {
 }
 
 // recordProvisionError categorizes, logs, and records a provision error.
+//
+// Unwraps cosi-runtime's *controller.RequeueError: its outer Error() string is
+// just "requeue in <duration>" — a benign retry signal, not a failure — while
+// any real underlying error lives in Err(). Prior versions treated the whole
+// RequeueError as fatal, spamming Error-level logs and the
+// truenas_provision_errors_total counter on every normal step-wait.
+//
+//   - RequeueError with nil Err(): pure backoff, skip log and counter entirely
+//   - RequeueError wrapping a real error: log and count the inner error
+//   - anything else: log and count as before
 func recordProvisionError(ctx context.Context, logger *zap.Logger, err error) {
 	if err == nil {
 		return
+	}
+
+	var requeueErr *controller.RequeueError
+	if errors.As(err, &requeueErr) {
+		inner := requeueErr.Err()
+		if inner == nil {
+			// Benign retry signal with no underlying failure — nothing to report.
+			return
+		}
+
+		err = inner
 	}
 
 	category := categorizeError(err)

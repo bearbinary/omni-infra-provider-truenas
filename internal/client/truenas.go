@@ -148,11 +148,12 @@ func (e *APIError) Error() string {
 
 // Common TrueNAS middleware error codes.
 const (
-	ErrCodeNotFound = 2  // ENOENT — resource does not exist
-	ErrCodeExists   = 17 // EEXIST — resource already exists
-	ErrCodeInvalid  = 11 // EINVAL — invalid argument (also used for "already exists" in some contexts)
-	ErrCodeDenied   = 13 // EACCES — permission denied
-	ErrCodeNoSpace  = 28 // ENOSPC — no space left on device
+	ErrCodeNotFound      = 2  // ENOENT — resource does not exist
+	ErrCodeInvalid       = 11 // EINVAL — invalid argument (also used for "already exists" in some contexts)
+	ErrCodeDenied        = 13 // EACCES — permission denied
+	ErrCodeExists        = 17 // EEXIST — resource already exists
+	ErrCodeNoSpace       = 28 // ENOSPC — no space left on device
+	ErrCodeMatchNotFound = 22 // EINVAL repurposed — `query` with `{"get": true}` found zero rows (TrueNAS `MatchNotFound()`)
 )
 
 // UserFriendlyError returns a human-readable error message for common TrueNAS errors.
@@ -198,10 +199,27 @@ func UserFriendlyError(err error) string {
 }
 
 // IsNotFound returns true if the error indicates the resource was not found.
+//
+// Catches both:
+//   - code 2 (ENOENT): the classic "not found" from direct lookup endpoints.
+//   - code 22 with "MatchNotFound": TrueNAS `query` methods with `{"get": true}`
+//     return code 22 when the filter matches zero rows. Observed on
+//     `vm.query`, `pool.dataset.query`, `disk.query` and others — the
+//     middleware reuses EINVAL (22) for "no match" rather than ENOENT, so a
+//     strict `Code == 2` check leaves Deprovision (and other cleanup paths)
+//     stuck forever when the VM was already deleted externally.
 func IsNotFound(err error) bool {
 	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.Code == ErrCodeNotFound
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+
+	if apiErr.Code == ErrCodeNotFound {
+		return true
+	}
+
+	if apiErr.Code == ErrCodeMatchNotFound && strings.Contains(apiErr.Message, "MatchNotFound") {
+		return true
 	}
 
 	return false

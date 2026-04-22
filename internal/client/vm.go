@@ -129,8 +129,20 @@ func (c *Client) StopVM(ctx context.Context, id int, force bool) error {
 
 // DeleteVM deletes a VM by ID.
 // JSON-RPC method: vm.delete
+//
+// Passes {force: true, force_after_timeout: true} so the call succeeds for
+// VMs in any lifecycle state. Without force, TrueNAS's `vm.delete` internally
+// tries to stop the VM first and refuses with EFAULT "VM state is currently
+// not 'RUNNING / SUSPENDED'" if it's in a transitional state (STOPPING,
+// LOCKED, etc.) — which is exactly when orphan cleanup tries to remove it.
+// Observed in production v0.15.0 logs as `failed to delete orphan VM`.
 func (c *Client) DeleteVM(ctx context.Context, id int) error {
-	if err := c.call(ctx, methodVMDelete, []any{id}, nil); err != nil {
+	opts := map[string]any{
+		"force":               true,
+		"force_after_timeout": true,
+	}
+
+	if err := c.call(ctx, methodVMDelete, []any{id, opts}, nil); err != nil {
 		if IsNotFound(err) {
 			return nil // already gone
 		}
