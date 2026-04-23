@@ -39,9 +39,9 @@ func TestRecordProvisionError_Categories(t *testing.T) {
 		// "invalid MachineClass config: %w" must NOT route to nic_invalid even
 		// when the inner message mentions additional_nics. Regression guard
 		// against "operator typo pages the same alert as hypervisor regression".
-		{"config_invalid CIDR typo", `invalid MachineClass config: additional_nics[0].addresses[0]: "10.20.0.5" is not a valid CIDR`, "config_invalid"},
-		{"config_invalid gateway typo", `invalid MachineClass config: additional_nics[0].gateway: "not-an-ip" is not a valid IP address`, "config_invalid"},
 		{"config_invalid disk size", `invalid MachineClass config: disk_size must be >= 20 GiB`, "config_invalid"},
+		{"config_invalid too many NICs", `invalid MachineClass config: additional_nics: at most 16 NICs supported (got 17)`, "config_invalid"},
+		{"config_invalid duplicate NIC", `invalid MachineClass config: additional_nics[1]: duplicate network_interface "br200" — each NIC must use a different interface`, "config_invalid"},
 		// `config_patch` — CreateConfigPatch failures across all five patch
 		// kinds. Without this, they fall to "unknown" and on-call can't
 		// attribute which patch broke.

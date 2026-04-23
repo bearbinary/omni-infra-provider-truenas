@@ -412,41 +412,26 @@ func TestLonghornVolumeName_MatchesMountPath(t *testing.T) {
 // emitting a per-NIC deviceSelector patch that carries dhcp, addresses,
 // and an optional default-route gateway.
 
-func TestResolveNICDHCP_NilDefaultsToTrueWhenNoAddresses(t *testing.T) {
+func TestResolveNICDHCP_NilDefaultsToTrue(t *testing.T) {
 	t.Parallel()
 
 	assert.True(t, resolveNICDHCP(AdditionalNIC{NetworkInterface: "br200"}),
-		"nil DHCP + no static addresses is the default multi-NIC case — DHCP must be on or the link stays IPv4-less (the whole v0.15.5 bug)")
-}
-
-func TestResolveNICDHCP_NilDefaultsToFalseWhenAddressesSet(t *testing.T) {
-	t.Parallel()
-
-	nic := AdditionalNIC{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}}
-	assert.False(t, resolveNICDHCP(nic),
-		"unset DHCP with static addresses defaults off — user signaled static intent by providing addresses; mixing DHCP + static requires explicit DHCP: true")
+		"nil DHCP defaults to true (golden-path) — DHCP on or the link stays IPv4-less (the v0.15.5 bug)")
 }
 
 func TestResolveNICDHCP_ExplicitTrueWins(t *testing.T) {
 	t.Parallel()
 
-	nic := AdditionalNIC{
-		NetworkInterface: "br200",
-		Addresses:        []string{"10.20.0.5/24"},
-		DHCP:             boolPtr(true),
-	}
-	assert.True(t, resolveNICDHCP(nic), "explicit DHCP: true must beat the static-default heuristic")
+	nic := AdditionalNIC{NetworkInterface: "br200", DHCP: boolPtr(true)}
+	assert.True(t, resolveNICDHCP(nic), "explicit DHCP: true matches default — documents intent")
 }
 
 func TestResolveNICDHCP_ExplicitFalseWins(t *testing.T) {
 	t.Parallel()
 
-	nic := AdditionalNIC{
-		NetworkInterface: "br200",
-		DHCP:             boolPtr(false),
-	}
+	nic := AdditionalNIC{NetworkInterface: "br200", DHCP: boolPtr(false)}
 	assert.False(t, resolveNICDHCP(nic),
-		"explicit DHCP: false must keep DHCP off even without static addresses — operator opted the NIC out of autoconfig entirely")
+		"explicit DHCP: false keeps DHCP off — advanced users opt the NIC out of autoconfig (bond slave, VLAN parent, manual patch)")
 }
 
 func TestBuildAdditionalNICInterfacesPatch_SingleDHCPNIC(t *testing.T) {
@@ -469,9 +454,9 @@ func TestBuildAdditionalNICInterfacesPatch_SingleDHCPNIC(t *testing.T) {
 	assert.Equal(t, "02:cb:66:73:43:7b", selector["hardwareAddr"])
 	assert.Equal(t, true, iface["dhcp"])
 	_, hasAddresses := iface["addresses"]
-	assert.False(t, hasAddresses, "pure DHCP NIC must not carry an addresses[] key")
+	assert.False(t, hasAddresses, "patch must never carry addresses[] — MachineClass is shared, static IPs would collide across workers")
 	_, hasRoutes := iface["routes"]
-	assert.False(t, hasRoutes, "no gateway set → no routes[] emitted")
+	assert.False(t, hasRoutes, "patch must never carry routes[] — static gateways would collide across workers")
 }
 
 func TestBuildAdditionalNICInterfacesPatch_DHCPFalse(t *testing.T) {
@@ -487,68 +472,7 @@ func TestBuildAdditionalNICInterfacesPatch_DHCPFalse(t *testing.T) {
 
 	iface := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)[0].(map[string]any)
 	assert.Equal(t, false, iface["dhcp"],
-		"dhcp: false must serialize as a literal false — Talos interprets a missing dhcp field as the platform default, which for additional NICs means no DHCP client. Serializing the false is defensive against that ambiguity.")
-}
-
-func TestBuildAdditionalNICInterfacesPatch_StaticAddress(t *testing.T) {
-	t.Parallel()
-
-	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
-		{mac: "02:aa:aa:aa:aa:aa", dhcp: false, addresses: []string{"10.20.0.5/24"}},
-	})
-	require.NoError(t, err)
-
-	var patch map[string]any
-	require.NoError(t, json.Unmarshal(data, &patch))
-
-	iface := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)[0].(map[string]any)
-	assert.Equal(t, false, iface["dhcp"])
-	addrs := iface["addresses"].([]any)
-	assert.Equal(t, []any{"10.20.0.5/24"}, addrs)
-}
-
-func TestBuildAdditionalNICInterfacesPatch_StaticWithGateway(t *testing.T) {
-	t.Parallel()
-
-	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
-		{
-			mac:       "02:aa:aa:aa:aa:aa",
-			dhcp:      false,
-			addresses: []string{"10.20.0.5/24"},
-			gateway:   "10.20.0.1",
-		},
-	})
-	require.NoError(t, err)
-
-	var patch map[string]any
-	require.NoError(t, json.Unmarshal(data, &patch))
-
-	iface := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)[0].(map[string]any)
-	routes := iface["routes"].([]any)
-	require.Len(t, routes, 1)
-
-	route := routes[0].(map[string]any)
-	assert.Equal(t, "0.0.0.0/0", route["network"])
-	assert.Equal(t, "10.20.0.1", route["gateway"])
-}
-
-func TestBuildAdditionalNICInterfacesPatch_DHCPPlusStatic(t *testing.T) {
-	t.Parallel()
-
-	// User explicitly wants both — DHCP for default addressing plus a
-	// static alias for a known service IP on the same NIC.
-	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
-		{mac: "02:aa:aa:aa:aa:aa", dhcp: true, addresses: []string{"10.20.0.5/32"}},
-	})
-	require.NoError(t, err)
-
-	var patch map[string]any
-	require.NoError(t, json.Unmarshal(data, &patch))
-
-	iface := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)[0].(map[string]any)
-	assert.Equal(t, true, iface["dhcp"])
-	assert.Equal(t, []any{"10.20.0.5/32"}, iface["addresses"].([]any),
-		"DHCP + static must coexist — Talos supports assigning both dynamic and static addresses to one link")
+		"dhcp: false must serialize as a literal false — the advanced-user opt-out path (bond slave / VLAN parent / manual patch)")
 }
 
 func TestBuildAdditionalNICInterfacesPatch_MultipleNICsMixed(t *testing.T) {
@@ -556,8 +480,8 @@ func TestBuildAdditionalNICInterfacesPatch_MultipleNICsMixed(t *testing.T) {
 
 	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
 		{mac: "02:11:11:11:11:11", dhcp: true},
-		{mac: "02:22:22:22:22:22", dhcp: false, addresses: []string{"10.20.0.5/24"}, gateway: "10.20.0.1"},
-		{mac: "02:33:33:33:33:33", dhcp: false},
+		{mac: "02:22:22:22:22:22", dhcp: false},
+		{mac: "02:33:33:33:33:33", dhcp: true},
 	})
 	require.NoError(t, err)
 
@@ -653,41 +577,36 @@ func TestCollectNICInterfaceConfigs_AllDHCP(t *testing.T) {
 	require.Len(t, configs, 2)
 	assert.Equal(t, "02:aa:aa:aa:aa:aa", configs[0].mac)
 	assert.True(t, configs[0].dhcp)
-	assert.Empty(t, configs[0].addresses)
 	assert.Equal(t, nicInterfaceAggregate{DHCPNICs: 2}, agg)
 }
 
-func TestCollectNICInterfaceConfigs_MixedModes(t *testing.T) {
+func TestCollectNICInterfaceConfigs_MixedDHCPAndOptOut(t *testing.T) {
 	t.Parallel()
 
-	b := false
 	nics := []AdditionalNIC{
-		{NetworkInterface: "br200"}, // DHCP
-		{NetworkInterface: "br201", Addresses: []string{"10.20.0.5/24"}, Gateway: "10.20.0.1"},                          // static+gateway
-		{NetworkInterface: "br202", DHCP: &b},                                                                           // opt-out
-		{NetworkInterface: "br203", DHCP: func() *bool { x := true; return &x }(), Addresses: []string{"10.30.0.7/24"}}, // both
+		{NetworkInterface: "br200"},                       // DHCP default
+		{NetworkInterface: "br201", DHCP: boolPtr(false)}, // advanced opt-out
+		{NetworkInterface: "br202", DHCP: boolPtr(true)},  // explicit on (same as default)
 	}
-	macs := []string{"02:aa:aa:aa:aa:aa", "02:bb:bb:bb:bb:bb", "02:cc:cc:cc:cc:cc", "02:dd:dd:dd:dd:dd"}
+	macs := []string{"02:aa:aa:aa:aa:aa", "02:bb:bb:bb:bb:bb", "02:cc:cc:cc:cc:cc"}
 
 	configs, agg := collectNICInterfaceConfigs(nics, macs)
 
-	require.Len(t, configs, 4)
-	assert.Equal(t, 2, agg.DHCPNICs, "NIC 0 (default, no addresses) + NIC 3 (explicit true) = 2 DHCP; NIC 1 flipped off by addresses-set default, NIC 2 explicit false")
-	assert.Equal(t, 2, agg.StaticNICs, "NIC 1 and NIC 3 both carry static addresses")
-	assert.Equal(t, 1, agg.GatewayNICs, "only NIC 1 has a gateway")
+	require.Len(t, configs, 3)
+	assert.Equal(t, 2, agg.DHCPNICs, "NIC 0 default + NIC 2 explicit true = 2 DHCP")
+	assert.Equal(t, 1, agg.NoConfigNICs, "NIC 1 explicit false = opt-out counted under NoConfigNICs")
 }
 
-func TestCollectNICInterfaceConfigs_EmptyMACDroppedFromConfigsOnly(t *testing.T) {
+func TestCollectNICInterfaceConfigs_EmptyMACDroppedFromConfigsAndAggregate(t *testing.T) {
 	t.Parallel()
 
 	// Attach returning no MAC means this NIC is silently dropped from the
 	// patch (the deviceSelector would otherwise open-match the primary NIC).
-	// Confirm the drop happens in the collector, not elsewhere — and that
-	// the aggregate does NOT double-count the dropped NIC.
+	// The aggregate must NOT count the dropped NIC.
 	nics := []AdditionalNIC{
-		{NetworkInterface: "br200"},                                      // attached OK
-		{NetworkInterface: "br201", Addresses: []string{"10.20.0.5/24"}}, // attach returned no MAC
-		{NetworkInterface: "br202"},                                      // attached OK
+		{NetworkInterface: "br200"},
+		{NetworkInterface: "br201", DHCP: boolPtr(false)}, // would be opt-out, but attach returned no MAC
+		{NetworkInterface: "br202"},
 	}
 	macs := []string{"02:aa:aa:aa:aa:aa", "", "02:cc:cc:cc:cc:cc"}
 
@@ -697,8 +616,8 @@ func TestCollectNICInterfaceConfigs_EmptyMACDroppedFromConfigsOnly(t *testing.T)
 	assert.Equal(t, "02:aa:aa:aa:aa:aa", configs[0].mac)
 	assert.Equal(t, "02:cc:cc:cc:cc:cc", configs[1].mac)
 	assert.Equal(t, 2, agg.DHCPNICs)
-	assert.Equal(t, 0, agg.StaticNICs,
-		"the dropped NIC (br201) had static addresses but must NOT count — it never made it to the patch, so the Info log shouldn't claim a static NIC was applied")
+	assert.Equal(t, 0, agg.NoConfigNICs,
+		"the dropped NIC (br201) was an opt-out but never made it to the patch — aggregate must reflect what was actually applied")
 }
 
 func TestCollectNICInterfaceConfigs_UsesResolvedMACNotDeclaredInput(t *testing.T) {

@@ -90,7 +90,7 @@ The `advertised_subnets` field pins etcd and kubelet to the internal network (`v
 
 ---
 
-## Additional-NIC Configuration (v0.16+)
+## Additional-NIC Configuration (v0.16.1+)
 
 Each entry in `additional_nics[]` supports these fields:
 
@@ -99,16 +99,17 @@ Each entry in `additional_nics[]` supports these fields:
 | `network_interface` | string (required) | — | Host bridge, VLAN, or physical interface |
 | `type` | string | `VIRTIO` | NIC model (`VIRTIO` or `E1000`) |
 | `mtu` | integer | host default | 576–9216, e.g. `9000` for jumbo frames |
-| `dhcp` | boolean | see below | Run DHCPv4 on this NIC |
-| `addresses` | array of CIDR strings | `[]` | Static addresses, e.g. `["10.20.0.5/24"]` |
-| `gateway` | IP string | — | Optional default route (on-link unicast) |
+| `dhcp` | boolean | `true` | Run DHCPv4 on this NIC; set `false` to attach without autoconfig |
 
-**DHCP default resolution** (tri-state — omit to accept default):
-- No `addresses` set → `dhcp: true` (DHCPv4 runs)
-- `addresses` set → `dhcp: false` (static-only; DHCP stays off unless explicitly `true`)
-- `dhcp: true` or `false` → always wins, regardless of whether `addresses` is set
+> **No static addresses or gateway fields — by design.** A MachineClass is
+> shared across every worker in a MachineSet, so any static IP placed here
+> would be claimed by N workers simultaneously and collide. The sanctioned
+> way to pin a worker to a known IP is a **DHCP reservation on the upstream
+> router**, keyed off the NIC's deterministic MAC (which the provider logs
+> at VM creation). Reservations survive reprovision because the MAC is
+> derived from the machine request ID.
 
-### DHCP on a second segment (most common)
+### DHCP on a second segment (the golden path)
 
 ```yaml
 additional_nics:
@@ -116,52 +117,32 @@ additional_nics:
     # dhcp defaults to true; DHCPv4 lease picked up on vlan200
 ```
 
-### Static IPv4 with a gateway on the secondary NIC
+### Jumbo-frame storage network
 
 ```yaml
 additional_nics:
   - network_interface: vlan300
-    addresses:
-      - 10.30.0.5/24
-    gateway: 10.30.0.1
+    mtu: 9000
 ```
 
-### Dual-stack static
+### Off the golden path — attach without autoconfig
 
 ```yaml
 additional_nics:
   - network_interface: vlan400
-    addresses:
-      - 10.40.0.5/24
-      - fd00::5/64
-    gateway: 10.40.0.1
+    dhcp: false   # advanced use: bond slave, VLAN parent, or manually-applied config patch
 ```
 
-### DHCP + static alias on the same link
+Set `dhcp: false` when the NIC will be configured by something else (a
+bond driver, a VLAN trunk, or a per-node config patch you apply
+separately). The link comes up with its deterministic MAC and no
+Layer-3 config — ready for the downstream configuration to take over.
 
-```yaml
-additional_nics:
-  - network_interface: vlan500
-    dhcp: true                    # explicit — normally would default false because addresses is set
-    addresses:
-      - 10.50.0.200/32            # static alias in addition to the DHCP lease
-```
+### Validation rules
 
-### Attach the link but leave it unconfigured (bond slave, manual patch)
-
-```yaml
-additional_nics:
-  - network_interface: vlan600
-    dhcp: false
-    # no addresses — link comes up with MAC, no L3 config
-```
-
-### Validation rules (rejected at MachineClass save)
-
-- Addresses must be valid CIDRs. Unspecified (`0.0.0.0/0`, `::/0`), multicast, loopback, and zero-mask are rejected.
-- Gateway must be unicast, same family as at least one address on the NIC, and on-link with at least one address's CIDR.
-- Only one additional NIC per MachineClass may declare a `gateway` (multiple default routes without distinct metrics cause non-deterministic kernel routing).
-- Caps: 16 additional NICs per VM, 16 addresses per NIC.
+- `additional_nics` max: **16 per VM** (TrueNAS practical ceiling).
+- Every NIC must have a unique `network_interface` on the VM.
+- `mtu` must be in `[576, 9216]` if set.
 
 ---
 

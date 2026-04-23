@@ -222,213 +222,45 @@ func TestValidate_NoDuplicate_DifferentInterfaces(t *testing.T) {
 	require.NoError(t, err, "all different interfaces should be valid")
 }
 
-// --- Static addressing / gateway / DHCP opt-out ---
+// --- DHCP tri-state + NIC cap ---
 
-func TestValidate_StaticAddress_Valid(t *testing.T) {
+func TestValidate_DHCPTrue_Allowed(t *testing.T) {
 	t.Parallel()
+
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}},
-			{NetworkInterface: "br201", Addresses: []string{"10.30.0.5/24", "fd00::5/64"}},
+			{NetworkInterface: "br200", DHCP: boolPtr(true)},
 		},
 	}
 
-	err := d.Validate()
-	require.NoError(t, err)
+	require.NoError(t, d.Validate())
 }
 
-func TestValidate_StaticAddress_NotCIDR(t *testing.T) {
+func TestValidate_DHCPFalse_Allowed(t *testing.T) {
 	t.Parallel()
+
+	// Explicit opt-out: advanced user wants the link attached but no
+	// autoconfig — bond slave, VLAN parent, or they'll apply a separate
+	// per-node config patch.
 	d := Data{
 		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", Addresses: []string{"10.20.0.5"}},
+			{NetworkInterface: "br200", DHCP: boolPtr(false)},
 		},
 	}
 
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not a valid CIDR")
-}
-
-func TestValidate_StaticAddress_Junk(t *testing.T) {
-	t.Parallel()
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", Addresses: []string{"not-an-ip/24"}},
-		},
-	}
-
-	err := d.Validate()
-	assert.Error(t, err)
-}
-
-func TestValidate_StaticAddress_Unspecified(t *testing.T) {
-	t.Parallel()
-	// 0.0.0.0/0 / ::/0 — default-route CIDR — is rejected. Security F1 fix:
-	// a malicious operator could steer every worker's default traffic out
-	// of a secondary NIC without touching the gateway field.
-	for _, bad := range []string{"0.0.0.0/0", "::/0", "0.0.0.0/32", "::/128"} {
-		d := Data{AdditionalNICs: []AdditionalNIC{{NetworkInterface: "br200", Addresses: []string{bad}}}}
-		err := d.Validate()
-		assert.Errorf(t, err, "address %q must be rejected", bad)
-	}
-}
-
-func TestValidate_StaticAddress_Multicast(t *testing.T) {
-	t.Parallel()
-	d := Data{AdditionalNICs: []AdditionalNIC{{NetworkInterface: "br200", Addresses: []string{"224.0.0.1/24"}}}}
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "multicast")
-}
-
-func TestValidate_StaticAddress_Loopback(t *testing.T) {
-	t.Parallel()
-	d := Data{AdditionalNICs: []AdditionalNIC{{NetworkInterface: "br200", Addresses: []string{"127.0.0.1/8"}}}}
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "loopback")
-}
-
-func TestValidate_Gateway_Valid(t *testing.T) {
-	t.Parallel()
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}, Gateway: "10.20.0.1"},
-		},
-	}
-
-	err := d.Validate()
-	require.NoError(t, err)
-}
-
-func TestValidate_Gateway_InvalidIP(t *testing.T) {
-	t.Parallel()
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}, Gateway: "not-an-ip"},
-		},
-	}
-
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not a valid IP")
-}
-
-func TestValidate_Gateway_NonUnicast(t *testing.T) {
-	t.Parallel()
-	// Unspecified, multicast, loopback, broadcast — all rejected. Security F2.
-	cases := []struct{ gw, want string }{
-		{"0.0.0.0", "unicast"},
-		{"224.0.0.1", "unicast"},
-		{"127.0.0.1", "unicast"},
-		{"255.255.255.255", "unicast"},
-		{"ff02::1", "unicast"},
-	}
-
-	for _, tc := range cases {
-		d := Data{AdditionalNICs: []AdditionalNIC{{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}, Gateway: tc.gw}}}
-		err := d.Validate()
-		assert.Errorf(t, err, "gateway %q must be rejected", tc.gw)
-		if err != nil {
-			assert.Contains(t, err.Error(), tc.want)
-		}
-	}
-}
-
-func TestValidate_Gateway_FamilyMismatch(t *testing.T) {
-	t.Parallel()
-	// IPv4 addresses + IPv6 gateway — Security F2 / QA F4 fix. Without this,
-	// the builder would emit {"network":"0.0.0.0/0","gateway":"fd00::1"}.
-	d := Data{AdditionalNICs: []AdditionalNIC{{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}, Gateway: "fd00::1"}}}
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "IPv6")
-	assert.Contains(t, err.Error(), "family")
-}
-
-func TestValidate_Gateway_NotOnLink(t *testing.T) {
-	t.Parallel()
-	// Gateway must be in at least one of the Addresses' CIDRs. Otherwise
-	// Talos/Linux refuses to install the route.
-	d := Data{AdditionalNICs: []AdditionalNIC{{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}, Gateway: "10.99.0.1"}}}
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "on-link")
-}
-
-func TestValidate_Gateway_WithoutAddresses_Rejected(t *testing.T) {
-	t.Parallel()
-	// A gateway without a static address is meaningless — DHCP supplies
-	// its own gateway, and a static-only route without a link address
-	// can't be installed. Fail fast rather than ship a broken patch.
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", Gateway: "10.20.0.1"},
-		},
-	}
-
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "gateway")
-	assert.Contains(t, err.Error(), "addresses")
-}
-
-func TestValidate_MultipleGateways_Rejected(t *testing.T) {
-	t.Parallel()
-	// Only one NIC may declare a gateway. Two default routes without
-	// distinct metrics cause non-deterministic kernel routing — Security F5.
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}, Gateway: "10.20.0.1"},
-			{NetworkInterface: "br201", Addresses: []string{"10.30.0.5/24"}, Gateway: "10.30.0.1"},
-		},
-	}
-
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "at most one NIC may declare a gateway")
-}
-
-func TestValidate_DHCPFalse_WithNoAddresses_Allowed(t *testing.T) {
-	t.Parallel()
-	// Explicit opt-out: user wants the link attached but no autoconfig.
-	// Valid — they may plan to configure it via a separate config patch,
-	// or they intend to make it a bond slave.
-	b := false
-	d := Data{
-		AdditionalNICs: []AdditionalNIC{
-			{NetworkInterface: "br200", DHCP: &b},
-		},
-	}
-
-	err := d.Validate()
-	require.NoError(t, err)
+	require.NoError(t, d.Validate())
 }
 
 func TestValidate_AdditionalNICs_ExceedMax(t *testing.T) {
 	t.Parallel()
-	// Operator-input DoS cap — Security F3.
+
+	// Operator-input DoS cap — 16 NICs is the TrueNAS practical ceiling.
 	nics := make([]AdditionalNIC, MaxAdditionalNICs+1)
 	for i := range nics {
 		nics[i] = AdditionalNIC{NetworkInterface: fmt.Sprintf("br%d", 200+i)}
 	}
 
 	d := Data{AdditionalNICs: nics}
-	err := d.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "at most")
-}
-
-func TestValidate_AddressesPerNIC_ExceedMax(t *testing.T) {
-	t.Parallel()
-	// Per-NIC address cap — Security F3.
-	addrs := make([]string, MaxAddressesPerNIC+1)
-	for i := range addrs {
-		addrs[i] = fmt.Sprintf("10.20.%d.5/24", i)
-	}
-
-	d := Data{AdditionalNICs: []AdditionalNIC{{NetworkInterface: "br200", Addresses: addrs}}}
 	err := d.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "at most")

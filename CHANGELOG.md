@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented here.
 
+## [v0.16.1] — Remove unsafe static addressing from additional_nics
+
+### Breaking
+- **Remove `additional_nics[*].addresses` and `additional_nics[*].gateway`** — these fields shipped in v0.16.0 but are fundamentally unsafe on a shared MachineClass. Every worker in a MachineSet renders the same class, so a static IP in `addresses` would be claimed by N workers and collide; a static default-route gateway would duplicate across all workers and steer traffic through whichever interface the kernel picked first. There is no safe way to encode per-worker static addressing in a class-shared config. The sanctioned path for pinning specific IPs is an upstream DHCP reservation keyed off the deterministic MAC the provider logs at VM creation — those reservations survive reprovision because the MAC is derived from the machine request ID.
+- `DHCP *bool` on `AdditionalNIC` stays. The tri-state simplifies: nil / unset → DHCP enabled (golden path), explicit `true` → same as default, explicit `false` → link attached but left unconfigured for advanced users (bond slave, VLAN parent, manually-applied per-node patch). The `v0.16.0` address-based default heuristic ("nil + addresses set → dhcp=false") is gone because `addresses` is gone.
+- Schema: `additional_nics.items` loses `addresses` and `gateway` properties; the remaining `{network_interface, type, mtu, dhcp}` shape is stable going forward.
+- Patch builder (`buildAdditionalNICInterfacesPatch`) no longer emits `addresses` or `routes` keys — the output is now strictly `{deviceSelector.hardwareAddr, dhcp}` per NIC. Any MachineRequest that reconciled under v0.16.0 with static fields set keeps the old patch in Omni state until the VM is replaced; v0.16.1 does not retroactively mutate old patches.
+- `MaxAddressesPerNIC` constant removed. `MaxAdditionalNICs = 16` stays.
+- Validation drops all address/gateway branches (CIDR parse, multicast/loopback/zero-mask reject, gateway family match, on-link check, single-gateway-per-MachineClass check) and the `config_invalid` alert category loses those specific error-message fragments. The category itself stays and still fires on disk-size and duplicate-NIC typos.
+
+### Migration
+**Skip v0.16.0.** Upgrade from v0.15.5 straight to v0.16.1. If you already deployed v0.16.0:
+1. Edit any MachineClass that sets `additional_nics[*].addresses` or `.gateway` — remove those fields. v0.16.1 rejects them at JSON-schema validation; MachineRequests against such classes will never reconcile until the class is edited.
+2. If you need a specific worker pinned to a specific IP on a secondary segment, add a DHCP reservation on the upstream router for the NIC's MAC (visible in provider logs: `attached additional NIC … mac=02:…`).
+3. VMs provisioned under v0.16.0 with static patches keep running; replace them against the v0.16.1 class when convenient.
+
+### Tests
+- `multinic_test.go`: removed 13 address/gateway tests (static valid, CIDR junk, unspecified, multicast, loopback, gateway invalid-IP, non-unicast, family mismatch, not-on-link, without-addresses, multiple-gateways, NICs-exceed-max-with-addresses, addresses-per-NIC-exceed-max). 3 new tests cover the simplified surface: `DHCPTrue_Allowed`, `DHCPFalse_Allowed`, `AdditionalNICs_ExceedMax`.
+- `config_patch_test.go`: removed `StaticAddress`, `StaticWithGateway`, `DHCPPlusStatic` patch-shape tests and the `nil-defaults-to-false-when-addresses-set` resolver case. Kept and pinned: `SingleDHCPNIC` now asserts patch MUST NOT carry `addresses` / `routes` keys.
+- `schema_drift_test.go`: field-type map loses `addresses` and `gateway` entries.
+- `error_categorization_test.go`: config_invalid test vectors swap address/gateway error strings for duplicate-NIC + NIC-exceeds-max strings.
+
 ## [v0.16.0] — 2026-04-23 — Multi-NIC auto-config + experimental autoscaler + raised root disk floor
 
 ### Breaking
@@ -554,6 +576,7 @@ helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.16.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.16.1
 [v0.16.0]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.16.0
 [v0.15.5]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.5
 [v0.15.4]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.4

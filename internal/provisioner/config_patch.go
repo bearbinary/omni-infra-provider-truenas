@@ -187,29 +187,31 @@ func buildKubeletSubnetsPatch(advertisedSubnets string) ([]byte, error) {
 }
 
 // resolveNICDHCP applies the DHCP-default policy for AdditionalNIC:
-//   - explicit DHCP value wins (true or false)
-//   - nil pointer + no static addresses → default true (DHCP on)
-//   - nil pointer + static addresses     → default false (static-only)
+//   - nil / unset → DHCP is enabled (golden-path default)
+//   - explicit true or false wins
 //
-// The pointer-based tri-state lets users distinguish "not set" (accept
-// the default) from "explicitly disabled" — e.g., a NIC with static
-// addresses AND DHCP on is reachable via both, set DHCP: true explicitly.
+// Advanced users who want the NIC attached without any autoconfig (bond
+// slave, VLAN parent, node-specific static config applied via their own
+// config patch) set `dhcp: false`. For everyone else, the MachineClass
+// is shared across every worker in a MachineSet — so a single static IP
+// typed into the MachineClass would be claimed by N workers and collide.
+// DHCP + deterministic MACs + upstream DHCP reservations is the only
+// safe way to pin a shared MachineClass to specific per-worker IPs.
 func resolveNICDHCP(nic AdditionalNIC) bool {
 	if nic.DHCP != nil {
 		return *nic.DHCP
 	}
 
-	return len(nic.Addresses) == 0
+	return true
 }
 
 // nicInterfaceAggregate counts configured NIC dimensions for operator-facing
 // rollout verification. Emitted at Info level alongside the patch so SRE can
-// confirm (without turning on Debug) which codepath the operator actually
-// reached: DHCP-only, static-addressed, or gateway-bearing.
+// confirm (without turning on Debug) how many additional NICs got DHCP vs.
+// were opted out of autoconfig.
 type nicInterfaceAggregate struct {
-	DHCPNICs    int
-	StaticNICs  int
-	GatewayNICs int
+	DHCPNICs     int // NICs with dhcp=true in the emitted patch
+	NoConfigNICs int // NICs with explicit dhcp: false — attached, unconfigured
 }
 
 // collectNICInterfaceConfigs translates the per-NIC MachineClass spec +
@@ -250,37 +252,26 @@ func collectNICInterfaceConfigs(nics []AdditionalNIC, attachedMACs []string) ([]
 
 		dhcp := resolveNICDHCP(nic)
 		configs = append(configs, nicInterfaceConfig{
-			mac:       mac,
-			dhcp:      dhcp,
-			addresses: nic.Addresses,
-			gateway:   nic.Gateway,
+			mac:  mac,
+			dhcp: dhcp,
 		})
 
 		if dhcp {
 			agg.DHCPNICs++
-		}
-
-		if len(nic.Addresses) > 0 {
-			agg.StaticNICs++
-		}
-
-		if nic.Gateway != "" {
-			agg.GatewayNICs++
+		} else {
+			agg.NoConfigNICs++
 		}
 	}
 
 	return configs, agg
 }
 
-// nicInterfaceConfig describes one additional NIC's desired Talos config
-// (DHCP on/off, static addresses, optional gateway). MAC identifies the
-// target link via deviceSelector so the config survives Talos interface-
-// name shifts across reprovision.
+// nicInterfaceConfig describes one additional NIC's desired Talos config.
+// MAC identifies the target link via deviceSelector so the config survives
+// Talos interface-name shifts across reprovision.
 type nicInterfaceConfig struct {
-	mac       string
-	dhcp      bool
-	addresses []string
-	gateway   string
+	mac  string
+	dhcp bool
 }
 
 // buildAdditionalNICInterfacesPatch returns a Talos machine config patch
@@ -358,40 +349,12 @@ func buildAdditionalNICInterfacesPatch(nics []nicInterfaceConfig) ([]byte, error
 			continue
 		}
 
-		iface := map[string]any{
+		interfaces = append(interfaces, map[string]any{
 			"deviceSelector": map[string]any{
 				"hardwareAddr": nic.mac,
 			},
 			"dhcp": nic.dhcp,
-		}
-
-		if len(nic.addresses) > 0 {
-			// encoding/json handles []string inside a map[string]any — the
-			// outer map's value type is `any`, and []string assigns cleanly.
-			// No need to box into []any first.
-			iface["addresses"] = nic.addresses
-		}
-
-		if nic.gateway != "" {
-			// Pick the default-route network to match the gateway's address
-			// family. An IPv6 gateway with network "0.0.0.0/0" is rejected by
-			// Talos/Linux at apply time — emit "::/0" instead. Validation at
-			// the MachineClass level already enforces family-match between
-			// gateway and addresses, so we can pick confidently here.
-			network := "0.0.0.0/0"
-			if gwIP := net.ParseIP(nic.gateway); gwIP != nil && gwIP.To4() == nil {
-				network = "::/0"
-			}
-
-			iface["routes"] = []map[string]any{
-				{
-					"network": network,
-					"gateway": nic.gateway,
-				},
-			}
-		}
-
-		interfaces = append(interfaces, iface)
+		})
 	}
 
 	if len(interfaces) == 0 {

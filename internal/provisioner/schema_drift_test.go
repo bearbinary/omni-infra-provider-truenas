@@ -187,8 +187,6 @@ func TestSchemaDrift_AdditionalNICsFieldTypes(t *testing.T) {
 		"type":              "string",
 		"mtu":               "integer",
 		"dhcp":              "boolean",
-		"addresses":         "array",
-		"gateway":           "string",
 	}
 
 	for field, wantType := range expected {
@@ -200,15 +198,4 @@ func TestSchemaDrift_AdditionalNICsFieldTypes(t *testing.T) {
 			"additional_nics item property %q: schema type drifted (want %q, got %q). Schema.json type drift is a silent break — existing MachineClass YAML that worked before would now fail JSON-schema validation.",
 			field, wantType, gotType)
 	}
-
-	// addresses is an array — pin the inner item type too. Otherwise someone
-	// could change items.type to "integer" and the outer assertion still passes.
-	addressesProp, ok := itemProps["addresses"].(map[string]any)
-	require.True(t, ok)
-
-	items, ok := addressesProp["items"].(map[string]any)
-	require.True(t, ok, "addresses property must declare items")
-
-	itemType, _ := items["type"].(string)
-	assert.Equal(t, "string", itemType, "addresses.items.type must be string — individual CIDR entries are strings")
 }

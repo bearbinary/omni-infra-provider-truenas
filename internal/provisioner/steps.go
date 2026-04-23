@@ -739,8 +739,6 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			zap.String("mac", mac),
 			zap.Int("mtu", nic.MTU),
 			zap.Bool("dhcp", dhcp),
-			zap.Int("static_addresses", len(nic.Addresses)),
-			zap.String("gateway", nic.Gateway),
 			zap.String("vm_name", vmName),
 		)
 	}
@@ -767,10 +765,12 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	// Apply interface config patch for every additional NIC. Talos only
 	// configures the primary link by default — without this patch,
 	// additional NICs come up with link-local IPv6 only and never acquire
-	// an IPv4 address (DHCP or static), making the VM effectively
-	// single-homed. Patch covers DHCP on/off, static addresses, and an
-	// optional default-route gateway. Matching by MAC ensures the patch
-	// survives Talos interface-name shifts across reprovisions.
+	// an IPv4 lease. Patch emits deviceSelector (by MAC) + dhcp per NIC.
+	// Static addresses / gateways are intentionally unsupported: the
+	// MachineClass is shared across every worker in a MachineSet, so any
+	// per-NIC IP typed into the class would be claimed by N workers and
+	// collide. DHCP + deterministic MACs + upstream DHCP reservations is
+	// the only way to pin specific per-worker IPs from a shared class.
 	if len(nicInterfaces) > 0 {
 		patchData, patchErr := buildAdditionalNICInterfacesPatch(nicInterfaces)
 		if patchErr != nil {
@@ -785,8 +785,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			logger.Info("applied additional-NIC interfaces config patch",
 				zap.Int("nic_count", len(nicInterfaces)),
 				zap.Int("dhcp_nics", nicAggregate.DHCPNICs),
-				zap.Int("static_nics", nicAggregate.StaticNICs),
-				zap.Int("gateway_nics", nicAggregate.GatewayNICs),
+				zap.Int("noconfig_nics", nicAggregate.NoConfigNICs),
 				zap.String("vm_name", vmName),
 			)
 		}

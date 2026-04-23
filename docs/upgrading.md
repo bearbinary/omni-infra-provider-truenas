@@ -25,7 +25,18 @@ For TrueNAS Docker-Compose-on-host deployments (installed via Apps > Discover > 
 
 ## Version Notes
 
-### Upgrading to v0.16
+### Upgrading to v0.16.1
+
+v0.16.1 is a **bugfix** on top of v0.16.0 that removes the `addresses` and `gateway` fields from `additional_nics[]`. **Do not use v0.16.0 in a multi-worker MachineSet** — it accepts static addresses/gateways per NIC, but a MachineClass is shared across every worker, so any static IP in the class would be claimed by N workers and collide. v0.16.1 removes the fields entirely and defaults `dhcp: true` on every additional NIC. Static pinning is only supported via **DHCP reservations on the upstream router**, keyed off the deterministic MAC the provider logs at VM creation.
+
+**Migration from v0.16.0:**
+- If a MachineClass has `additional_nics[*].addresses` or `additional_nics[*].gateway` set: remove those fields. The v0.16.1 provider rejects them at schema-validation time; MachineRequests will never reconcile until the class is edited.
+- If you need to pin a specific worker to a specific IP on the secondary segment: add a DHCP reservation on your router for the NIC's deterministic MAC (shown in the provider's `attached additional NIC` log line at provision time).
+- If you deployed v0.16.0 and are now upgrading to v0.16.1: any running VMs whose config patches include `addresses`/`routes` from v0.16.0 keep running — the patches sit in Omni state but no reconcile re-applies them against a v0.16.1 MachineClass. To fully roll off, replace the VMs against the v0.16.1 class.
+
+### Upgrading to v0.16 (v0.16.0 — superseded by v0.16.1)
+
+> **Skip v0.16.0.** The `additional_nics[*].addresses` / `.gateway` fields it introduced are unsafe on shared MachineClasses. Upgrade straight from v0.15.5 to v0.16.1.
 
 v0.16 lands the multi-homing fix (additional NICs now actually usable on any segment), the experimental `autoscaler` subcommand, and one breaking change to `disk_size` validation.
 
@@ -48,22 +59,16 @@ Prior to v0.16 the provider attached extra NICs at the hypervisor but emitted no
 
 No action required for existing MachineClasses that only use DHCP on additional NICs — they will start working correctly on the next provision.
 
-**New optional `additional_nics[]` fields:**
-- `dhcp` (boolean, tri-state when omitted) — defaults `true` when `addresses` is empty, `false` when `addresses` is set. Set explicitly to override.
-- `addresses` (array of CIDR strings) — static IPv4/IPv6 addresses for this NIC, e.g. `["10.20.0.5/24"]` or dual-stack `["10.20.0.5/24", "fd00::5/64"]`.
-- `gateway` (IP string, not CIDR) — optional default route. Must be unicast, on-link with at least one address, and same family as at least one address.
+**Shipped-but-unsafe `additional_nics[]` fields (removed in v0.16.1):**
+- `dhcp`, `addresses`, `gateway` — intended to support static addressing on
+  secondary NICs. Unsafe on shared MachineClasses because every worker in a
+  MachineSet renders the same class. v0.16.1 removes `addresses` and
+  `gateway` entirely; `dhcp` stays as a simple tri-state (`true` default,
+  `false` to attach without autoconfig).
 
-**Tighter validation on existing `addresses`:** v0.16 now rejects addresses that would hijack routing or fail at Talos apply time:
-- unspecified (`0.0.0.0/0`, `::/0`, `0.0.0.0/32`, `::/128`)
-- multicast (`224.0.0.0/4`, `ff00::/8`)
-- loopback (`127.0.0.0/8`, `::1/128`)
-- zero-length masks (`/0`)
+**Cap:** `MaxAdditionalNICs = 16`, enforced in both Go validation and `schema.json` as `maxItems`.
 
-Gateways must be unicast (not unspecified/multicast/loopback/broadcast), family-match an address on the NIC, and be on-link. Only one additional NIC per MachineClass may declare a `gateway` (multiple defaults without metrics cause non-deterministic kernel routing).
-
-Caps: `MaxAdditionalNICs = 16`, `MaxAddressesPerNIC = 16` — enforced in both Go validation and `schema.json` as `maxItems`.
-
-See [`docs/multihoming.md`](multihoming.md) for examples.
+See [`docs/multihoming.md`](multihoming.md) for supported examples.
 
 #### New: Experimental `autoscaler` subcommand
 
