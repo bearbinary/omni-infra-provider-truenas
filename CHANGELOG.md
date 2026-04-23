@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [v0.16.0] — Multi-NIC auto-config + experimental autoscaler + raised root disk floor
+## [v0.16.0] — 2026-04-23 — Multi-NIC auto-config + experimental autoscaler + raised root disk floor
 
 ### Breaking
 - **Raise `disk_size` minimum from 5 GiB to 20 GiB on the root disk** — the additional-disk floor stays at 5 GiB, but the primary / OS disk now fails validation below 20. Rationale lives in [`docs/sizing.md#why-the-root-disk-has-a-20-gib-minimum`](docs/sizing.md#why-the-root-disk-has-a-20-gib-minimum): a Talos CP node pulls kube-apiserver + kube-controller-manager + kube-scheduler + etcd + kube-proxy + CNI + CoreDNS during bootstrap, plus the Talos squashfs image and kubelet's 10% GC headroom. A 5–10 GiB root disk fills up mid-install, the kubelet evicts images mid-pull, and etcd never comes up — observed on the `5 GiB` default path before this change. New `MinRootDiskSizeGiB` const in `internal/provisioner/data.go`, validator message cites the bootstrap reason, `schema.json` updated to `"minimum": 20` with matching description. Migration: any MachineClass currently specifying `disk_size` < 20 will fail validation on next apply — edit the value to ≥ 20 (default `40` recommended for production) before provisioning. Existing VMs built against an older class are not retroactively resized; reprovision against the updated class if you hit DiskPressure.
