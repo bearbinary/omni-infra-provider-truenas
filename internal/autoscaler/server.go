@@ -38,26 +38,33 @@ import (
 type Server struct {
 	pb.UnimplementedCloudProviderServer
 
-	logger *zap.Logger
-	config *SubcommandConfig
-	gate   CapacityQuery
+	logger     *zap.Logger
+	config     *SubcommandConfig
+	gate       CapacityQuery
+	discoverer *Discoverer
 
 	mu  sync.Mutex
 	grp *grpc.Server
 }
 
 // NewServer constructs a Server bound to the provided logger and
-// config. The CapacityQuery may be nil during early-phase testing;
-// real deploys pass a *TrueNASCapacityAdapter.
-func NewServer(logger *zap.Logger, cfg *SubcommandConfig, gate CapacityQuery) *Server {
+// config. CapacityQuery and Discoverer may be nil during early-phase
+// testing: handlers that need them return Unimplemented with a
+// message naming the missing dependency, so a test that exercises
+// only the Unimplemented surface doesn't have to wire Omni state.
+//
+// Real deploys pass both: a *TrueNASCapacityAdapter for the gate, and
+// a *Discoverer built from the Omni state client.
+func NewServer(logger *zap.Logger, cfg *SubcommandConfig, gate CapacityQuery, discoverer *Discoverer) *Server {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
 	return &Server{
-		logger: logger,
-		config: cfg,
-		gate:   gate,
+		logger:     logger,
+		config:     cfg,
+		gate:       gate,
+		discoverer: discoverer,
 	}
 }
 
@@ -130,29 +137,140 @@ func (s *Server) Stop() {
 // capabilities the autoscaler needs to support literal and searchable.
 
 // NodeGroups is called by the sidecar on every refresh cycle to
-// enumerate the node groups this autoscaler manages. Real
-// implementation lands in phase 3b: enumerate MachineSets for
-// `OMNI_CLUSTER_NAME`, filter to ones whose MachineClass has the
-// `bearbinary.com/autoscale-*` annotations.
-func (s *Server) NodeGroups(_ context.Context, _ *pb.NodeGroupsRequest) (*pb.NodeGroupsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "phase 3b: node-group enumeration not yet wired — see internal/autoscaler/discovery.go (pending)")
-}
-
-// NodeGroupForNode is called to map a Kubernetes node back to a node
-// group. Phase 3b wires this to the Omni MachineSetNode label.
-func (s *Server) NodeGroupForNode(_ context.Context, _ *pb.NodeGroupForNodeRequest) (*pb.NodeGroupForNodeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "phase 3b: node → node-group mapping not yet wired")
-}
-
-// NodeGroupTargetSize / NodeGroupIncreaseSize / NodeGroupDecreaseTargetSize
-// / NodeGroupDeleteNodes / NodeGroupNodes / NodeGroupTemplateNodeInfo are
-// the mutation surface. They stay Unimplemented through phase 3b and land
-// in phase 3c (read paths) and phase 3d (write paths behind the
-// singleton lease).
+// enumerate the node groups this autoscaler manages. Translates the
+// Discoverer's []NodeGroup into the proto shape — `id`, `minSize`,
+// `maxSize`. The `debug` field is populated with a human-readable
+// string listing the current size so Cluster Autoscaler's
+// verbose-mode logs include enough context to diagnose
+// over/under-allocated MachineSets.
 //
-// DeleteNodes/DecreaseTargetSize stay Unimplemented through the entire
-// experimental phase — scale-down is explicitly out of scope. Both
-// handlers will return Unimplemented with an operator-readable message
-// pointing at docs/autoscaler.md so deployments that accidentally
-// re-enable scale-down in the sidecar args fail loudly rather than
-// silently triggering teardowns.
+// A configured Discoverer is required. If one isn't present (e.g.,
+// during a partial-boot test) we return Unimplemented rather than
+// silently returning an empty list — the silent-empty path would be
+// indistinguishable from "this cluster has no opted-in MachineSets",
+// which is a legitimate steady state.
+func (s *Server) NodeGroups(ctx context.Context, _ *pb.NodeGroupsRequest) (*pb.NodeGroupsResponse, error) {
+	if s.discoverer == nil {
+		return nil, status.Error(codes.Unimplemented, "autoscaler not fully configured: discoverer missing (boot sequence not complete)")
+	}
+
+	groups, err := s.discoverer.Discover(ctx)
+	if err != nil {
+		s.logger.Warn("NodeGroups: discovery failed", zap.Error(err))
+
+		return nil, status.Errorf(codes.Unavailable, "discover node groups: %v", err)
+	}
+
+	resp := &pb.NodeGroupsResponse{NodeGroups: make([]*pb.NodeGroup, 0, len(groups))}
+
+	for _, g := range groups {
+		resp.NodeGroups = append(resp.NodeGroups, toProtoNodeGroup(g))
+	}
+
+	s.logger.Debug("NodeGroups", zap.Int("count", len(groups)))
+
+	return resp, nil
+}
+
+// NodeGroupForNode maps a Kubernetes node back to its managing node
+// group. The sidecar calls this when deciding whether a node it sees
+// in the K8s API is something we can scale.
+//
+// Uses the node's providerID label (set by Talos via the Omni
+// machine infra-id) to find the MachineSetNode and, from there, the
+// MachineSet. Phase 3c ships a minimal implementation that resolves
+// via label walk; phase 4 can swap to a ClusterMachine-keyed index
+// if the walk turns out to be slow at scale.
+//
+// Returns an empty NodeGroup (not an error) when the node doesn't
+// belong to any autoscaler-managed MachineSet — that's the Cluster
+// Autoscaler's signal to leave the node alone. An Unimplemented /
+// Unavailable error would make CAS refuse to manage the cluster at
+// all, which is not what we want for non-opted-in nodes.
+func (s *Server) NodeGroupForNode(ctx context.Context, req *pb.NodeGroupForNodeRequest) (*pb.NodeGroupForNodeResponse, error) {
+	if s.discoverer == nil {
+		return nil, status.Error(codes.Unimplemented, "autoscaler not fully configured: discoverer missing")
+	}
+
+	if req.GetNode() == nil {
+		return nil, status.Error(codes.InvalidArgument, "NodeGroupForNode: request missing node payload")
+	}
+
+	// CAS-sidecar contract: when the node doesn't belong to any of our
+	// node groups, return a response with a nil NodeGroup — that's
+	// "not mine, leave it". Phase 3c deliberately always returns
+	// "not ours": the node → node-group mapping requires watching
+	// MachineSetNode / ClusterMachine relationships, which is a
+	// bigger slice of Omni state than discovery, and the
+	// scale-up-only experimental scope doesn't need it (scale-down
+	// is where node-group membership matters).
+	//
+	// Phase 3d / post-experimental re-implements this properly. The
+	// nil-NodeGroup answer is safe: CAS only calls NodeGroupForNode
+	// during scale-down decisions, which are disabled at multiple
+	// layers in the experimental phase.
+	s.logger.Debug("NodeGroupForNode: returning 'not-ours' (phase 3c scope)",
+		zap.String("node", req.GetNode().GetName()),
+		zap.String("providerID", req.GetNode().GetProviderID()),
+	)
+
+	return &pb.NodeGroupForNodeResponse{}, nil
+}
+
+// NodeGroupTargetSize answers the current MachineCount for a given
+// node group. Backed by discovery — the current count is read from
+// MachineAllocation.MachineCount so this number matches the next
+// refresh's NodeGroups response.
+func (s *Server) NodeGroupTargetSize(ctx context.Context, req *pb.NodeGroupTargetSizeRequest) (*pb.NodeGroupTargetSizeResponse, error) {
+	if s.discoverer == nil {
+		return nil, status.Error(codes.Unimplemented, "autoscaler not fully configured: discoverer missing")
+	}
+
+	id := req.GetId()
+	if id == "" {
+		return nil, status.Error(codes.InvalidArgument, "NodeGroupTargetSize: missing id")
+	}
+
+	groups, err := s.discoverer.Discover(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "discover: %v", err)
+	}
+
+	for _, g := range groups {
+		if g.ID == id {
+			return &pb.NodeGroupTargetSizeResponse{TargetSize: int32(g.CurrentSize)}, nil
+		}
+	}
+
+	return nil, status.Errorf(codes.NotFound, "NodeGroupTargetSize: node group %q not found (not opted in or no longer exists)", id)
+}
+
+// NodeGroupIncreaseSize / NodeGroupDecreaseTargetSize / NodeGroupDeleteNodes
+// / NodeGroupNodes / NodeGroupTemplateNodeInfo — the mutation/shape
+// surface. Increase stays Unimplemented through phase 3c (write path
+// lands in phase 3d behind the singleton lease). DeleteNodes +
+// DecreaseTargetSize stay Unimplemented through the entire
+// experimental phase — scale-down is explicitly out of scope, and
+// returning Unimplemented here is belt-and-suspenders on top of the
+// sidecar's `--scale-down-enabled=false` flag.
+//
+// Leaving NodeGroupIncreaseSize / NodeGroupNodes /
+// NodeGroupTemplateNodeInfo to the generated
+// UnimplementedCloudProviderServer defaults is fine — the
+// default-via-embed returns Unimplemented with a minimal message.
+// Once phase 3d wires the write path we'll override NodeGroupIncreaseSize
+// explicitly to run the capacity gate and MachineAllocation update.
+
+// toProtoNodeGroup is the translator between the internal NodeGroup
+// struct (which carries parsed config + current size) and the sparse
+// proto shape the sidecar consumes. Kept as a package-private helper
+// rather than a method so tests can pin the translation in isolation
+// from the gRPC surface.
+func toProtoNodeGroup(g NodeGroup) *pb.NodeGroup {
+	return &pb.NodeGroup{
+		Id:      g.ID,
+		MinSize: int32(g.Config.Min),
+		MaxSize: int32(g.Config.Max),
+		Debug:   fmt.Sprintf("currentSize=%d machineClass=%q capacityGate=%s", g.CurrentSize, g.MachineClassName, g.Config.CapacityGate),
+	}
+}

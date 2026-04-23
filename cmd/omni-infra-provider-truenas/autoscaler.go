@@ -59,7 +59,12 @@ func runAutoscaler(baseCtx context.Context) error {
 	// tolerates that and will panic only if a handler that needs the
 	// gate is called, which can't happen while all handlers are
 	// Unimplemented.
-	server := autoscaler.NewServer(logger, cfg, nil)
+	// Discoverer + capacity gate are left nil in the subcommand for
+	// now. Phase 3d/4 builds them here from the same Omni +
+	// TrueNAS env vars the provisioner uses, then passes a fully-
+	// configured server. Until then, handlers that need those deps
+	// return Unimplemented with an operator-readable message.
+	server := autoscaler.NewServer(logger, cfg, nil, nil)
 
 	ctx, stop := signal.NotifyContext(baseCtx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
