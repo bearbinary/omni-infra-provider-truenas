@@ -48,16 +48,29 @@ func runAutoscaler(baseCtx context.Context) error {
 		zap.String("version", version),
 	)
 
-	// Phase 1: hold the process open on SIGINT/SIGTERM so a Deployment
-	// can run us and we don't crash-loop. Later phases plug the gRPC
-	// server + discovery loop into this ctx.
+	// Phase 3a: boot the gRPC server so the sidecar can reach us. The
+	// capacity gate wires in alongside the server but every handler
+	// still returns codes.Unimplemented — real MachineSet discovery
+	// and MachineAllocation writes land in phases 3b and 3d.
+	//
+	// The TrueNAS client isn't constructed yet in this subcommand
+	// (phases 3b+ will build it from the same env vars the provisioner
+	// uses). For now we pass a nil gate to NewServer — server.go
+	// tolerates that and will panic only if a handler that needs the
+	// gate is called, which can't happen while all handlers are
+	// Unimplemented.
+	server := autoscaler.NewServer(logger, cfg, nil)
+
 	ctx, stop := signal.NotifyContext(baseCtx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	<-ctx.Done()
+	if err := server.Listen(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.Info("autoscaler shutting down")
+			return nil
+		}
 
-	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		return err
+		return fmt.Errorf("autoscaler gRPC server: %w", err)
 	}
 
 	logger.Info("autoscaler shutting down")

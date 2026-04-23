@@ -32,6 +32,10 @@ func TestRunAutoscaler_MissingClusterName(t *testing.T) {
 // call that ignores ctx.
 func TestRunAutoscaler_ShutsDownCleanlyOnContextCancel(t *testing.T) {
 	t.Setenv(autoscaler.EnvClusterName, "test-cluster")
+	// Ephemeral port so the test doesn't collide with a running
+	// autoscaler Deployment on the dev machine or with another test
+	// binary holding the default :8086.
+	t.Setenv(autoscaler.EnvListenAddress, "127.0.0.1:0")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Pre-cancel so runAutoscaler returns immediately.
