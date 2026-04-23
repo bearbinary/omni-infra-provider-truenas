@@ -59,6 +59,17 @@ func main() {
 		case "--version", "-v", "version":
 			fmt.Println(version)
 			os.Exit(0)
+		case "autoscaler":
+			// Experimental subcommand. Opt-in at deploy time — the default
+			// entry point (no subcommand) remains the provisioner so
+			// existing Deployments can bump image tags without behavior
+			// drift. See internal/autoscaler/ and docs/autoscaler.md.
+			if err := runAutoscaler(context.Background()); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+
+			os.Exit(0)
 		}
 	}
 

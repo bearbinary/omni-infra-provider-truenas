@@ -4,6 +4,9 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Experimental
+- **Autoscaler subcommand skeleton (phase 1 of 4)** — `omni-infra-provider-truenas autoscaler` is the new experimental entry point for a Kubernetes cluster-autoscaler external-gRPC cloud provider, vendored from Justin Rothgar's `omni-node-autoscaler` PoC. Opt-in per MachineClass via `bearbinary.com/autoscale-min` / `bearbinary.com/autoscale-max` annotations on Omni `MachineClass.omni.sidero.dev` resources; a class without the annotations is not discovered. Optional `bearbinary.com/autoscale-capacity-gate` (`hard` or `soft`) controls whether TrueNAS pool/host-memory pressure blocks scale-up. Phase 1 scope is intentionally narrow: env-var config (`OMNI_CLUSTER_NAME`, `AUTOSCALER_LISTEN_ADDRESS`, `AUTOSCALER_REFRESH_INTERVAL`), annotation parser with full table-driven coverage, experimental startup banner, and a hold-open loop. No gRPC server and no Omni writes yet — those land in phases 2–3. The provisioner subcommand (no argv) is unchanged; existing Deployments bumping image tags see zero behavior drift.
+
 ## [v0.15.5] — Regression-test hardening: TrueNAS call-site shape pinning + method allowlist
 
 ### Tests (no behavior change)
