@@ -3,6 +3,7 @@ package autoscaler
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
@@ -90,6 +91,11 @@ func NewDiscoverer(st state.State, cluster string, logger *zap.Logger) *Discover
 // unreachable) — that's the signal that warrants an Unavailable gRPC
 // status rather than an empty list.
 func (d *Discoverer) Discover(ctx context.Context) ([]NodeGroup, error) {
+	start := time.Now()
+	defer func() {
+		recordRefreshDuration(ctx, time.Since(start).Seconds())
+	}()
+
 	sets, err := safe.StateListAll[*omni.MachineSet](
 		ctx,
 		d.st,
@@ -193,6 +199,7 @@ func (d *Discoverer) classify(ctx context.Context, ms *omni.MachineSet) (*NodeGr
 	return &NodeGroup{
 		ID:               ms.Metadata().ID(),
 		MachineClassName: allocation.Name,
+		Pool:             cfg.Pool, // May be empty; write path resolves via env fallback.
 		CurrentSize:      int(allocation.MachineCount),
 		Config:           cfg,
 	}, nil

@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/cosi-project/runtime/pkg/state"
 	"github.com/siderolabs/omni/client/api/omni/specs"
+	"github.com/siderolabs/omni/client/pkg/omni/resources/omni"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
@@ -38,22 +40,20 @@ func newTestServer(t *testing.T) (pb.CloudProviderClient, func()) {
 		RefreshInterval: time.Minute,
 	}
 
-	// Close the listener we grabbed to discover the port — the server
-	// will re-bind the address in Listen. This is technically racy but
-	// in practice the test binary holds the port through the brief
-	// gap, and the server's own bind will surface a clear error if
-	// somebody else snatches it.
-	_ = lis.Close()
-
-	srv := NewServer(nil, cfg, nil, nil)
+	// Keep the listener and hand it directly to the server via
+	// ServeOnListener so there's no "close + rebind" race under
+	// parallel test load.
+	srv := NewServer(nil, cfg, nil, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
 
 	go func() {
-		done <- srv.Listen(ctx)
+		done <- srv.ServeOnListener(ctx, lis)
 	}()
+
+	cfg.ListenAddress = lis.Addr().String()
 
 	// Poll the address until it's accepting connections so tests can
 	// dial without sleep-based retries.
@@ -158,15 +158,16 @@ func newTestServerWithDiscoverer(t *testing.T, st state.State, cluster string) (
 		RefreshInterval: time.Minute,
 	}
 
-	_ = lis.Close()
-
 	d := NewDiscoverer(st, cluster, zaptest.NewLogger(t))
-	srv := NewServer(zaptest.NewLogger(t), cfg, nil, d)
+	w := NewScaleWriter(st)
+	srv := NewServer(zaptest.NewLogger(t), cfg, nil, d, w)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Listen(ctx) }()
+	go func() { done <- srv.ServeOnListener(ctx, lis) }()
+
+	cfg.ListenAddress = lis.Addr().String()
 
 	var conn *grpc.ClientConn
 
@@ -316,3 +317,120 @@ func TestServer_NodeGroupForNode_ConfiguredReturnsEmpty(t *testing.T) {
 	assert.Nil(t, resp.NodeGroup, "phase 3c: always return 'not ours' for NodeGroupForNode")
 }
 
+// --- Phase 3d: NodeGroupIncreaseSize wire-path tests ---------------------
+//
+// These exercise the full happy path + the reject-with-status matrix so a
+// future CAS-sidecar integration test can rely on the exact status codes
+// cluster-autoscaler uses to make scheduling decisions:
+//   - ResourceExhausted → stop retrying this node group for a while
+//   - InvalidArgument → don't retry at all
+//   - NotFound → prune from CAS's internal cache
+//   - Unavailable → retry later
+
+// TestServer_NodeGroupIncreaseSize_HappyPath pins the write:
+// CurrentSize + delta lands in MachineAllocation.MachineCount.
+func TestServer_NodeGroupIncreaseSize_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	st := newInMemOmniState(t)
+
+	seedMachineClass(t, st, "workers", map[string]string{
+		AnnotationAutoscaleMin: "1",
+		AnnotationAutoscaleMax: "10",
+	})
+	seedMachineSet(t, st, "talos-home", "talos-home-workers", "workers", 3, false,
+		specs.MachineSetSpec_MachineAllocation_Static)
+
+	client, shutdown := newTestServerWithDiscoverer(t, st, "talos-home")
+	defer shutdown()
+
+	_, err := client.NodeGroupIncreaseSize(context.Background(), &pb.NodeGroupIncreaseSizeRequest{
+		Id:    "talos-home-workers",
+		Delta: 2,
+	})
+	require.NoError(t, err)
+
+	got, err := safe.StateGetByID[*omni.MachineSet](context.Background(), st, "talos-home-workers")
+	require.NoError(t, err)
+	assert.Equal(t, uint32(5), got.TypedSpec().Value.MachineAllocation.MachineCount,
+		"MachineAllocation.MachineCount must reflect the scale-up")
+}
+
+// TestServer_NodeGroupIncreaseSize_RejectsNonPositiveDelta maps
+// invalid input to InvalidArgument. CAS knows not to retry.
+func TestServer_NodeGroupIncreaseSize_RejectsNonPositiveDelta(t *testing.T) {
+	t.Parallel()
+
+	st := newInMemOmniState(t)
+
+	seedMachineClass(t, st, "workers", map[string]string{
+		AnnotationAutoscaleMin: "1",
+		AnnotationAutoscaleMax: "10",
+	})
+	seedMachineSet(t, st, "talos-home", "talos-home-workers", "workers", 3, false,
+		specs.MachineSetSpec_MachineAllocation_Static)
+
+	client, shutdown := newTestServerWithDiscoverer(t, st, "talos-home")
+	defer shutdown()
+
+	_, err := client.NodeGroupIncreaseSize(context.Background(), &pb.NodeGroupIncreaseSizeRequest{
+		Id:    "talos-home-workers",
+		Delta: 0,
+	})
+	require.Error(t, err)
+
+	st2, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st2.Code())
+}
+
+// TestServer_NodeGroupIncreaseSize_AboveMaxReturnsResourceExhausted
+// maps Max breach to ResourceExhausted so CAS stops retrying.
+func TestServer_NodeGroupIncreaseSize_AboveMaxReturnsResourceExhausted(t *testing.T) {
+	t.Parallel()
+
+	st := newInMemOmniState(t)
+
+	seedMachineClass(t, st, "workers", map[string]string{
+		AnnotationAutoscaleMin: "1",
+		AnnotationAutoscaleMax: "4",
+	})
+	seedMachineSet(t, st, "talos-home", "talos-home-workers", "workers", 3, false,
+		specs.MachineSetSpec_MachineAllocation_Static)
+
+	client, shutdown := newTestServerWithDiscoverer(t, st, "talos-home")
+	defer shutdown()
+
+	_, err := client.NodeGroupIncreaseSize(context.Background(), &pb.NodeGroupIncreaseSizeRequest{
+		Id:    "talos-home-workers",
+		Delta: 3, // 3 + 3 = 6 > 4
+	})
+	require.Error(t, err)
+
+	st2, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st2.Code())
+	assert.Contains(t, st2.Message(), "max")
+}
+
+// TestServer_NodeGroupIncreaseSize_UnknownGroupReturnsNotFound
+// covers the case where CAS asks to scale a group that's been
+// deleted or never existed.
+func TestServer_NodeGroupIncreaseSize_UnknownGroupReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	st := newInMemOmniState(t)
+
+	client, shutdown := newTestServerWithDiscoverer(t, st, "talos-home")
+	defer shutdown()
+
+	_, err := client.NodeGroupIncreaseSize(context.Background(), &pb.NodeGroupIncreaseSizeRequest{
+		Id:    "talos-home-ghost",
+		Delta: 1,
+	})
+	require.Error(t, err)
+
+	st2, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st2.Code())
+}

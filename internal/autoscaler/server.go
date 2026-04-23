@@ -42,30 +42,55 @@ type Server struct {
 	config     *SubcommandConfig
 	gate       CapacityQuery
 	discoverer *Discoverer
+	writer     *ScaleWriter
+
+	// defaultPool is the TrueNAS pool the capacity gate queries when
+	// the NodeGroup's MachineClass didn't set the autoscale-pool
+	// annotation. Matches the provisioner's DEFAULT_POOL env var so
+	// autoscaled clusters see the same pool selection as newly-
+	// provisioned ones without the operator having to duplicate
+	// config.
+	defaultPool string
 
 	mu  sync.Mutex
 	grp *grpc.Server
 }
 
 // NewServer constructs a Server bound to the provided logger and
-// config. CapacityQuery and Discoverer may be nil during early-phase
-// testing: handlers that need them return Unimplemented with a
-// message naming the missing dependency, so a test that exercises
-// only the Unimplemented surface doesn't have to wire Omni state.
+// config. CapacityQuery, Discoverer, and ScaleWriter may be nil
+// during early-phase testing: handlers that need them return
+// Unimplemented with a message naming the missing dependency, so a
+// test that exercises only the Unimplemented surface doesn't have
+// to wire Omni state + TrueNAS.
 //
-// Real deploys pass both: a *TrueNASCapacityAdapter for the gate, and
-// a *Discoverer built from the Omni state client.
-func NewServer(logger *zap.Logger, cfg *SubcommandConfig, gate CapacityQuery, discoverer *Discoverer) *Server {
+// Real deploys pass all three: a *TrueNASCapacityAdapter for the
+// gate, a *Discoverer built from the Omni state client, and a
+// *ScaleWriter sharing that same state client.
+func NewServer(logger *zap.Logger, cfg *SubcommandConfig, gate CapacityQuery, discoverer *Discoverer, writer *ScaleWriter) *Server {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
 	return &Server{
-		logger:     logger,
-		config:     cfg,
-		gate:       gate,
-		discoverer: discoverer,
+		logger:      logger,
+		config:      cfg,
+		gate:        gate,
+		discoverer:  discoverer,
+		writer:      writer,
+		defaultPool: "",
 	}
+}
+
+// WithDefaultPool configures the fallback pool the capacity gate
+// uses when a NodeGroup's MachineClass doesn't set the
+// AnnotationAutoscalePool annotation. Returns the Server for
+// chaining. Callers that don't set this leave defaultPool empty,
+// which causes gate evaluation on pool-less groups to skip the
+// pool check (equivalent to MinPoolFreeGiB=0) rather than error.
+func (s *Server) WithDefaultPool(pool string) *Server {
+	s.defaultPool = pool
+
+	return s
 }
 
 // Listen binds the gRPC listener and serves until ctx is cancelled.
@@ -80,6 +105,18 @@ func (s *Server) Listen(ctx context.Context) error {
 		return fmt.Errorf("listen %q: %w", s.config.ListenAddress, err)
 	}
 
+	return s.serveOnListener(ctx, lis)
+}
+
+// ServeOnListener serves on an already-bound listener. Used by tests
+// that need to pre-bind a port to avoid the close-then-rebind race in
+// the "pick an ephemeral port, close, let the server rebind" pattern.
+// Production callers use Listen; this is test-support surface.
+func (s *Server) ServeOnListener(ctx context.Context, lis net.Listener) error {
+	return s.serveOnListener(ctx, lis)
+}
+
+func (s *Server) serveOnListener(ctx context.Context, lis net.Listener) error {
 	grp := grpc.NewServer()
 	pb.RegisterCloudProviderServer(grp, s)
 
@@ -88,7 +125,7 @@ func (s *Server) Listen(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.logger.Info("autoscaler gRPC server listening",
-		zap.String("address", s.config.ListenAddress),
+		zap.String("address", lis.Addr().String()),
 	)
 
 	errCh := make(chan error, 1)
@@ -245,21 +282,191 @@ func (s *Server) NodeGroupTargetSize(ctx context.Context, req *pb.NodeGroupTarge
 	return nil, status.Errorf(codes.NotFound, "NodeGroupTargetSize: node group %q not found (not opted in or no longer exists)", id)
 }
 
-// NodeGroupIncreaseSize / NodeGroupDecreaseTargetSize / NodeGroupDeleteNodes
-// / NodeGroupNodes / NodeGroupTemplateNodeInfo — the mutation/shape
-// surface. Increase stays Unimplemented through phase 3c (write path
-// lands in phase 3d behind the singleton lease). DeleteNodes +
-// DecreaseTargetSize stay Unimplemented through the entire
-// experimental phase — scale-down is explicitly out of scope, and
-// returning Unimplemented here is belt-and-suspenders on top of the
-// sidecar's `--scale-down-enabled=false` flag.
+// NodeGroupIncreaseSize is the write path — the only RPC in the
+// experimental phase that mutates Omni state. Flow:
 //
-// Leaving NodeGroupIncreaseSize / NodeGroupNodes /
-// NodeGroupTemplateNodeInfo to the generated
-// UnimplementedCloudProviderServer defaults is fine — the
-// default-via-embed returns Unimplemented with a minimal message.
-// Once phase 3d wires the write path we'll override NodeGroupIncreaseSize
-// explicitly to run the capacity gate and MachineAllocation update.
+//  1. Validate request (positive delta, non-empty id).
+//  2. Discover (fresh, every call) so the current-size value used
+//     in bounds/capacity decisions is the live value, not a cached
+//     one that could be stale relative to a concurrent manual edit.
+//  3. Find the target group by id; NotFound if it's missing or no
+//     longer opted in.
+//  4. Capacity gate (when a CapacityQuery is wired). Gate runs
+//     against the pool named in the MachineClass annotation, or
+//     the server's defaultPool when the annotation is absent.
+//  5. ScaleWriter.IncreaseMachineCount performs the
+//     MachineAllocation update under Omni's optimistic concurrency.
+//
+// No explicit lease: the UpdateWithConflicts inside ScaleWriter
+// rejects stale writes so two autoscaler replicas writing in
+// parallel can't both land an update — the loser retries on the
+// next CAS refresh. Operators should still deploy `replicas: 1` in
+// the Helm chart to avoid wasted API calls, but correctness does
+// not depend on it.
+func (s *Server) NodeGroupIncreaseSize(ctx context.Context, req *pb.NodeGroupIncreaseSizeRequest) (*pb.NodeGroupIncreaseSizeResponse, error) {
+	if s.discoverer == nil || s.writer == nil {
+		recordScaleUpResult(ctx, ResultErroredInternal)
+
+		return nil, status.Error(codes.Unimplemented, "autoscaler not fully configured: discoverer or writer missing — check the Deployment's boot sequence")
+	}
+
+	id := req.GetId()
+	if id == "" {
+		recordScaleUpResult(ctx, ResultRejectedInvalid)
+
+		return nil, status.Error(codes.InvalidArgument, "NodeGroupIncreaseSize: missing id")
+	}
+
+	delta := int(req.GetDelta())
+	if delta <= 0 {
+		recordScaleUpResult(ctx, ResultRejectedInvalid)
+
+		return nil, status.Errorf(codes.InvalidArgument, "NodeGroupIncreaseSize: delta must be > 0, got %d", delta)
+	}
+
+	groups, err := s.discoverer.Discover(ctx)
+	if err != nil {
+		recordScaleUpResult(ctx, ResultErroredInternal)
+
+		return nil, status.Errorf(codes.Unavailable, "discover: %v", err)
+	}
+
+	var group *NodeGroup
+
+	for i := range groups {
+		if groups[i].ID == id {
+			group = &groups[i]
+
+			break
+		}
+	}
+
+	if group == nil {
+		recordScaleUpResult(ctx, ResultRejectedNotFound)
+
+		return nil, status.Errorf(codes.NotFound, "NodeGroupIncreaseSize: node group %q not found", id)
+	}
+
+	// Capacity gate — only when one is wired. Early experimental
+	// deploys pass a nil CapacityQuery to Server; skipping the gate
+	// is operationally equivalent to MinPoolFreeGiB=0 +
+	// MinHostMemGiB=0.
+	if s.gate != nil {
+		pool := group.Pool
+		if pool == "" {
+			pool = s.defaultPool
+		}
+
+		decision := CheckCapacity(ctx, s.gate, *group.Config, pool)
+
+		switch decision.Outcome {
+		case OutcomeDeniedHard:
+			s.logger.Warn("NodeGroupIncreaseSize: capacity gate denied",
+				zap.String("group", id),
+				zap.Int("delta", delta),
+				zap.String("reason", decision.Reason),
+			)
+
+			recordScaleUpResult(ctx, ResultDeniedCapacity)
+			recordCapacityDenial(ctx, categorizeDenialReason(decision.Reason))
+
+			return nil, status.Errorf(codes.ResourceExhausted, "capacity gate denied: %s", decision.Reason)
+		case OutcomeErrored:
+			s.logger.Warn("NodeGroupIncreaseSize: capacity gate errored (fails closed)",
+				zap.String("group", id),
+				zap.String("reason", decision.Reason),
+			)
+
+			recordScaleUpResult(ctx, ResultErroredInternal)
+			recordCapacityDenial(ctx, ReasonQueryFailed)
+
+			return nil, status.Errorf(codes.Unavailable, "capacity gate query failed: %s", decision.Reason)
+		case OutcomeWarnedSoft:
+			s.logger.Warn("NodeGroupIncreaseSize: capacity gate soft-warn, proceeding",
+				zap.String("group", id),
+				zap.Int("delta", delta),
+				zap.String("reason", decision.Reason),
+			)
+		case OutcomeAllowed:
+			// Nominal path — no log, the post-write log below covers it.
+		}
+	}
+
+	newSize, err := s.writer.IncreaseMachineCount(ctx, *group, delta)
+	if err != nil {
+		if errors.Is(err, ErrAtOrAboveMax) {
+			recordScaleUpResult(ctx, ResultRejectedBounds)
+
+			return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
+		}
+
+		recordScaleUpResult(ctx, ResultErroredInternal)
+
+		return nil, status.Errorf(codes.Unavailable, "increase machine count: %v", err)
+	}
+
+	s.logger.Info("NodeGroupIncreaseSize: scaled up",
+		zap.String("group", id),
+		zap.Int("delta", delta),
+		zap.Int("old_size", group.CurrentSize),
+		zap.Int("new_size", newSize),
+	)
+
+	recordScaleUpResult(ctx, ResultSucceeded)
+
+	return &pb.NodeGroupIncreaseSizeResponse{}, nil
+}
+
+// NodeGroupDecreaseTargetSize and NodeGroupDeleteNodes are the
+// scale-down RPCs. Explicitly overridden here (rather than relying
+// on the generated UnimplementedCloudProviderServer default) so the
+// "scale-down disabled for the experimental phase" contract is
+// literal in the code and the rejection log records an operator-
+// actionable message.
+//
+// Two independent layers block scale-down:
+//
+//  1. The Helm chart runs the sidecar with `--scale-down-enabled=false`
+//     (see deploy/helm/omni-autoscaler/values.yaml). Cluster Autoscaler
+//     never issues these RPCs when that flag is set.
+//
+//  2. Even if an operator overrides the sidecar flag, these handlers
+//     return codes.Unimplemented with a pointer at docs/autoscaler.md,
+//     so the machine never gets stopped at our layer.
+//
+// Removing these overrides is a deliberate act: scale-down enablement
+// is the graduation criterion from experimental, and doing it in two
+// steps (re-enable sidecar flag first, remove Unimplemented guard
+// second) means we can observe scale-down RPCs hitting the server
+// for a few days before actually acting on them.
+func (s *Server) NodeGroupDecreaseTargetSize(_ context.Context, req *pb.NodeGroupDecreaseTargetSizeRequest) (*pb.NodeGroupDecreaseTargetSizeResponse, error) {
+	s.logger.Warn("NodeGroupDecreaseTargetSize called but scale-down is disabled",
+		zap.String("group", req.GetId()),
+		zap.Int32("delta", req.GetDelta()),
+	)
+
+	return nil, status.Error(codes.Unimplemented,
+		"scale-down is disabled in the experimental phase — see docs/autoscaler.md. "+
+			"If Cluster Autoscaler is reaching this RPC, verify the sidecar is running with --scale-down-enabled=false.")
+}
+
+func (s *Server) NodeGroupDeleteNodes(_ context.Context, req *pb.NodeGroupDeleteNodesRequest) (*pb.NodeGroupDeleteNodesResponse, error) {
+	s.logger.Warn("NodeGroupDeleteNodes called but scale-down is disabled",
+		zap.String("group", req.GetId()),
+		zap.Int("node_count", len(req.GetNodes())),
+	)
+
+	return nil, status.Error(codes.Unimplemented,
+		"node deletion is disabled in the experimental phase — see docs/autoscaler.md. "+
+			"If Cluster Autoscaler is reaching this RPC, verify the sidecar is running with --scale-down-enabled=false.")
+}
+
+// NodeGroupDecreaseTargetSize / NodeGroupDeleteNodes stay
+// Unimplemented for the entire experimental phase — scale-down is
+// explicitly out of scope. Returning Unimplemented here is belt-
+// and-suspenders on top of the sidecar's `--scale-down-enabled=false`
+// flag so a Deployment that accidentally re-enables scale-down in
+// its args fails loudly rather than silently triggering teardowns.
 
 // toProtoNodeGroup is the translator between the internal NodeGroup
 // struct (which carries parsed config + current size) and the sparse

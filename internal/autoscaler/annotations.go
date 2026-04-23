@@ -57,6 +57,14 @@ const (
 	// which the hard capacity gate refuses scale-up on this MachineSet's
 	// host free memory. Optional. 0 disables the memory check.
 	AnnotationAutoscaleMinHostMemGiB = "bearbinary.com/autoscale-min-host-mem-gib"
+
+	// AnnotationAutoscalePool names the TrueNAS pool the capacity
+	// gate should query when deciding whether this node group can
+	// grow. Optional — when unset, the gate falls back to the
+	// provider's DEFAULT_POOL, matching the behavior operators see
+	// today when a MachineClass doesn't specify a pool. Empty string
+	// is treated as unset.
+	AnnotationAutoscalePool = "bearbinary.com/autoscale-pool"
 )
 
 // CapacityGate selects how strict the TrueNAS capacity check is on
@@ -111,6 +119,13 @@ type Config struct {
 	// 0 disables the memory check. Substituted to DefaultMinHostMemGiB
 	// when the annotation is absent.
 	MinHostMemGiB int
+
+	// Pool is the TrueNAS pool name the capacity gate should query
+	// for this node group. Empty when the operator didn't set
+	// AnnotationAutoscalePool — callers fall back to the provider's
+	// configured default pool in that case. Trimmed of whitespace by
+	// the parser.
+	Pool string
 }
 
 // IsAutoscaleOptIn reports whether a MachineClass carries any
@@ -183,6 +198,7 @@ func ParseMachineClassAutoscaleConfig(annotations map[string]string) (*Config, e
 		CapacityGate:   gate,
 		MinPoolFreeGiB: minPoolFreeGiB,
 		MinHostMemGiB:  minHostMemGiB,
+		Pool:           strings.TrimSpace(annotations[AnnotationAutoscalePool]),
 	}, nil
 }
 

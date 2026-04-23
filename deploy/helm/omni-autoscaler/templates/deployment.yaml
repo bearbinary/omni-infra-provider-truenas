@@ -1,0 +1,156 @@
+{{/*
+Two-container Deployment:
+
+  1. omni-autoscaler: the gRPC server (our provider binary in
+     `autoscaler` subcommand mode). Listens on :8086 for the sidecar.
+  2. cluster-autoscaler: upstream k8s cluster-autoscaler. Talks to
+     (1) via localhost:8086 using the externalgrpc provider.
+
+Sidecar pattern (not two separate Deployments) so the gRPC dial is
+localhost — no Service, no NetworkPolicy to reason about, no
+latency. The tradeoff is that rolling (1) bounces (2); given the
+autoscaler's event-loop nature (poll-based, not connection-held),
+that's not a correctness issue.
+
+Scale-down stays disabled via `--scale-down-enabled=false` on the
+sidecar. The subcommand also returns Unimplemented on the
+scale-down RPCs as belt-and-suspenders — if a values.yaml override
+removes the flag, the gRPC layer still rejects.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "omni-autoscaler.fullname" . }}
+  labels:
+    {{- include "omni-autoscaler.labels" . | nindent 4 }}
+spec:
+  # Replicas hard-fixed at .Values.replicas (default 1). Higher
+  # replica counts don't help — Omni's optimistic concurrency
+  # handles correctness, and duplicating the CAS sidecar would
+  # double the polling load against the gRPC endpoint.
+  replicas: {{ .Values.replicas }}
+  strategy:
+    # Recreate (not RollingUpdate) so we never have two autoscaler
+    # replicas alive at the same time — even briefly during a
+    # rolling restart. Matches the one-writer operator model the
+    # subcommand assumes (though UpdateWithConflicts would handle a
+    # race, the duplicate gRPC log spam during overlap is confusing).
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "omni-autoscaler.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "omni-autoscaler.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "omni-autoscaler.serviceAccountName" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: autoscaler
+          image: {{ include "omni-autoscaler.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            # The `autoscaler` subcommand is the opt-in. Default (no
+            # args) would run the provisioner, which is NOT what we
+            # want in this Deployment.
+            - autoscaler
+          env:
+            # --- Autoscaler subcommand config ---
+            - name: OMNI_CLUSTER_NAME
+              value: {{ required "cluster.name is required — set it to the Omni cluster this autoscaler should manage" .Values.cluster.name | quote }}
+            - name: AUTOSCALER_LISTEN_ADDRESS
+              value: ":8086"
+            - name: AUTOSCALER_REFRESH_INTERVAL
+              value: {{ .Values.refreshInterval | quote }}
+            # --- Omni connection (shared with provisioner) ---
+            - name: OMNI_ENDPOINT
+              value: {{ required "omni.endpoint is required" .Values.omni.endpoint | quote }}
+            - name: OMNI_INSECURE_SKIP_VERIFY
+              value: {{ .Values.omni.insecureSkipVerify | quote }}
+            {{- if .Values.providerID }}
+            - name: PROVIDER_ID
+              value: {{ .Values.providerID | quote }}
+            {{- end }}
+            # --- TrueNAS connection (optional) ---
+            {{- if .Values.truenas.host }}
+            - name: TRUENAS_HOST
+              value: {{ .Values.truenas.host | quote }}
+            - name: TRUENAS_INSECURE_SKIP_VERIFY
+              value: {{ .Values.truenas.insecureSkipVerify | quote }}
+            - name: DEFAULT_POOL
+              value: {{ .Values.truenas.defaultPool | quote }}
+            {{- end }}
+          envFrom:
+            # Secret-sourced env vars: OMNI_SERVICE_ACCOUNT_KEY +
+            # TRUENAS_API_KEY. Using envFrom means rotating the
+            # Secret + restarting the pod picks them up without a
+            # chart re-render.
+            - secretRef:
+                name: {{ include "omni-autoscaler.fullname" . }}-secrets
+                optional: true
+          ports:
+            - name: grpc
+              containerPort: 8086
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.resources.autoscaler | nindent 12 }}
+          securityContext:
+            # The autoscaler doesn't need elevated privileges — it's
+            # a pure-Go TCP server that talks to external APIs.
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+        - name: cluster-autoscaler
+          image: "{{ .Values.clusterAutoscaler.image.repository }}:{{ .Values.clusterAutoscaler.image.tag }}"
+          imagePullPolicy: {{ .Values.clusterAutoscaler.image.pullPolicy }}
+          command:
+            - /cluster-autoscaler
+          args:
+            - --v={{ .Values.clusterAutoscaler.v }}
+            - --cloud-provider=externalgrpc
+            - --cloud-config=/etc/cluster-autoscaler/config.yaml
+            - --scale-down-enabled={{ .Values.clusterAutoscaler.scaleDownEnabled }}
+            {{- range .Values.clusterAutoscaler.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: ca-config
+              mountPath: /etc/cluster-autoscaler
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources.clusterAutoscaler | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: ca-config
+          configMap:
+            name: {{ include "omni-autoscaler.fullname" . }}-ca-config

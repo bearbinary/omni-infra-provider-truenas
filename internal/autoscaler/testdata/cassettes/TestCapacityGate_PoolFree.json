@@ -1,0 +1,43 @@
+{
+  "truenas_version": "25.10.1",
+  "recorded_at": "2026-04-23T00:00:00Z",
+  "recorded_notes": "Hand-crafted fixture for TestCapacityGate_PoolFree. Matches the shape pool.query + pool.dataset.query return on TrueNAS 25.10; trimmed to the fields ListPools + getRootDatasetSpace actually read (id, name, healthy, status, size, and available.parsed). If the real-world response shape drifts the method-allowlist test will flag any new calls; this cassette is the canonical happy-path shape for the autoscaler capacity gate.",
+  "interactions": [
+    {
+      "method": "pool.query",
+      "params": [],
+      "result": [
+        {
+          "id": 1,
+          "name": "default",
+          "healthy": true,
+          "status": "ONLINE",
+          "size": 5978594476032
+        }
+      ]
+    },
+    {
+      "method": "pool.dataset.query",
+      "params": [
+        [["id", "=", "default"]],
+        {"get": true}
+      ],
+      "result": {
+        "id": "default",
+        "name": "default",
+        "available": {
+          "parsed": 4691248635904,
+          "rawvalue": "4691248635904",
+          "source": "NONE",
+          "value": "4.27T"
+        },
+        "used": {
+          "parsed": 1287345840128,
+          "rawvalue": "1287345840128",
+          "source": "NONE",
+          "value": "1.17T"
+        }
+      }
+    }
+  ]
+}

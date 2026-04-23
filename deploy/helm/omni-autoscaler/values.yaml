@@ -1,0 +1,138 @@
+# EXPERIMENTAL — omni-autoscaler values.
+#
+# Deploy one instance per Omni cluster you want autoscaled. Scale-up
+# only in this release; scale-down is disabled at multiple layers.
+#
+# The chart runs two containers in a single Deployment:
+#   - omni-autoscaler: the gRPC server (our provider binary in
+#     `autoscaler` subcommand mode)
+#   - cluster-autoscaler: the upstream Kubernetes cluster-autoscaler
+#     sidecar, configured to talk to the gRPC server over localhost.
+#
+# Required values:
+#   - cluster.name               the Omni cluster to manage
+#   - omni.endpoint              https://<account>.omni.siderolabs.io
+#   - omni.serviceAccountKeyB64  base64-encoded Omni SA key
+#
+# Optional but recommended:
+#   - truenas.host + truenas.apiKey  enables the capacity gate
+#   - providerID                     set when the provisioner uses one
+#
+# To disable the chart's opinionated defaults and set your own, override
+# values via `helm install --set ...` or a values file. Do not modify
+# templates in place.
+
+# Required Omni cluster this autoscaler manages. Must match the name of
+# an existing Omni Cluster resource. One autoscaler Deployment per
+# cluster — matches cluster-autoscaler's assumption.
+cluster:
+  name: ""
+
+# Omni connection. The SA key must have permissions to read
+# MachineSets/MachineClasses and update MachineAllocation.MachineCount
+# (Admin is simplest; scoped roles TBD).
+omni:
+  endpoint: ""
+  # Base64-encoded service-account key from `omnictl serviceaccount create`.
+  # Rendered into a Secret; referenced by the Deployment.
+  serviceAccountKeyB64: ""
+  # Skip TLS verification on the Omni endpoint. Dev/testing only.
+  insecureSkipVerify: false
+
+# Optional: TrueNAS connection for the capacity gate. When unset, the
+# autoscaler runs WITHOUT the pool/host-memory check — MachineClasses
+# are still bounded by their `autoscale-min`/`autoscale-max`
+# annotations, but scale-up decisions don't consider TrueNAS
+# capacity. Recommended to set this in any non-trivial deploy.
+truenas:
+  host: ""
+  apiKey: ""
+  insecureSkipVerify: false
+  # Default pool used when a MachineClass doesn't set the
+  # bearbinary.com/autoscale-pool annotation. Should match the
+  # provisioner's DEFAULT_POOL for consistency.
+  defaultPool: "default"
+
+# Optional provider-scoping. Set if your provisioner uses a non-default
+# PROVIDER_ID. The autoscaler doesn't strictly need it, but passing it
+# through keeps gRPC metadata consistent with how the provisioner
+# identifies itself to Omni.
+providerID: ""
+
+# Image pinning. Bump these together with provider upgrades; the
+# autoscaler subcommand ships in the same image as the provisioner.
+image:
+  repository: ghcr.io/bearbinary/omni-infra-provider-truenas
+  tag: ""                          # Defaults to Chart.appVersion if empty
+  pullPolicy: IfNotPresent
+
+# cluster-autoscaler sidecar pinning + flags. The `--cloud-provider=externalgrpc`
+# and `--cloud-config=/etc/cluster-autoscaler/config.yaml` flags are
+# rendered automatically by the template; anything in `extraArgs` is
+# appended verbatim.
+clusterAutoscaler:
+  image:
+    repository: registry.k8s.io/autoscaling/cluster-autoscaler
+    # Keep in sync with the version of externalgrpc protos vendored
+    # under internal/autoscaler/proto/externalgrpc/. See PROVENANCE.md
+    # for the refresh workflow.
+    tag: "v1.31.0"
+    pullPolicy: IfNotPresent
+  # Scale-down stays disabled for the entire experimental phase. Do
+  # not override without reading docs/autoscaler.md — the subcommand
+  # also refuses scale-down at the gRPC layer, so enabling it here
+  # just creates error spam.
+  scaleDownEnabled: false
+  extraArgs: []
+  # Log verbosity for the sidecar (0-6). Default 4 surfaces scale
+  # decisions without spamming; bump for debugging.
+  v: 4
+
+# Gate control.
+#
+# replicas: keep at 1. The autoscaler uses Omni's optimistic
+# concurrency for correctness, but multiple replicas would duplicate
+# API traffic and log noise for no benefit — scale-up is not
+# throughput-bound.
+replicas: 1
+
+# Pod resources. Autoscaler subcommand is idle between CAS refresh
+# calls (default 10s); the default requests are generous for
+# diagnosability.
+resources:
+  autoscaler:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  clusterAutoscaler:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Autoscaler refresh interval — how often the subcommand re-scans
+# Omni for MachineClass annotation changes. Lower = operator edits
+# take effect sooner; higher = fewer Omni API calls. Default 60s.
+refreshInterval: 60s
+
+# Scheduling.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ServiceAccount for the Deployment. Set `create: false` + `name: existing-sa`
+# to reuse an SA provisioned outside the chart.
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Extra pod labels/annotations for operator tooling (e.g., policy
+# exemptions, service-mesh opt-in). Applied to the Pod template.
+podLabels: {}
+podAnnotations: {}

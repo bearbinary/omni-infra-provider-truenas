@@ -1,0 +1,36 @@
+apiVersion: v2
+name: omni-autoscaler
+description: |
+  EXPERIMENTAL — Kubernetes Cluster Autoscaler external-gRPC cloud provider
+  for Sidero Labs Omni, shipped as a subcommand of omni-infra-provider-truenas.
+  Scale-up only in this release; per-MachineClass opt-in via
+  `bearbinary.com/autoscale-*` annotations. See docs/autoscaler.md for the
+  full operator guide, experimental-status caveats, and how to disable.
+type: application
+version: 0.1.0
+# appVersion tracks the omni-infra-provider-truenas image tag this chart
+# deploys. Bump together with the provider release when shipping new
+# autoscaler behavior; the chart itself is a thin wrapper so its own
+# version only bumps on template changes.
+appVersion: "0.15.5"
+home: https://github.com/bearbinary/omni-infra-provider-truenas
+sources:
+  - https://github.com/bearbinary/omni-infra-provider-truenas
+maintainers:
+  - name: Bear Binary
+    url: https://github.com/bearbinary
+keywords:
+  - truenas
+  - omni
+  - talos
+  - autoscaler
+  - cluster-autoscaler
+  - experimental
+annotations:
+  # Chart-level signals to consumers: this is NOT production-ready.
+  # Helm doesn't render these, but helm show chart surfaces them and
+  # some catalog tools (e.g., Artifact Hub) index on them.
+  category: Experimental
+  artifacthub.io/changes: |
+    - Initial experimental release — scale-up only
+  artifacthub.io/prerelease: "true"

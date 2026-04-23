@@ -1,0 +1,21 @@
+{{/*
+ConfigMap for cluster-autoscaler's externalgrpc cloud-provider
+config. The sidecar reads this via `--cloud-config=/etc/cluster-autoscaler/config.yaml`
+(wired in the Deployment), and it tells CAS which gRPC endpoint to
+dial. `localhost:<port>` works because both containers share the
+pod network namespace.
+
+Using a ConfigMap (rather than inlining the config in the sidecar
+args) lets operators edit the file post-deploy without bouncing the
+whole Deployment if they want to retune CAS behavior — kubectl
+rollout restart does the right thing.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "omni-autoscaler.fullname" . }}-ca-config
+  labels:
+    {{- include "omni-autoscaler.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    address: "localhost:8086"
