@@ -120,6 +120,10 @@ func TestStepCreateVM_WiresAllExpectedPatches(t *testing.T) {
 			kind:    "advertised-subnets",
 			because: "without the advertised-subnets patch, multi-NIC clusters have unstable etcd / kubelet bindings (Omni issue context for the v0.13.0 multi-NIC work)",
 		},
+		{
+			kind:    "nic-interfaces",
+			because: "without the nic-interfaces patch, additional NICs come up link-only with fe80::/64 and no IPv4 — the exact v0.15.5 regression this patch was added to fix",
+		},
 	}
 
 	for _, tc := range cases {
@@ -164,15 +168,29 @@ func collectPatchNameKinds(t *testing.T) map[string]struct{} {
 			}
 
 			ident, ok := call.Fun.(*ast.Ident)
-			if !ok || ident.Name != "patchName" {
+			if !ok {
 				return true
 			}
 
-			if len(call.Args) < 1 {
+			// patchName(kind, requestID): first arg is the kind string literal.
+			// applyConfigPatch(ctx, pctx, kind, requestID, data): third arg
+			// (index 2) is the kind string literal — the wrapper is the idiomatic
+			// call site after the v0.16 telemetry refactor, so both paths count.
+			var kindArgIdx int
+			switch ident.Name {
+			case "patchName":
+				kindArgIdx = 0
+			case "applyConfigPatch":
+				kindArgIdx = 2
+			default:
 				return true
 			}
 
-			lit, ok := call.Args[0].(*ast.BasicLit)
+			if len(call.Args) <= kindArgIdx {
+				return true
+			}
+
+			lit, ok := call.Args[kindArgIdx].(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
 				return true
 			}

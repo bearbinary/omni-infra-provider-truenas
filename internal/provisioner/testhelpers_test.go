@@ -4,6 +4,13 @@ import (
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/client"
 )
 
+// boolPtr returns a pointer to b. Used by tests constructing AdditionalNIC
+// values with an explicit DHCP tri-state (nil = default, *true = explicit on,
+// *false = explicit off). Kept here so any _test.go in the package can reuse
+// without re-declaring — avoids the v0.16-session bug of two test files
+// carrying private copies that would drift.
+func boolPtr(b bool) *bool { return &b }
+
 // managedVM returns a client.VM that carries the Omni ownership marker so
 // deprovision / adoption tests can exercise the happy path without repeating
 // the description string at every call site. Use this helper in place of

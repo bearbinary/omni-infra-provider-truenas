@@ -20,10 +20,10 @@
     "disk_size": {
       "type": "integer",
       "title": "Disk Size (GiB)",
-      "minimum": 5,
+      "minimum": 20,
       "maximum": 1048576,
       "default": 40,
-      "description": "Root disk size in GiB (max 1 PiB)"
+      "description": "Root disk size in GiB (max 1 PiB). Must be at least 20 GiB — control-plane nodes need room for the Talos image plus kube-apiserver, etcd, scheduler, controller-manager, CNI, and CoreDNS image pulls during bootstrap. Undersized root disks trigger kubelet image GC mid-install and etcd never comes up."
     },
     "pool": {
       "type": "string",
@@ -168,6 +168,25 @@
             "minimum": 576,
             "maximum": 9216,
             "description": "MTU size for this NIC. Omit to use the host default (typically 1500). Set to 9000 for jumbo frames on storage networks. The host bridge/VLAN must also be configured for the same MTU."
+          },
+          "dhcp": {
+            "type": "boolean",
+            "description": "Run a DHCPv4 client on this NIC. Omit to use the default (true when no static addresses are set, false when addresses are supplied). Set true explicitly to run DHCP alongside static addresses."
+          },
+          "addresses": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F:.]+/[0-9]{1,3}$",
+              "description": "IPv4 or IPv6 address in CIDR form, e.g., 10.20.0.5/24 or fd00::5/64"
+            },
+            "description": "Static addresses assigned to this NIC. Leave empty for DHCP-only. The pattern catches 'forgot the /24' typos at MachineClass apply time rather than at provision time — the Go-side validator still runs net.ParseCIDR and rejects semantically-invalid values."
+          },
+          "gateway": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F:.]+$",
+            "description": "Optional default route advertised via this NIC (IP address, not CIDR). Only meaningful when addresses are set — DHCP-only NICs get their gateway from the DHCP server. The pattern is intentionally loose; the Go-side validator runs net.ParseIP plus unicast/family/on-link checks."
           }
         },
         "required": ["network_interface"]

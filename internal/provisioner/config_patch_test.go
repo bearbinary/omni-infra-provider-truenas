@@ -250,10 +250,11 @@ func TestPatchName_DistinctAcrossKinds(t *testing.T) {
 	id := "talos-preview-workers-crpngp"
 	dataVol := patchName("data-volumes", id)
 	mtu := patchName("nic-mtu", id)
+	ifaces := patchName("nic-interfaces", id)
 	subnets := patchName("advertised-subnets", id)
 	longhorn := patchName("longhorn-ops", id)
 
-	names := []string{dataVol, mtu, subnets, longhorn}
+	names := []string{dataVol, mtu, ifaces, subnets, longhorn}
 	seen := make(map[string]bool)
 	for _, n := range names {
 		assert.False(t, seen[n], "duplicate patch name across kinds: %q — each (kind, request) pair must map to a unique resource name", n)
@@ -398,4 +399,352 @@ func TestLonghornVolumeName_MatchesMountPath(t *testing.T) {
 
 	assert.Equal(t, "longhorn", LonghornVolumeName,
 		"LonghornVolumeName must equal \"longhorn\" — changing it breaks the implicit contract that /var/mnt/<name> = /var/mnt/longhorn, which is what the Longhorn operational patch's bind mount source points to. If you change this, also update buildLonghornOperationalPatch.")
+}
+
+// --- Additional-NIC Interfaces Config Patch Tests ---
+//
+// Regression for v0.15.5: the provider attached additional NICs to the VM
+// at the hypervisor but emitted no machine-config patch to configure them.
+// Talos only DHCPs the primary link by default, so eth1 came up with
+// link-local IPv6 only — VMs were effectively single-homed despite being
+// provisioned multi-NIC. Observed on talos-home workers where
+// `talosctl get addresses` showed eth1 with only fe80::/64. Fixed by
+// emitting a per-NIC deviceSelector patch that carries dhcp, addresses,
+// and an optional default-route gateway.
+
+func TestResolveNICDHCP_NilDefaultsToTrueWhenNoAddresses(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, resolveNICDHCP(AdditionalNIC{NetworkInterface: "br200"}),
+		"nil DHCP + no static addresses is the default multi-NIC case — DHCP must be on or the link stays IPv4-less (the whole v0.15.5 bug)")
+}
+
+func TestResolveNICDHCP_NilDefaultsToFalseWhenAddressesSet(t *testing.T) {
+	t.Parallel()
+
+	nic := AdditionalNIC{NetworkInterface: "br200", Addresses: []string{"10.20.0.5/24"}}
+	assert.False(t, resolveNICDHCP(nic),
+		"unset DHCP with static addresses defaults off — user signaled static intent by providing addresses; mixing DHCP + static requires explicit DHCP: true")
+}
+
+func TestResolveNICDHCP_ExplicitTrueWins(t *testing.T) {
+	t.Parallel()
+
+	nic := AdditionalNIC{
+		NetworkInterface: "br200",
+		Addresses:        []string{"10.20.0.5/24"},
+		DHCP:             boolPtr(true),
+	}
+	assert.True(t, resolveNICDHCP(nic), "explicit DHCP: true must beat the static-default heuristic")
+}
+
+func TestResolveNICDHCP_ExplicitFalseWins(t *testing.T) {
+	t.Parallel()
+
+	nic := AdditionalNIC{
+		NetworkInterface: "br200",
+		DHCP:             boolPtr(false),
+	}
+	assert.False(t, resolveNICDHCP(nic),
+		"explicit DHCP: false must keep DHCP off even without static addresses — operator opted the NIC out of autoconfig entirely")
+}
+
+func TestBuildAdditionalNICInterfacesPatch_SingleDHCPNIC(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "02:cb:66:73:43:7b", dhcp: true},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, data)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	interfaces := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)
+	require.Len(t, interfaces, 1)
+
+	iface := interfaces[0].(map[string]any)
+	selector := iface["deviceSelector"].(map[string]any)
+	assert.Equal(t, "02:cb:66:73:43:7b", selector["hardwareAddr"])
+	assert.Equal(t, true, iface["dhcp"])
+	_, hasAddresses := iface["addresses"]
+	assert.False(t, hasAddresses, "pure DHCP NIC must not carry an addresses[] key")
+	_, hasRoutes := iface["routes"]
+	assert.False(t, hasRoutes, "no gateway set → no routes[] emitted")
+}
+
+func TestBuildAdditionalNICInterfacesPatch_DHCPFalse(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "02:aa:aa:aa:aa:aa", dhcp: false},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	iface := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)[0].(map[string]any)
+	assert.Equal(t, false, iface["dhcp"],
+		"dhcp: false must serialize as a literal false — Talos interprets a missing dhcp field as the platform default, which for additional NICs means no DHCP client. Serializing the false is defensive against that ambiguity.")
+}
+
+func TestBuildAdditionalNICInterfacesPatch_StaticAddress(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "02:aa:aa:aa:aa:aa", dhcp: false, addresses: []string{"10.20.0.5/24"}},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	iface := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)[0].(map[string]any)
+	assert.Equal(t, false, iface["dhcp"])
+	addrs := iface["addresses"].([]any)
+	assert.Equal(t, []any{"10.20.0.5/24"}, addrs)
+}
+
+func TestBuildAdditionalNICInterfacesPatch_StaticWithGateway(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{
+			mac:       "02:aa:aa:aa:aa:aa",
+			dhcp:      false,
+			addresses: []string{"10.20.0.5/24"},
+			gateway:   "10.20.0.1",
+		},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	iface := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)[0].(map[string]any)
+	routes := iface["routes"].([]any)
+	require.Len(t, routes, 1)
+
+	route := routes[0].(map[string]any)
+	assert.Equal(t, "0.0.0.0/0", route["network"])
+	assert.Equal(t, "10.20.0.1", route["gateway"])
+}
+
+func TestBuildAdditionalNICInterfacesPatch_DHCPPlusStatic(t *testing.T) {
+	t.Parallel()
+
+	// User explicitly wants both — DHCP for default addressing plus a
+	// static alias for a known service IP on the same NIC.
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "02:aa:aa:aa:aa:aa", dhcp: true, addresses: []string{"10.20.0.5/32"}},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	iface := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)[0].(map[string]any)
+	assert.Equal(t, true, iface["dhcp"])
+	assert.Equal(t, []any{"10.20.0.5/32"}, iface["addresses"].([]any),
+		"DHCP + static must coexist — Talos supports assigning both dynamic and static addresses to one link")
+}
+
+func TestBuildAdditionalNICInterfacesPatch_MultipleNICsMixed(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "02:11:11:11:11:11", dhcp: true},
+		{mac: "02:22:22:22:22:22", dhcp: false, addresses: []string{"10.20.0.5/24"}, gateway: "10.20.0.1"},
+		{mac: "02:33:33:33:33:33", dhcp: false},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	interfaces := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)
+	assert.Len(t, interfaces, 3)
+}
+
+func TestBuildAdditionalNICInterfacesPatch_Empty(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch(nil)
+	require.NoError(t, err)
+	assert.Nil(t, data, "empty NIC list must return nil so the caller skips CreateConfigPatch — otherwise we create an empty patch resource every reconcile")
+}
+
+func TestBuildAdditionalNICInterfacesPatch_SkipsEmptyMAC(t *testing.T) {
+	t.Parallel()
+
+	// If one NIC attach failed to return a MAC, don't poison the whole
+	// patch — skip the empty entry and emit the patch for the remaining
+	// NICs. An empty hardwareAddr selector would match every interface
+	// and apply this config to the primary NIC too.
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "02:aa:aa:aa:aa:aa", dhcp: true},
+		{mac: "", dhcp: true},
+		{mac: "02:bb:bb:bb:bb:bb", dhcp: true},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	interfaces := patch["machine"].(map[string]any)["network"].(map[string]any)["interfaces"].([]any)
+	assert.Len(t, interfaces, 2, "empty MAC must be dropped, not emitted as an open-match selector")
+}
+
+func TestBuildAdditionalNICInterfacesPatch_AllEmptyReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "", dhcp: true},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, data, "if every MAC is empty there's nothing to patch — return nil so the caller skips the empty create")
+}
+
+func TestBuildAdditionalNICInterfacesPatch_JSONStructure(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "aa:bb:cc:dd:ee:ff", dhcp: true},
+	})
+	require.NoError(t, err)
+
+	expected := `{"machine":{"network":{"interfaces":[{"deviceSelector":{"hardwareAddr":"aa:bb:cc:dd:ee:ff"},"dhcp":true}]}}}`
+
+	var got, want any
+	json.Unmarshal(data, &got)
+	json.Unmarshal([]byte(expected), &want)
+	assert.Equal(t, want, got)
+}
+
+// --- collectNICInterfaceConfigs (caller-seam unit tests) ---
+//
+// Regression guard for the wiring in stepCreateVM. The per-NIC attach loop
+// builds a parallel attachedMACs slice (one MAC per NIC index, "" on skip),
+// then collectNICInterfaceConfigs turns the (NICs, MACs) pair into the
+// patch-builder input plus the aggregate count used for the Info log. Unit
+// tests here pin the seam behavior without needing a live provision.Context.
+
+func TestCollectNICInterfaceConfigs_EmptyInputs(t *testing.T) {
+	t.Parallel()
+
+	configs, agg := collectNICInterfaceConfigs(nil, nil)
+	assert.Nil(t, configs)
+	assert.Equal(t, nicInterfaceAggregate{}, agg)
+}
+
+func TestCollectNICInterfaceConfigs_AllDHCP(t *testing.T) {
+	t.Parallel()
+
+	nics := []AdditionalNIC{
+		{NetworkInterface: "br200"},
+		{NetworkInterface: "br201"},
+	}
+	macs := []string{"02:aa:aa:aa:aa:aa", "02:bb:bb:bb:bb:bb"}
+
+	configs, agg := collectNICInterfaceConfigs(nics, macs)
+
+	require.Len(t, configs, 2)
+	assert.Equal(t, "02:aa:aa:aa:aa:aa", configs[0].mac)
+	assert.True(t, configs[0].dhcp)
+	assert.Empty(t, configs[0].addresses)
+	assert.Equal(t, nicInterfaceAggregate{DHCPNICs: 2}, agg)
+}
+
+func TestCollectNICInterfaceConfigs_MixedModes(t *testing.T) {
+	t.Parallel()
+
+	b := false
+	nics := []AdditionalNIC{
+		{NetworkInterface: "br200"}, // DHCP
+		{NetworkInterface: "br201", Addresses: []string{"10.20.0.5/24"}, Gateway: "10.20.0.1"},                          // static+gateway
+		{NetworkInterface: "br202", DHCP: &b},                                                                           // opt-out
+		{NetworkInterface: "br203", DHCP: func() *bool { x := true; return &x }(), Addresses: []string{"10.30.0.7/24"}}, // both
+	}
+	macs := []string{"02:aa:aa:aa:aa:aa", "02:bb:bb:bb:bb:bb", "02:cc:cc:cc:cc:cc", "02:dd:dd:dd:dd:dd"}
+
+	configs, agg := collectNICInterfaceConfigs(nics, macs)
+
+	require.Len(t, configs, 4)
+	assert.Equal(t, 2, agg.DHCPNICs, "NIC 0 (default, no addresses) + NIC 3 (explicit true) = 2 DHCP; NIC 1 flipped off by addresses-set default, NIC 2 explicit false")
+	assert.Equal(t, 2, agg.StaticNICs, "NIC 1 and NIC 3 both carry static addresses")
+	assert.Equal(t, 1, agg.GatewayNICs, "only NIC 1 has a gateway")
+}
+
+func TestCollectNICInterfaceConfigs_EmptyMACDroppedFromConfigsOnly(t *testing.T) {
+	t.Parallel()
+
+	// Attach returning no MAC means this NIC is silently dropped from the
+	// patch (the deviceSelector would otherwise open-match the primary NIC).
+	// Confirm the drop happens in the collector, not elsewhere — and that
+	// the aggregate does NOT double-count the dropped NIC.
+	nics := []AdditionalNIC{
+		{NetworkInterface: "br200"},                                      // attached OK
+		{NetworkInterface: "br201", Addresses: []string{"10.20.0.5/24"}}, // attach returned no MAC
+		{NetworkInterface: "br202"},                                      // attached OK
+	}
+	macs := []string{"02:aa:aa:aa:aa:aa", "", "02:cc:cc:cc:cc:cc"}
+
+	configs, agg := collectNICInterfaceConfigs(nics, macs)
+
+	require.Len(t, configs, 2, "empty MAC entry must be skipped")
+	assert.Equal(t, "02:aa:aa:aa:aa:aa", configs[0].mac)
+	assert.Equal(t, "02:cc:cc:cc:cc:cc", configs[1].mac)
+	assert.Equal(t, 2, agg.DHCPNICs)
+	assert.Equal(t, 0, agg.StaticNICs,
+		"the dropped NIC (br201) had static addresses but must NOT count — it never made it to the patch, so the Info log shouldn't claim a static NIC was applied")
+}
+
+func TestCollectNICInterfaceConfigs_UsesResolvedMACNotDeclaredInput(t *testing.T) {
+	t.Parallel()
+
+	// The MAC that lands in the patch MUST be the MAC returned by
+	// client.AddNICWithConfig (post-collision-resolution), NOT anything
+	// derived from the MachineClass. The caller gets this right by passing
+	// the resolved MAC in attachedMACs[i]. Pin that contract here.
+	nics := []AdditionalNIC{
+		{NetworkInterface: "br200"},
+	}
+	macs := []string{"02:99:99:99:99:99"} // resolved/attached MAC
+
+	configs, _ := collectNICInterfaceConfigs(nics, macs)
+	require.Len(t, configs, 1)
+	assert.Equal(t, "02:99:99:99:99:99", configs[0].mac,
+		"patch MAC must come from attachedMACs (the resolved/post-collision MAC) — not from the declared NIC")
+}
+
+func TestCollectNICInterfaceConfigs_PanicsOnLengthMismatch(t *testing.T) {
+	t.Parallel()
+
+	assert.Panics(t, func() {
+		collectNICInterfaceConfigs(
+			[]AdditionalNIC{{NetworkInterface: "br200"}, {NetworkInterface: "br201"}},
+			[]string{"02:aa:aa:aa:aa:aa"}, // only one MAC for two NICs
+		)
+	}, "length mismatch between nics and attachedMACs is a caller bug — panic rather than silently mis-pair")
+}
+
+// Pins the worker-safe shape: no cluster.* section. The v0.15.0–v0.15.3
+// etcd-on-worker regression taught us that anything under cluster.* fails
+// Talos validation on workers. This patch is cluster-free by design —
+// applied to every multi-NIC machine regardless of role.
+func TestBuildAdditionalNICInterfacesPatch_NoClusterSection(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildAdditionalNICInterfacesPatch([]nicInterfaceConfig{
+		{mac: "02:cb:66:73:43:7b", dhcp: true},
+	})
+	require.NoError(t, err)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	_, hasCluster := patch["cluster"]
+	assert.False(t, hasCluster, "interfaces patch must not contain a cluster.* section — Talos rejects cluster config on workers")
 }

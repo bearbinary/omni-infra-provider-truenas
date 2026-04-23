@@ -581,7 +581,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		}
 
 		if patchData != nil {
-			if cpErr := pctx.CreateConfigPatch(ctx, patchName("data-volumes", requestID), patchData); cpErr != nil {
+			if cpErr := applyConfigPatch(ctx, pctx, "data-volumes", requestID, patchData); cpErr != nil {
 				return fmt.Errorf("failed to apply UserVolumeConfig patch: %w", cpErr)
 			}
 
@@ -607,7 +607,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 				return fmt.Errorf("failed to build Longhorn operational patch: %w", longhornErr)
 			}
 
-			if cpErr := pctx.CreateConfigPatch(ctx, patchName("longhorn-ops", requestID), longhornPatch); cpErr != nil {
+			if cpErr := applyConfigPatch(ctx, pctx, "longhorn-ops", requestID, longhornPatch); cpErr != nil {
 				return fmt.Errorf("failed to apply Longhorn operational patch: %w", cpErr)
 			}
 
@@ -662,7 +662,10 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	// Attach additional NICs
-	var mtuPatches []nicMTUConfig
+	var (
+		mtuPatches   []nicMTUConfig
+		attachedMACs = make([]string, len(data.AdditionalNICs))
+	)
 
 	for i, nic := range data.AdditionalNICs {
 		nicCfg := client.NICConfig{
@@ -708,18 +711,41 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			mac = m
 		}
 
+		attachedMACs[i] = mac
+
+		if mac == "" {
+			// TrueNAS returned success but no MAC attribute on the attached
+			// device. Without a MAC, the Talos config patch's deviceSelector
+			// has nothing to match on, so this NIC is silently skipped from
+			// interface config — VM will boot single-homed on this link. Loud
+			// Warn so SRE can correlate when a multi-homed VM comes up with
+			// fewer IPs than expected.
+			logger.Warn("additional NIC attached but TrueNAS returned no MAC — skipping interface config patch for this NIC; VM will boot single-homed on this link",
+				zap.Int("index", i),
+				zap.String("network_interface", nic.NetworkInterface),
+				zap.String("vm_name", vmName),
+			)
+		}
+
 		if nic.MTU > 0 && mac != "" {
 			mtuPatches = append(mtuPatches, nicMTUConfig{mac: mac, mtu: nic.MTU})
 		}
+
+		dhcp := resolveNICDHCP(nic)
 
 		logger.Debug("attached additional NIC",
 			zap.Int("index", i),
 			zap.String("network_interface", nic.NetworkInterface),
 			zap.String("mac", mac),
 			zap.Int("mtu", nic.MTU),
+			zap.Bool("dhcp", dhcp),
+			zap.Int("static_addresses", len(nic.Addresses)),
+			zap.String("gateway", nic.Gateway),
 			zap.String("vm_name", vmName),
 		)
 	}
+
+	nicInterfaces, nicAggregate := collectNICInterfaceConfigs(data.AdditionalNICs, attachedMACs)
 
 	// Apply MTU config patches for NICs with custom MTU
 	if len(mtuPatches) > 0 {
@@ -728,7 +754,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			return fmt.Errorf("failed to build MTU config patch: %w", patchErr)
 		}
 
-		if cpErr := pctx.CreateConfigPatch(ctx, patchName("nic-mtu", requestID), patchData); cpErr != nil {
+		if cpErr := applyConfigPatch(ctx, pctx, "nic-mtu", requestID, patchData); cpErr != nil {
 			return fmt.Errorf("failed to apply MTU config patch: %w", cpErr)
 		}
 
@@ -736,6 +762,34 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 			zap.Int("nic_count", len(mtuPatches)),
 			zap.String("vm_name", vmName),
 		)
+	}
+
+	// Apply interface config patch for every additional NIC. Talos only
+	// configures the primary link by default — without this patch,
+	// additional NICs come up with link-local IPv6 only and never acquire
+	// an IPv4 address (DHCP or static), making the VM effectively
+	// single-homed. Patch covers DHCP on/off, static addresses, and an
+	// optional default-route gateway. Matching by MAC ensures the patch
+	// survives Talos interface-name shifts across reprovisions.
+	if len(nicInterfaces) > 0 {
+		patchData, patchErr := buildAdditionalNICInterfacesPatch(nicInterfaces)
+		if patchErr != nil {
+			return fmt.Errorf("failed to build additional-NIC interfaces config patch: %w", patchErr)
+		}
+
+		if patchData != nil {
+			if cpErr := applyConfigPatch(ctx, pctx, "nic-interfaces", requestID, patchData); cpErr != nil {
+				return fmt.Errorf("failed to apply additional-NIC interfaces config patch: %w", cpErr)
+			}
+
+			logger.Info("applied additional-NIC interfaces config patch",
+				zap.Int("nic_count", len(nicInterfaces)),
+				zap.Int("dhcp_nics", nicAggregate.DHCPNICs),
+				zap.Int("static_nics", nicAggregate.StaticNICs),
+				zap.Int("gateway_nics", nicAggregate.GatewayNICs),
+				zap.String("vm_name", vmName),
+			)
+		}
 	}
 
 	// Apply advertised_subnets config patch if set. The patch content depends
@@ -759,7 +813,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		}
 
 		if patchData != nil {
-			if cpErr := pctx.CreateConfigPatch(ctx, patchName("advertised-subnets", requestID), patchData); cpErr != nil {
+			if cpErr := applyConfigPatch(ctx, pctx, "advertised-subnets", requestID, patchData); cpErr != nil {
 				return fmt.Errorf("failed to apply advertised_subnets config patch: %w", cpErr)
 			}
 
@@ -782,7 +836,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		case subnet != "":
 			patchData, patchErr := buildRoleAwareSubnetsPatch(subnet)
 			if patchErr == nil && patchData != nil {
-				if cpErr := pctx.CreateConfigPatch(ctx, patchName("advertised-subnets", requestID), patchData); cpErr != nil {
+				if cpErr := applyConfigPatch(ctx, pctx, "advertised-subnets", requestID, patchData); cpErr != nil {
 					return fmt.Errorf("failed to apply auto-detected advertised_subnets config patch: %w", cpErr)
 				}
 
@@ -955,6 +1009,26 @@ func recordProvisionError(ctx context.Context, logger *zap.Logger, err error) {
 	}
 }
 
+// applyConfigPatch wraps pctx.CreateConfigPatch with timing telemetry keyed
+// by patch_kind. Every patch kind the provider emits (data-volumes,
+// longhorn-ops, nic-mtu, nic-interfaces, advertised-subnets) goes through
+// this helper so operators can dashboard/alert on "which patch kind is
+// failing or slow" without grepping step-duration logs.
+//
+// The helper records the duration for BOTH success and failure so p99
+// spikes on a failing Omni backend show up in the histogram — otherwise
+// a slow-then-failing RPC leaves no latency trace.
+func applyConfigPatch(ctx context.Context, pctx provision.Context[*resources.Machine], kind, requestID string, data []byte) error {
+	start := time.Now()
+	err := pctx.CreateConfigPatch(ctx, patchName(kind, requestID), data)
+
+	if telemetry.ConfigPatchDuration != nil {
+		telemetry.ConfigPatchDuration.Record(ctx, time.Since(start).Seconds(), telemetry.WithPatchKind(kind))
+	}
+
+	return err
+}
+
 // categorizeError returns a category string for a provision error.
 func categorizeError(err error) string {
 	if err == nil {
@@ -967,6 +1041,19 @@ func categorizeError(err error) string {
 		return "pool_not_found"
 	case strings.Contains(errMsg, "ENOSPC") || strings.Contains(errMsg, "pool is full"):
 		return "pool_full"
+	// `config_invalid` precedes `nic_invalid` so MachineClass validation
+	// errors (wrapped via "invalid MachineClass config: %w" in stepCreateVM)
+	// route to their own bucket even when the inner message mentions
+	// `additional_nics`. Without this, an operator typo on a CIDR pages the
+	// same alert path as a real TrueNAS NIC-attach failure.
+	case strings.Contains(errMsg, "invalid MachineClass config"):
+		return "config_invalid"
+	// `config_patch` covers every CreateConfigPatch failure path (data-volumes,
+	// longhorn-ops, nic-mtu, nic-interfaces, advertised-subnets). Without this,
+	// a patch-emission regression shows up as `unknown` on the dashboard and
+	// on-call has to grep logs to attribute which patch failed.
+	case strings.Contains(errMsg, "config patch"):
+		return "config_patch"
 	case strings.Contains(errMsg, "network_interface") || strings.Contains(errMsg, "nic_attach") || strings.Contains(errMsg, "NIC"):
 		return "nic_invalid"
 	case strings.Contains(errMsg, "reconnect") || strings.Contains(errMsg, "unreachable"):

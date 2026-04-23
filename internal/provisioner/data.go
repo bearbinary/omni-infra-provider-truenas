@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"fmt"
+	"net"
 	"reflect"
 	"regexp"
 	"strings"
@@ -17,6 +18,26 @@ type AdditionalNIC struct {
 	NetworkInterface string `yaml:"network_interface"` // Required: bridge, VLAN, or physical interface
 	Type             string `yaml:"type,omitempty"`    // VIRTIO (default) or E1000
 	MTU              int    `yaml:"mtu,omitempty"`     // MTU size (default: 0 = use host default, typically 1500). Set to 9000 for jumbo frames.
+
+	// DHCP controls whether Talos runs a DHCPv4 client on this NIC.
+	//   - nil / unset → default is true when Addresses is empty, false when Addresses is set
+	//   - explicit true → DHCP always runs (can coexist with static Addresses)
+	//   - explicit false → no DHCP, link stays configured only by Addresses (if any)
+	// Without this patch Talos only DHCPs the primary link by default, so
+	// additional NICs would come up with link-local IPv6 only.
+	DHCP *bool `yaml:"dhcp,omitempty"`
+
+	// Addresses are static IPv4/IPv6 addresses in CIDR form assigned to
+	// this NIC (e.g., "10.20.0.5/24"). Optional — leave empty for
+	// DHCP-only. Setting Addresses without an explicit DHCP value turns
+	// DHCP off (static-only); set DHCP: true explicitly to run both.
+	Addresses []string `yaml:"addresses,omitempty"`
+
+	// Gateway is an optional default route advertised via this NIC (IP,
+	// not CIDR). Only meaningful with Addresses — a DHCP-only NIC gets
+	// routes from the DHCP server. Set when the secondary segment needs
+	// a different default route than the primary NIC.
+	Gateway string `yaml:"gateway,omitempty"`
 }
 
 // AdditionalDisk describes an extra disk to attach to the VM beyond the root disk.
@@ -194,8 +215,30 @@ func validateSafeName(field, value string) error {
 	return nil
 }
 
-// MinDiskSizeGiB is the minimum allowed size for any VM-attached disk (root or additional).
+// MinDiskSizeGiB is the minimum allowed size for any additional data disk
+// (a disk attached alongside the Talos system disk). 5 GiB is enough for
+// small data volumes, log sidecars, and test fixtures; workloads that
+// need more tune per-MachineClass via `additional_disks`.
 const MinDiskSizeGiB = 5
+
+// MinRootDiskSizeGiB is the floor for the VM's primary (OS / system)
+// disk. Must be large enough to hold the Talos image plus every image
+// a Kubernetes control-plane node pulls during cluster bootstrap:
+// kube-apiserver, kube-controller-manager, kube-scheduler, etcd, the
+// kubelet sidecars, the CNI image, CoreDNS, and an overhead margin
+// for update layering. Empirically 20 GiB is the smallest number
+// where a CP node survives a full 1.30+ bootstrap without the kubelet
+// hitting DiskPressure-triggered image garbage collection mid-install.
+//
+// Observed failure mode when this was set to 5 GiB (the additional-disk
+// floor applied to the root): control-plane nodes entered a loop of
+// "failed to pull image: no space left on device" → GC → re-pull, and
+// etcd never came up because its image was evicted mid-write.
+//
+// Workers could technically get away with less, but the simpler policy
+// is one root-disk minimum for every role — a 20 GiB zvol is negligible
+// overhead on any TrueNAS pool we ship against.
+const MinRootDiskSizeGiB = 20
 
 // MaxDiskSizeGiB mirrors the JSON schema ceiling (1 PiB). Schema is the UX-level
 // gate; this Go-side check is defense-in-depth for callers that bypass schema
@@ -208,6 +251,17 @@ const (
 	MaxCPUs      = 512
 	MaxMemoryMiB = 16777216
 	MinMemoryMiB = 1024
+)
+
+// MaxAdditionalNICs and MaxAddressesPerNIC cap per-MachineClass input size.
+// Without them a MachineClass with 10k entries serializes to a multi-MB
+// ConfigPatchRequest resource that Omni stores and every reconcile re-fetches
+// — trivial operator-input DoS vector. 16 is the TrueNAS practical ceiling
+// for NICs on a single VM and generously covers dual-stack + a few VIPs
+// worth of static addresses on one link.
+const (
+	MaxAdditionalNICs  = 16
+	MaxAddressesPerNIC = 16
 )
 
 // Validate checks the Data config for logical errors.
@@ -236,8 +290,14 @@ func (d *Data) Validate() error {
 		return fmt.Errorf("disk_size must be >= 0, got %d", d.DiskSize)
 	}
 
-	if d.DiskSize != 0 && d.DiskSize < MinDiskSizeGiB {
-		return fmt.Errorf("disk_size must be >= %d GiB, got %d", MinDiskSizeGiB, d.DiskSize)
+	// The OS / system disk floor is deliberately higher than the
+	// additional-disk floor: a Talos control-plane node pulls
+	// kube-apiserver, etcd, scheduler, controller-manager, CNI, and
+	// CoreDNS during bootstrap. Undersized root disks trigger the
+	// kubelet's image GC loop mid-install and etcd never comes up.
+	// See MinRootDiskSizeGiB's docstring for the incident history.
+	if d.DiskSize != 0 && d.DiskSize < MinRootDiskSizeGiB {
+		return fmt.Errorf("disk_size must be >= %d GiB — control-plane nodes need room for the Talos image plus kube-* and etcd image pulls during bootstrap (got %d)", MinRootDiskSizeGiB, d.DiskSize)
 	}
 
 	if d.DiskSize > MaxDiskSizeGiB {
@@ -333,6 +393,10 @@ func (d *Data) Validate() error {
 		}
 	}
 
+	if len(d.AdditionalNICs) > MaxAdditionalNICs {
+		return fmt.Errorf("additional_nics: at most %d NICs supported (got %d) — caps prevent operator-input DoS on the ConfigPatchRequest resource size", MaxAdditionalNICs, len(d.AdditionalNICs))
+	}
+
 	seen := make(map[string]bool)
 
 	// Primary NIC is always in the "seen" set
@@ -343,6 +407,10 @@ func (d *Data) Validate() error {
 	for i, nic := range d.AdditionalNICs {
 		if nic.NetworkInterface == "" {
 			return fmt.Errorf("additional_nics[%d]: network_interface is required", i)
+		}
+
+		if len(nic.Addresses) > MaxAddressesPerNIC {
+			return fmt.Errorf("additional_nics[%d].addresses: at most %d addresses per NIC (got %d)", i, MaxAddressesPerNIC, len(nic.Addresses))
 		}
 
 		if err := validateSafeName(fmt.Sprintf("additional_nics[%d].network_interface", i), nic.NetworkInterface); err != nil {
@@ -362,6 +430,108 @@ func (d *Data) Validate() error {
 		if nic.MTU != 0 && (nic.MTU < 576 || nic.MTU > 9216) {
 			return fmt.Errorf("additional_nics[%d]: mtu must be between 576 and 9216, got %d", i, nic.MTU)
 		}
+
+		parsedAddrs := make([]*net.IPNet, 0, len(nic.Addresses))
+
+		for j, addr := range nic.Addresses {
+			ip, ipnet, cidrErr := net.ParseCIDR(addr)
+			if cidrErr != nil {
+				return fmt.Errorf("additional_nics[%d].addresses[%d]: %q is not a valid CIDR (e.g. \"10.0.0.5/24\") — %w", i, j, addr, cidrErr)
+			}
+
+			// Reject addresses that are not valid interface addresses. Any of
+			// these would either hijack routing (0.0.0.0/0), fail Linux's
+			// address-assign (multicast/loopback/broadcast), or act as a
+			// silent "attach but do nothing" (unspecified).
+			if ip.IsUnspecified() {
+				return fmt.Errorf("additional_nics[%d].addresses[%d]: %q is the unspecified address; not valid as an interface address", i, j, addr)
+			}
+
+			if ip.IsMulticast() {
+				return fmt.Errorf("additional_nics[%d].addresses[%d]: %q is a multicast address; not valid as an interface address", i, j, addr)
+			}
+
+			if ip.IsLoopback() {
+				return fmt.Errorf("additional_nics[%d].addresses[%d]: %q is a loopback address; not valid as an interface address", i, j, addr)
+			}
+
+			if ones, _ := ipnet.Mask.Size(); ones == 0 {
+				return fmt.Errorf("additional_nics[%d].addresses[%d]: %q uses a zero-length mask (default route); assigning /0 to an interface hijacks all routing", i, j, addr)
+			}
+
+			// Track the network (with IP embedded for reachability checks
+			// against the gateway below).
+			parsedAddrs = append(parsedAddrs, &net.IPNet{IP: ip, Mask: ipnet.Mask})
+		}
+
+		if nic.Gateway != "" {
+			ip := net.ParseIP(nic.Gateway)
+			if ip == nil {
+				return fmt.Errorf("additional_nics[%d].gateway: %q is not a valid IP address", i, nic.Gateway)
+			}
+
+			// Unicast check — reject obviously broken gateway IPs that would
+			// produce nonsense default routes (kernel rejects at apply) or
+			// silent black-holes (if the broken address happens to be
+			// reachable on the segment).
+			if ip.IsUnspecified() || ip.IsMulticast() || ip.IsLoopback() || ip.Equal(net.IPv4bcast) {
+				return fmt.Errorf("additional_nics[%d].gateway: %q is not a valid unicast IP (unspecified, multicast, loopback, and broadcast addresses are rejected)", i, nic.Gateway)
+			}
+
+			if len(nic.Addresses) == 0 {
+				return fmt.Errorf("additional_nics[%d]: gateway %q set without addresses — a gateway only applies to a statically-configured NIC", i, nic.Gateway)
+			}
+
+			// Family match: an IPv6 gateway needs at least one IPv6 address
+			// on the link (and vice-versa). Without this, the builder would
+			// emit an IPv4 default route (network: 0.0.0.0/0) pointing at an
+			// IPv6 gateway — Talos or Linux rejects at apply, or the node
+			// silently has no default route.
+			gwIsV4 := ip.To4() != nil
+			hasMatchingFamily := false
+			onLink := false
+
+			for _, cidr := range parsedAddrs {
+				addrIsV4 := cidr.IP.To4() != nil
+				if addrIsV4 == gwIsV4 {
+					hasMatchingFamily = true
+				}
+
+				if cidr.Contains(ip) {
+					onLink = true
+				}
+			}
+
+			if !hasMatchingFamily {
+				fam := "IPv6"
+				if gwIsV4 {
+					fam = "IPv4"
+				}
+
+				return fmt.Errorf("additional_nics[%d]: gateway %q is %s but none of the configured addresses are in that family — add an %s address or change the gateway", i, nic.Gateway, fam, fam)
+			}
+
+			if !onLink {
+				return fmt.Errorf("additional_nics[%d]: gateway %q is not on-link with any of the configured addresses %v — Talos/Linux will refuse to install the route", i, nic.Gateway, nic.Addresses)
+			}
+		}
+	}
+
+	// Only one additional NIC may declare a gateway. Multiple NICs each
+	// emitting a 0.0.0.0/0 default route with no distinguishing metric leads
+	// to kernel-defined non-deterministic routing — exactly the "traffic
+	// sometimes goes the wrong way" multi-homed failure mode, and
+	// exploitable by a malicious operator to flap the node between two
+	// upstream paths.
+	gatewayCount := 0
+	for _, nic := range d.AdditionalNICs {
+		if nic.Gateway != "" {
+			gatewayCount++
+		}
+	}
+
+	if gatewayCount > 1 {
+		return fmt.Errorf("additional_nics: at most one NIC may declare a gateway (got %d) — multiple default routes without distinct metrics cause non-deterministic routing", gatewayCount)
 	}
 
 	return nil

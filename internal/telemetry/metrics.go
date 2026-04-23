@@ -26,6 +26,14 @@ func WithPool(pool string) metric.MeasurementOption {
 	return metric.WithAttributes(attribute.String("pool", pool))
 }
 
+// WithPatchKind returns a metric option with the patch_kind attribute,
+// used to disambiguate `truenas.config_patch.duration` records across the
+// five ConfigPatchRequest kinds the provider emits (data-volumes,
+// longhorn-ops, nic-mtu, nic-interfaces, advertised-subnets).
+func WithPatchKind(kind string) metric.MeasurementOption {
+	return metric.WithAttributes(attribute.String("patch_kind", kind))
+}
+
 // Pre-defined metric instruments for the provider.
 var (
 	VMsProvisioned   metric.Int64Counter
@@ -48,6 +56,7 @@ var (
 	DeprovisionDuration metric.Float64Histogram
 	APICallDuration     metric.Float64Histogram
 	ISODownloadDuration metric.Float64Histogram
+	ConfigPatchDuration metric.Float64Histogram
 
 	// Connection & resilience
 	WSReconnects       metric.Int64Counter
@@ -128,6 +137,16 @@ func initMetrics() {
 		metric.WithDescription("Duration of TrueNAS API calls in seconds"),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
+	)
+	// ConfigPatchDuration tracks the per-RPC latency of pctx.CreateConfigPatch.
+	// Labeled by patch_kind so operators can isolate slow/failing patch types
+	// ("nic-interfaces is slow today" vs "Omni-side is slow for everything")
+	// without spelunking step-duration logs. Bucket boundaries mirror
+	// APICallDuration since both surface RPC-level latency.
+	ConfigPatchDuration, _ = meter.Float64Histogram("truenas.config_patch.duration",
+		metric.WithDescription("Duration of pctx.CreateConfigPatch calls by patch_kind"),
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
 	)
 	ISODownloadDuration, _ = meter.Float64Histogram("truenas.iso.download.duration",
 		metric.WithDescription("Duration of ISO download in seconds"),

@@ -186,6 +186,229 @@ func buildKubeletSubnetsPatch(advertisedSubnets string) ([]byte, error) {
 	return json.Marshal(patch)
 }
 
+// resolveNICDHCP applies the DHCP-default policy for AdditionalNIC:
+//   - explicit DHCP value wins (true or false)
+//   - nil pointer + no static addresses → default true (DHCP on)
+//   - nil pointer + static addresses     → default false (static-only)
+//
+// The pointer-based tri-state lets users distinguish "not set" (accept
+// the default) from "explicitly disabled" — e.g., a NIC with static
+// addresses AND DHCP on is reachable via both, set DHCP: true explicitly.
+func resolveNICDHCP(nic AdditionalNIC) bool {
+	if nic.DHCP != nil {
+		return *nic.DHCP
+	}
+
+	return len(nic.Addresses) == 0
+}
+
+// nicInterfaceAggregate counts configured NIC dimensions for operator-facing
+// rollout verification. Emitted at Info level alongside the patch so SRE can
+// confirm (without turning on Debug) which codepath the operator actually
+// reached: DHCP-only, static-addressed, or gateway-bearing.
+type nicInterfaceAggregate struct {
+	DHCPNICs    int
+	StaticNICs  int
+	GatewayNICs int
+}
+
+// collectNICInterfaceConfigs translates the per-NIC MachineClass spec +
+// post-attach MAC addresses into the patch-builder input. Pure function —
+// unit-testable without a live ProvisionContext, TrueNAS client, or VM.
+//
+// Inputs:
+//   - nics:         MachineClass AdditionalNICs in declared order
+//   - attachedMACs: one entry per NIC (same length/index) — the MAC returned
+//     by client.AddNICWithConfig, or "" if the attach returned
+//     no MAC. Empty-MAC entries are silently dropped (the
+//     patch's deviceSelector would otherwise open-match and
+//     apply to the primary NIC).
+//
+// Returns the per-NIC patch input plus an aggregate count of how many NICs
+// fall into each Talos-config bucket. Aggregate is used by the Info log at
+// the call site; the []nicInterfaceConfig is passed to
+// buildAdditionalNICInterfacesPatch.
+//
+// Panics if len(nics) != len(attachedMACs). That mismatch means the caller
+// skipped a NIC in the attach loop without recording a placeholder — a
+// programming error, not recoverable runtime state.
+func collectNICInterfaceConfigs(nics []AdditionalNIC, attachedMACs []string) ([]nicInterfaceConfig, nicInterfaceAggregate) {
+	if len(nics) != len(attachedMACs) {
+		panic(fmt.Sprintf("collectNICInterfaceConfigs: len(nics)=%d != len(attachedMACs)=%d — caller must record one MAC per NIC", len(nics), len(attachedMACs)))
+	}
+
+	var (
+		configs []nicInterfaceConfig
+		agg     nicInterfaceAggregate
+	)
+
+	for i, nic := range nics {
+		mac := attachedMACs[i]
+		if mac == "" {
+			continue
+		}
+
+		dhcp := resolveNICDHCP(nic)
+		configs = append(configs, nicInterfaceConfig{
+			mac:       mac,
+			dhcp:      dhcp,
+			addresses: nic.Addresses,
+			gateway:   nic.Gateway,
+		})
+
+		if dhcp {
+			agg.DHCPNICs++
+		}
+
+		if len(nic.Addresses) > 0 {
+			agg.StaticNICs++
+		}
+
+		if nic.Gateway != "" {
+			agg.GatewayNICs++
+		}
+	}
+
+	return configs, agg
+}
+
+// nicInterfaceConfig describes one additional NIC's desired Talos config
+// (DHCP on/off, static addresses, optional gateway). MAC identifies the
+// target link via deviceSelector so the config survives Talos interface-
+// name shifts across reprovision.
+type nicInterfaceConfig struct {
+	mac       string
+	dhcp      bool
+	addresses []string
+	gateway   string
+}
+
+// buildAdditionalNICInterfacesPatch returns a Talos machine config patch
+// that configures every supplied additional NIC (DHCP, static IPs, and/or
+// default route) via deviceSelector matching on MAC.
+//
+// Why: Talos's default platform config (nocloud, metal, …) only DHCPs the
+// primary link. Additional NICs attached by the provider come up at the
+// link layer but have no DHCP client and no static config, so they only
+// ever acquire a link-local IPv6 address — the VM is effectively
+// single-homed until the operator writes a manual per-machine config
+// patch. Emitting this patch at provision time makes additional NICs
+// usable out of the box, whether the segment runs DHCPv4 or needs
+// explicit static addressing.
+//
+// Observed on talos-home (multi-homed, 2 NICs per worker) running
+// v0.15.5: `talosctl get addresses` showed eth1 UP with only
+// link-local IPv6, never a DHCPv4 lease. `talosctl get links` confirmed
+// the second virtio_net was detected. No config patch configured the
+// link, so it stayed unused.
+//
+// Orthogonal to advertised_subnets — that pins kubelet/etcd to a
+// specific subnet but does not bring additional links up.
+//
+// MAC matching (not interface-name matching) is required because Talos's
+// predictable NIC enumeration can shift between boots (virtio order,
+// PCI discovery). The deterministic MACs the provider assigns already
+// survive reprovision, so the patch keeps working across VM recreates.
+//
+// Output (each NIC becomes one interfaces[] entry):
+//
+//	{
+//	  "machine": {
+//	    "network": {
+//	      "interfaces": [
+//	        {
+//	          "deviceSelector": {"hardwareAddr": "02:..."},
+//	          "dhcp": true,
+//	          "addresses": ["10.20.0.5/24"],
+//	          "routes": [{"network": "0.0.0.0/0", "gateway": "10.20.0.1"}]
+//	        },
+//	        ...
+//	      ]
+//	    }
+//	  }
+//	}
+func buildAdditionalNICInterfacesPatch(nics []nicInterfaceConfig) ([]byte, error) {
+	if len(nics) == 0 {
+		return nil, nil
+	}
+
+	// Defensive reject: duplicate MACs mean collision detection upstream
+	// failed (or the caller wired the pre-collision MAC twice). Emitting
+	// two interfaces[] entries with the same deviceSelector.hardwareAddr
+	// leaves Talos last-write-wins — one config silently loses, probably
+	// not the one the operator wanted. Fail closed.
+	seen := make(map[string]int, len(nics))
+
+	for i, nic := range nics {
+		if nic.mac == "" {
+			continue
+		}
+
+		if prev, dup := seen[nic.mac]; dup {
+			return nil, fmt.Errorf("buildAdditionalNICInterfacesPatch: duplicate MAC %q at indices %d and %d — MAC collision resolution upstream must produce unique MACs per NIC", nic.mac, prev, i)
+		}
+
+		seen[nic.mac] = i
+	}
+
+	var interfaces []map[string]any
+
+	for _, nic := range nics {
+		if nic.mac == "" {
+			continue
+		}
+
+		iface := map[string]any{
+			"deviceSelector": map[string]any{
+				"hardwareAddr": nic.mac,
+			},
+			"dhcp": nic.dhcp,
+		}
+
+		if len(nic.addresses) > 0 {
+			// encoding/json handles []string inside a map[string]any — the
+			// outer map's value type is `any`, and []string assigns cleanly.
+			// No need to box into []any first.
+			iface["addresses"] = nic.addresses
+		}
+
+		if nic.gateway != "" {
+			// Pick the default-route network to match the gateway's address
+			// family. An IPv6 gateway with network "0.0.0.0/0" is rejected by
+			// Talos/Linux at apply time — emit "::/0" instead. Validation at
+			// the MachineClass level already enforces family-match between
+			// gateway and addresses, so we can pick confidently here.
+			network := "0.0.0.0/0"
+			if gwIP := net.ParseIP(nic.gateway); gwIP != nil && gwIP.To4() == nil {
+				network = "::/0"
+			}
+
+			iface["routes"] = []map[string]any{
+				{
+					"network": network,
+					"gateway": nic.gateway,
+				},
+			}
+		}
+
+		interfaces = append(interfaces, iface)
+	}
+
+	if len(interfaces) == 0 {
+		return nil, nil
+	}
+
+	patch := map[string]any{
+		"machine": map[string]any{
+			"network": map[string]any{
+				"interfaces": interfaces,
+			},
+		},
+	}
+
+	return json.Marshal(patch)
+}
+
 // LonghornVolumeName is the reserved AdditionalDisk.Name that signals
 // "this disk is for Longhorn, emit the Longhorn operational patch alongside
 // the UserVolumeConfig". Set implicitly by the storage_disk_size shorthand.

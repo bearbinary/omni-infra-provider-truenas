@@ -169,3 +169,46 @@ func TestSchemaDrift_AdditionalNICsMatchesSchema(t *testing.T) {
 			"schema.json additional_nics item property %q has no matching AdditionalNIC struct field", k)
 	}
 }
+
+// expectedAdditionalNICPropertyTypes pins the JSON-schema `type` for every
+// AdditionalNIC field. The field-presence check above catches "field
+// missing entirely" drift (the v0.15.5 gap). This pins "field present but
+// type drifted" — e.g., someone changing `addresses: type: array` to
+// `addresses: type: string` (expecting comma-separated) would break every
+// existing MachineClass with no other CI signal.
+func TestSchemaDrift_AdditionalNICsFieldTypes(t *testing.T) {
+	t.Parallel()
+
+	schemaProps := schemaProperties(t)
+	itemProps := nestedSchemaProperties(t, schemaProps, "additional_nics")
+
+	expected := map[string]string{
+		"network_interface": "string",
+		"type":              "string",
+		"mtu":               "integer",
+		"dhcp":              "boolean",
+		"addresses":         "array",
+		"gateway":           "string",
+	}
+
+	for field, wantType := range expected {
+		prop, ok := itemProps[field].(map[string]any)
+		require.Truef(t, ok, "additional_nics item property %q is missing or not an object", field)
+
+		gotType, _ := prop["type"].(string)
+		assert.Equalf(t, wantType, gotType,
+			"additional_nics item property %q: schema type drifted (want %q, got %q). Schema.json type drift is a silent break — existing MachineClass YAML that worked before would now fail JSON-schema validation.",
+			field, wantType, gotType)
+	}
+
+	// addresses is an array — pin the inner item type too. Otherwise someone
+	// could change items.type to "integer" and the outer assertion still passes.
+	addressesProp, ok := itemProps["addresses"].(map[string]any)
+	require.True(t, ok)
+
+	items, ok := addressesProp["items"].(map[string]any)
+	require.True(t, ok, "addresses property must declare items")
+
+	itemType, _ := items["type"].(string)
+	assert.Equal(t, "string", itemType, "addresses.items.type must be string — individual CIDR entries are strings")
+}

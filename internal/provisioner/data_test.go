@@ -205,6 +205,34 @@ func TestValidate_NumericBounds(t *testing.T) {
 		require.Error(t, d.Validate())
 	})
 
+	// disk_size floor pin (v0.16+ bumped from 5 → MinRootDiskSizeGiB). The old
+	// 5 GiB floor let control-planes ship with too little space for the Talos
+	// image + kube-apiserver/etcd/scheduler/controller-manager/CNI/CoreDNS
+	// image pulls during bootstrap. An undersized root disk triggers kubelet
+	// image GC mid-install and etcd never comes up — a silent failure mode
+	// because the VM boots but the cluster never stabilizes.
+	t.Run("disk_size below floor rejected", func(t *testing.T) {
+		d := base()
+		d.DiskSize = MinRootDiskSizeGiB - 1
+		err := d.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "disk_size must be >=")
+	})
+
+	t.Run("disk_size at floor accepted", func(t *testing.T) {
+		d := base()
+		d.DiskSize = MinRootDiskSizeGiB
+		require.NoError(t, d.Validate())
+	})
+
+	t.Run("disk_size 5 rejected (v0.16 floor bump from 5→20)", func(t *testing.T) {
+		d := base()
+		d.DiskSize = 5
+		err := d.Validate()
+		require.Error(t, err, "pre-v0.16 MachineClasses with disk_size=5 must now fail fast — the 5 GiB floor was insufficient for Talos + kube control-plane image pulls")
+		require.Contains(t, err.Error(), ">=")
+	})
+
 	t.Run("storage_disk_size above max rejected", func(t *testing.T) {
 		d := base()
 		d.StorageDiskSize = MaxDiskSizeGiB + 1

@@ -35,6 +35,20 @@ func TestRecordProvisionError_Categories(t *testing.T) {
 		{"image schematic", "failed to generate schematic", "image"},
 		{"image ISO", "failed to download ISO", "image"},
 		{"unknown error", "something completely different", "unknown"},
+		// `config_invalid` — MachineClass validation failures wrapped via
+		// "invalid MachineClass config: %w" must NOT route to nic_invalid even
+		// when the inner message mentions additional_nics. Regression guard
+		// against "operator typo pages the same alert as hypervisor regression".
+		{"config_invalid CIDR typo", `invalid MachineClass config: additional_nics[0].addresses[0]: "10.20.0.5" is not a valid CIDR`, "config_invalid"},
+		{"config_invalid gateway typo", `invalid MachineClass config: additional_nics[0].gateway: "not-an-ip" is not a valid IP address`, "config_invalid"},
+		{"config_invalid disk size", `invalid MachineClass config: disk_size must be >= 20 GiB`, "config_invalid"},
+		// `config_patch` — CreateConfigPatch failures across all five patch
+		// kinds. Without this, they fall to "unknown" and on-call can't
+		// attribute which patch broke.
+		{"config_patch build nic-interfaces", "failed to build additional-NIC interfaces config patch: invalid MAC", "config_patch"},
+		{"config_patch apply nic-interfaces", "failed to apply additional-NIC interfaces config patch: resource conflict", "config_patch"},
+		{"config_patch apply data-volumes", "failed to apply data-volumes config patch: connection refused", "config_patch"},
+		{"config_patch apply longhorn-ops", "failed to apply longhorn-ops config patch: timeout", "config_patch"},
 	}
 
 	for _, tc := range tests {

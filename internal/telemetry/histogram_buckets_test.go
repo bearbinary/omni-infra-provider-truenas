@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 // TestHistogramBuckets_MatchRecordedUnit asserts every Float64Histogram the
@@ -47,11 +47,11 @@ func TestHistogramBuckets_MatchRecordedUnit(t *testing.T) {
 	// mirrors production.
 	ctx := context.Background()
 	histograms := map[string]func(){
-		"truenas.api.duration":             func() { APICallDuration.Record(ctx, 0.050) },
-		"truenas.provision.duration":       func() { ProvisionDuration.Record(ctx, 0.050) },
-		"truenas.deprovision.duration":     func() { DeprovisionDuration.Record(ctx, 0.050) },
-		"truenas.iso.download.duration":    func() { ISODownloadDuration.Record(ctx, 0.050) },
-		"truenas.provision.step.duration":  func() { StepDuration.Record(ctx, 0.050) },
+		"truenas.api.duration":              func() { APICallDuration.Record(ctx, 0.050) },
+		"truenas.provision.duration":        func() { ProvisionDuration.Record(ctx, 0.050) },
+		"truenas.deprovision.duration":      func() { DeprovisionDuration.Record(ctx, 0.050) },
+		"truenas.iso.download.duration":     func() { ISODownloadDuration.Record(ctx, 0.050) },
+		"truenas.provision.step.duration":   func() { StepDuration.Record(ctx, 0.050) },
 		"truenas.deprovision.step.duration": func() { DeprovisionStepDuration.Record(ctx, 0.050) },
 	}
 
