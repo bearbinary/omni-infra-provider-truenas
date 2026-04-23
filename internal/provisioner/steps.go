@@ -738,9 +738,22 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		)
 	}
 
-	// Apply advertised_subnets config patch if set
+	// Apply advertised_subnets config patch if set. The patch content depends
+	// on machine role — `cluster.etcd.advertisedSubnets` is rejected by Talos
+	// validation on workers ("etcd config is only allowed on control plane
+	// machines"), so workers get only the kubelet portion.
+	isCP := isControlPlaneRequest(pctx)
+
+	buildRoleAwareSubnetsPatch := func(subnets string) ([]byte, error) {
+		if isCP {
+			return buildAdvertisedSubnetsPatch(subnets)
+		}
+
+		return buildKubeletSubnetsPatch(subnets)
+	}
+
 	if data.AdvertisedSubnets != "" {
-		patchData, patchErr := buildAdvertisedSubnetsPatch(data.AdvertisedSubnets)
+		patchData, patchErr := buildRoleAwareSubnetsPatch(data.AdvertisedSubnets)
 		if patchErr != nil {
 			return fmt.Errorf("failed to build advertised_subnets config patch: %w", patchErr)
 		}
@@ -752,11 +765,12 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 			logger.Info("applied advertised_subnets config patch",
 				zap.String("subnets", data.AdvertisedSubnets),
+				zap.Bool("is_control_plane", isCP),
 				zap.String("vm_name", vmName),
 			)
 		}
 	} else if len(data.AdditionalNICs) > 0 {
-		// Auto-detect the primary NIC's subnet and pin etcd/kubelet to it
+		// Auto-detect the primary NIC's subnet and pin kubelet (+ etcd on CPs) to it
 		subnet, subnetErr := p.client.InterfaceSubnet(ctx, data.NetworkInterface)
 
 		switch {
@@ -766,7 +780,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 				zap.Error(subnetErr),
 			)
 		case subnet != "":
-			patchData, patchErr := buildAdvertisedSubnetsPatch(subnet)
+			patchData, patchErr := buildRoleAwareSubnetsPatch(subnet)
 			if patchErr == nil && patchData != nil {
 				if cpErr := pctx.CreateConfigPatch(ctx, patchName("advertised-subnets", requestID), patchData); cpErr != nil {
 					return fmt.Errorf("failed to apply auto-detected advertised_subnets config patch: %w", cpErr)
@@ -775,6 +789,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 				logger.Info("auto-detected primary NIC subnet, applied advertised_subnets config patch",
 					zap.String("subnet", subnet),
 					zap.String("network_interface", data.NetworkInterface),
+					zap.Bool("is_control_plane", isCP),
 					zap.String("vm_name", vmName),
 				)
 			}
@@ -899,7 +914,9 @@ func recordStepDuration(ctx context.Context, step string, start time.Time) {
 // truenas_provision_errors_total counter on every normal step-wait.
 //
 //   - RequeueError with nil Err(): pure backoff, skip log and counter entirely
+//   - RequeueError wrapping context.Canceled: shutdown, skip
 //   - RequeueError wrapping a real error: log and count the inner error
+//   - context.Canceled at the top level: shutdown, skip
 //   - anything else: log and count as before
 func recordProvisionError(ctx context.Context, logger *zap.Logger, err error) {
 	if err == nil {
@@ -915,6 +932,14 @@ func recordProvisionError(ctx context.Context, logger *zap.Logger, err error) {
 		}
 
 		err = inner
+	}
+
+	// Context cancellation is the shutdown-handshake signal, not a provision
+	// failure. Counting it as an error conflates "we asked the step to stop"
+	// with "the step failed on its own" — masks real regressions during
+	// operator-initiated restarts.
+	if errors.Is(err, context.Canceled) {
+		return
 	}
 
 	category := categorizeError(err)
@@ -1251,6 +1276,28 @@ func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, 
 
 func isNotFound(err error) bool {
 	return client.IsNotFound(err)
+}
+
+// isControlPlaneRequest reports whether the MachineRequest being provisioned
+// belongs to a control-plane MachineSet. Detected from the
+// LabelMachineRequestSet value's suffix (`-control-planes` is Omni's
+// convention for CP MachineSets, matching the audit trail shape:
+// e.g., `talos-home-control-planes` vs `talos-home-workers`).
+//
+// Conservative by design: on any ambiguity (missing label, unknown suffix)
+// return false so the caller falls through to the worker-safe patch. The
+// cost of a false worker classification on a CP (no etcd advertise-subnet
+// pinning) is a latent multi-NIC etcd instability; the cost of false CP on
+// a worker (shipping `cluster.etcd.advertisedSubnets` to a worker) is a
+// hard Talos validation failure that bricks the machine, so we skew toward
+// the safer error.
+func isControlPlaneRequest(pctx provision.Context[*resources.Machine]) bool {
+	setID, ok := pctx.GetMachineRequestSetID()
+	if !ok {
+		return false
+	}
+
+	return strings.HasSuffix(setID, "-control-planes")
 }
 
 func isAlreadyExists(err error) bool {

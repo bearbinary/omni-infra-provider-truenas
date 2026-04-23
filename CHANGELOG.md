@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.15.4] — Emergency: stop shipping `cluster.etcd.advertisedSubnets` to workers
+
+### Fixes (Critical)
+- **Split the `advertised-subnets` ConfigPatch by machine role** — `buildAdvertisedSubnetsPatch` unconditionally emitted `cluster.etcd.advertisedSubnets` alongside `machine.kubelet.nodeIP.validSubnets`. The caller in `stepCreateVM` applied the same patch to every MachineRequest in multi-NIC mode (whether `advertised_subnets` was set explicitly or auto-detected from the primary NIC). Talos rejects `cluster.etcd.*` on workers with `configuration validation failed: etcd config is only allowed on control plane machines` — every worker in a multi-homed cluster failed validation, never booted, never joined. Observed in prod on `talos-home` (multi-homed, 3 workers all DOA post-v0.15.0). Fix: new `buildKubeletSubnetsPatch` emits only the worker-safe `machine.kubelet.*` portion; `stepCreateVM` now detects CP role from the `MachineRequestSet` label suffix (`-control-planes` per Omni's convention) and calls the full builder only when on a CP. Conservative on ambiguity (unknown suffix → worker path) because skipping etcd pinning on a CP is a latent issue, while shipping etcd config to a worker is an immediate brick. `TestBuildKubeletSubnetsPatch_OmitsEtcd` pins the worker patch shape against future refactors that might silently merge the builders again.
+
+### Observability
+- **`recordProvisionError` now skips `context.Canceled`** — both standalone and wrapped in `RequeueError`. Shutdown-triggered cancellation is not a provision failure; counting it as one conflates operator restarts with real regressions. Table in `TestRecordProvisionError_RequeueUnwrap` extended with three new cases.
+
+### Tests (regression guards for this week's bugs)
+- **`internal/telemetry/histogram_buckets_test.go`** — records a known 50 ms value into every Float64Histogram and fails if any instrument inherits the OTel SDK's millisecond-default bucket boundaries against the seconds unit. Would have caught v0.15.0's histogram-unit regression at `go test ./...`.
+- **`internal/client/cassette_age_test.go`** — fails when any cassette in `testdata/cassettes/` is older than `CASSETTE_MAX_AGE_DAYS` (default 90). Forces re-record pressure before stale cassettes silently hide schema drift (the v0.15.0 orphan-cleanup cassette kept passing for a reason).
+
 ## [v0.15.3] — Stop orphan cleanup from deleting freshly-created v0.15+ VMs
 
 ### Fixes (Critical)
@@ -488,6 +500,7 @@ helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.15.4]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.4
 [v0.15.3]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.3
 [v0.15.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.2
 [v0.15.1]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.1

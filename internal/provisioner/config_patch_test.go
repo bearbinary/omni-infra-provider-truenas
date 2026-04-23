@@ -114,6 +114,53 @@ func TestBuildAdvertisedSubnetsPatch_JSONStructure(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestBuildKubeletSubnetsPatch_OmitsEtcd pins the worker-safe patch shape:
+// ONLY `machine.kubelet.nodeIP.validSubnets`, no `cluster.etcd` anywhere.
+// A regression that sneaks etcd back in (e.g., a refactor that merges
+// builders) will trigger the exact Talos validation failure that bricked
+// every worker in v0.15.0–v0.15.3:
+//
+//	configuration validation failed: 1 error occurred:
+//	* v1alpha1.Config: 1 error occurred:
+//	* etcd config is only allowed on control plane machines
+func TestBuildKubeletSubnetsPatch_OmitsEtcd(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildKubeletSubnetsPatch("10.0.0.0/8,192.168.1.0/24")
+	require.NoError(t, err)
+	require.NotNil(t, data)
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(data, &patch))
+
+	// No `cluster` key at all — if one appears, a future refactor has
+	// sneaked etcd back into the worker path.
+	_, hasCluster := patch["cluster"]
+	assert.False(t, hasCluster, "worker patch must not contain a cluster.* section — Talos will reject it")
+
+	// Machine section must carry the kubelet pinning.
+	machine := patch["machine"].(map[string]any)
+	kubelet := machine["kubelet"].(map[string]any)
+	nodeIP := kubelet["nodeIP"].(map[string]any)
+	subnets := nodeIP["validSubnets"].([]any)
+	assert.Equal(t, []any{"10.0.0.0/8", "192.168.1.0/24"}, subnets)
+}
+
+func TestBuildKubeletSubnetsPatch_Empty(t *testing.T) {
+	t.Parallel()
+
+	data, err := buildKubeletSubnetsPatch("")
+	assert.NoError(t, err)
+	assert.Nil(t, data)
+}
+
+func TestBuildKubeletSubnetsPatch_InvalidCIDR(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildKubeletSubnetsPatch("not-a-cidr")
+	assert.Error(t, err, "invalid CIDRs must surface as errors, not be silently dropped — matches buildAdvertisedSubnetsPatch semantics")
+}
+
 // --- MTU Config Patch Tests ---
 
 func TestBuildMTUPatch_SingleNIC(t *testing.T) {

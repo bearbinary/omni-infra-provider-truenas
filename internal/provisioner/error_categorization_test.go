@@ -84,6 +84,21 @@ func TestRecordProvisionError_RequeueUnwrap(t *testing.T) {
 			wantLogs: 1,
 			wantMsg:  "failed to delete VM 42",
 		},
+		{
+			name:     "context.Canceled alone is treated as shutdown, not failure",
+			err:      context.Canceled,
+			wantLogs: 0,
+		},
+		{
+			name:     "context.Canceled wrapped in RequeueError is also shutdown",
+			err:      controller.NewRequeueError(context.Canceled, 15*time.Second),
+			wantLogs: 0,
+		},
+		{
+			name:     "wrapped context.Canceled with more context — still shutdown",
+			err:      fmt.Errorf("cleanupVM: %w", context.Canceled),
+			wantLogs: 0,
+		},
 	}
 
 	for _, tc := range tests {

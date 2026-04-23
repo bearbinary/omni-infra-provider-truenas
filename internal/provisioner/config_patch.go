@@ -99,12 +99,14 @@ func buildMTUPatch(nics []nicMTUConfig) ([]byte, error) {
 	return json.Marshal(patch)
 }
 
-func buildAdvertisedSubnetsPatch(advertisedSubnets string) ([]byte, error) {
+// parseAdvertisedSubnets splits a comma-separated CIDR list and validates each
+// entry. Returns nil, nil when the input is empty or only whitespace, matching
+// the "no patch needed" signal the callers rely on.
+func parseAdvertisedSubnets(advertisedSubnets string) ([]string, error) {
 	if advertisedSubnets == "" {
 		return nil, nil
 	}
 
-	// Parse comma-separated CIDRs
 	var subnets []string
 	for _, s := range strings.Split(advertisedSubnets, ",") {
 		s = strings.TrimSpace(s)
@@ -112,9 +114,7 @@ func buildAdvertisedSubnetsPatch(advertisedSubnets string) ([]byte, error) {
 			continue
 		}
 
-		// Validate CIDR notation
-		_, _, err := net.ParseCIDR(s)
-		if err != nil {
+		if _, _, err := net.ParseCIDR(s); err != nil {
 			return nil, fmt.Errorf("advertised_subnets: %q is not a valid CIDR — %w", s, err)
 		}
 
@@ -125,12 +125,55 @@ func buildAdvertisedSubnetsPatch(advertisedSubnets string) ([]byte, error) {
 		return nil, nil
 	}
 
+	return subnets, nil
+}
+
+// buildAdvertisedSubnetsPatch generates the full CP-role machine config patch
+// (etcd + kubelet). Workers MUST use buildKubeletSubnetsPatch instead —
+// `cluster.etcd.advertisedSubnets` applied to a worker fails Talos config
+// validation with `etcd config is only allowed on control plane machines`,
+// the machine never boots, the MachineRequest never completes.
+//
+// Observed in production v0.15.0–v0.15.3 with multi-homed talos-home cluster:
+// the provider applied this full patch to every MachineRequest regardless of
+// role, so every worker was DOA. Fixed by splitting the patch and gating the
+// etcd section on CP role detection in the caller (see stepCreateVM).
+func buildAdvertisedSubnetsPatch(advertisedSubnets string) ([]byte, error) {
+	subnets, err := parseAdvertisedSubnets(advertisedSubnets)
+	if err != nil || len(subnets) == 0 {
+		return nil, err
+	}
+
 	patch := map[string]any{
 		"cluster": map[string]any{
 			"etcd": map[string]any{
 				"advertisedSubnets": subnets,
 			},
 		},
+		"machine": map[string]any{
+			"kubelet": map[string]any{
+				"nodeIP": map[string]any{
+					"validSubnets": subnets,
+				},
+			},
+		},
+	}
+
+	return json.Marshal(patch)
+}
+
+// buildKubeletSubnetsPatch generates the worker-safe subset of the
+// advertised-subnets patch — pins `machine.kubelet.nodeIP.validSubnets` only.
+// Safe on any machine role; used on workers and also as a fallback on CPs if
+// role detection is ambiguous (we'd rather lose the etcd pinning than fail
+// Talos validation).
+func buildKubeletSubnetsPatch(advertisedSubnets string) ([]byte, error) {
+	subnets, err := parseAdvertisedSubnets(advertisedSubnets)
+	if err != nil || len(subnets) == 0 {
+		return nil, err
+	}
+
+	patch := map[string]any{
 		"machine": map[string]any{
 			"kubelet": map[string]any{
 				"nodeIP": map[string]any{
