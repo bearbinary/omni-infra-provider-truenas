@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [v0.15.5] — Regression-test hardening: TrueNAS call-site shape pinning + method allowlist
+
+### Tests (no behavior change)
+- **Wire-shape pins for high-risk call sites** — `internal/client/wire_shape_test.go` now asserts the exact JSON params we send to `vm.delete`, `vm.stop` (force + graceful), and `pool.dataset.delete` via `assert.JSONEq`. Adds or drops a key and the test fails. This is the direct guard against a future `force_after_timeout`-style regression — the v0.15.1 bug would have been caught at `go test` time because the strict shape assertion rejects any extra key.
+- **Known-methods allowlist** — `internal/client/method_allowlist_test.go` maintains a committed list of every TrueNAS JSON-RPC method the provider calls and cross-references it against the source at test time. Fails when a call site uses a method not on the list (new integration point, or a typo like `vm.deletee`) AND when an entry on the list is no longer referenced anywhere in non-test code (dead allowlist entries can mask typos during review). Resolves method-name constants (`methodVMQuery = "vm.query"`), direct literals, and the `Method: "X"` pattern used for non-JSON-RPC calls like `filesystem.put`.
+
 ## [v0.15.4] — Emergency: stop shipping `cluster.etcd.advertisedSubnets` to workers
 
 ### Fixes (Critical)
@@ -500,6 +506,7 @@ helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
 - ISO caching with SHA-256 deduplication
 - 36 unit tests + 10 integration tests
 
+[v0.15.5]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.5
 [v0.15.4]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.4
 [v0.15.3]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.3
 [v0.15.2]: https://github.com/bearbinary/omni-infra-provider-truenas/releases/tag/v0.15.2
