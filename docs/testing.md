@@ -228,6 +228,51 @@ This automates the TrueNAS installer via simulated keystrokes, producing a ready
 
 ---
 
+## Known test-coverage gaps
+
+### Talos config patches are not round-tripped through the Talos validator
+
+The `internal/provisioner/config_patch.go` builders (`buildUserVolumePatch`,
+`buildLonghornOperationalPatch`, `buildMTUPatch`, `buildAdditionalNICInterfacesPatch`,
+`buildAdvertisedSubnetsPatch`, `buildKubeletSubnetsPatch`) emit JSON patches
+that Talos applies at node bootstrap. Every unit test in
+`config_patch_test.go` asserts *our understanding* of Talos's config shape —
+field names, placement, and type. No test currently parses the output back
+through `github.com/siderolabs/talos/pkg/machinery/config.NewFromBytes` to
+confirm Talos actually accepts the bytes.
+
+This is the exact class of gap that produced the v0.15.0–v0.15.3
+etcd-on-worker regression (see `CHANGELOG.md`): `buildAdvertisedSubnetsPatch`
+emitted `cluster.etcd.advertisedSubnets`, which passed every Go unit test
+but Talos rejects on worker nodes with
+`etcd config is only allowed on control plane machines`. Every cluster
+MachineRequest failed validation and never booted.
+
+The same class of regression can recur:
+- Talos renames `hardwareAddr` → `hwAddr` in a minor release
+- Talos starts requiring `family: "inet4"` on routes
+- A future builder emits a field Talos has deprecated
+
+Current partial guards:
+- `TestBuildKubeletSubnetsPatch_OmitsEtcd` pins the specific v0.15.0
+  regression shape — checks there is no `cluster.*` section in the
+  worker patch.
+- `TestBuildAdditionalNICInterfacesPatch_NoClusterSection` does the same
+  for the nic-interfaces patch.
+
+Closing the gap fully requires either:
+1. Adding `github.com/siderolabs/talos/pkg/machinery` as a test-only
+   dependency and calling `config.NewFromBytes(patch)` in a new
+   `TestAllPatchBuilders_ParseUnderTalos` table test.
+2. An E2E cassette under a `-tags e2e` build that issues `talosctl apply`
+   against a throwaway node and pins the exit code.
+
+Until one of those lands, assume every patch builder change is a "lands
+in prod before we find out" risk and PR-review every shape change
+carefully.
+
+---
+
 ## API Version Notes
 
 | TrueNAS Version | API | VM Backend | Provider Support |

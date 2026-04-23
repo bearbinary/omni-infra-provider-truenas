@@ -139,6 +139,41 @@ The provider failed to generate a Talos image schematic.
 - **zvol allocation** — ensure the pool has enough free space for the `disk_size` specified
 - **CPU mode** — the provider uses `HOST-PASSTHROUGH` CPU mode. Verify the host CPU supports virtualization (VT-x/AMD-V)
 
+### VM boots but kubelet loops on `DiskPressure` / etcd never starts
+
+**Symptom.** `talosctl -n <cp-node> logs kubelet` shows the kubelet
+entering image garbage-collection mode on every reconcile loop:
+
+```
+image garbage collection failed: ImageFS stats not available
+eviction manager: attempting to reclaim ephemeral-storage
+DiskPressure condition is true
+```
+
+etcd never comes up because its image gets evicted mid-pull:
+
+```
+failed to pull image "registry.k8s.io/etcd:<version>":
+  write: no space left on device
+```
+
+**Cause.** The root disk is too small to hold the Talos system image
+plus every control-plane container image the kubelet pulls during
+bootstrap (apiserver, etcd, scheduler, controller-manager, CNI,
+CoreDNS). The 10% GC headroom trips, the kubelet evicts images it
+still needs, the next reconcile re-pulls them, the cycle repeats.
+
+**Fix.** Set `disk_size` to at least 20 (the provider's validation
+floor as of v0.15.x); 40 is recommended for production CPs so a
+Kubernetes minor upgrade (old + new image coexist during rollover)
+doesn't re-trigger the condition. See
+[sizing guide § Why the root disk has a 20 GiB minimum](sizing.md#why-the-root-disk-has-a-20-gib-minimum)
+for the full image-size breakdown.
+
+VMs stamped out against an older MachineClass with `disk_size` below
+20 need to be reprovisioned against an updated class — resizing the
+zvol in place doesn't expand Talos's EPHEMERAL partition.
+
 ### VM halts on reboot with "Talos is already installed to disk but booted from another media"
 
 Log output (repeats every 30s until the VM is shut down):

@@ -80,14 +80,21 @@ The SDK's `reconcileTearingDown` never calls `Deprovision` if machine state was 
 
 ---
 
-### Automatic Autoscaling Setup
-Guide and tooling for pressure-based autoscaling of TrueNAS-provisioned clusters. Uses the [Kubernetes Cluster Autoscaler](https://github.com/kubernetes/autoscaler) with a generic gRPC autoscaler that adds/removes nodes from an Omni MachineSet based on cluster pressure and resource usage. See proof-of-concept: [rothgar/omni-node-autoscaler](https://github.com/rothgar/omni-node-autoscaler). Upstream discussion: [siderolabs/omni#2647 (comment)](https://github.com/siderolabs/omni/discussions/2647#discussioncomment-16508705).
+### Automatic Autoscaling Setup (shipped experimental in v0.16)
+Pressure-based autoscaling of TrueNAS-provisioned clusters via the `omni-infra-provider-truenas autoscaler` subcommand — implements the Kubernetes Cluster Autoscaler external-gRPC cloud-provider interface. Per-MachineClass opt-in via `bearbinary.com/autoscale-min` / `bearbinary.com/autoscale-max` annotations. Helm chart ships in `deploy/helm/omni-autoscaler/`, operator guide in [`docs/autoscaler.md`](autoscaler.md).
 
-Implementation:
-- Document how to deploy the Cluster Autoscaler + gRPC autoscaler alongside TrueNAS-provisioned clusters
-- Provide an example Omni MachineSet and autoscaler config tuned for a homelab scale (conservative scale-down delays, min/max node counts)
-- Test with this provider to validate the full loop: pressure → gRPC autoscaler → Omni MachineSet resize → provider provisions/deprovisions VM
-- Consider shipping a Helm values template or config patch that wires up the autoscaler with sensible defaults
+**Shipped scope (v0.16 experimental):**
+- ✅ MachineSet discovery from COSI state
+- ✅ TrueNAS capacity gate (pool free bytes; host-mem interface-only for now)
+- ✅ Read-side gRPC handlers (`NodeGroups`, `NodeGroupTargetSize`)
+- ✅ Write path via `safe.StateUpdateWithConflicts[*omni.MachineSet]` — `NodeGroupIncreaseSize` wired with Max bound re-check inside the mutator
+- ✅ Helm chart + operator docs
+
+**Remaining (post-v0.16):**
+- Scale-down path — currently disabled at multiple layers; needs `MachineSetNode`/`ClusterMachine` joins for node→group mapping
+- `system.mem_info` wrapper in `internal/client` so the host-memory dimension of the capacity gate can actually gate (not just interface-only)
+- Scale-from-zero
+- Promote from experimental once the above land and a real cluster has run it through a few pressure cycles
 
 ---
 

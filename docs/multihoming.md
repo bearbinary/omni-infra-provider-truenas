@@ -90,6 +90,81 @@ The `advertised_subnets` field pins etcd and kubelet to the internal network (`v
 
 ---
 
+## Additional-NIC Configuration (v0.16+)
+
+Each entry in `additional_nics[]` supports these fields:
+
+| Field | Type | Default | Purpose |
+|---|---|---|---|
+| `network_interface` | string (required) | — | Host bridge, VLAN, or physical interface |
+| `type` | string | `VIRTIO` | NIC model (`VIRTIO` or `E1000`) |
+| `mtu` | integer | host default | 576–9216, e.g. `9000` for jumbo frames |
+| `dhcp` | boolean | see below | Run DHCPv4 on this NIC |
+| `addresses` | array of CIDR strings | `[]` | Static addresses, e.g. `["10.20.0.5/24"]` |
+| `gateway` | IP string | — | Optional default route (on-link unicast) |
+
+**DHCP default resolution** (tri-state — omit to accept default):
+- No `addresses` set → `dhcp: true` (DHCPv4 runs)
+- `addresses` set → `dhcp: false` (static-only; DHCP stays off unless explicitly `true`)
+- `dhcp: true` or `false` → always wins, regardless of whether `addresses` is set
+
+### DHCP on a second segment (most common)
+
+```yaml
+additional_nics:
+  - network_interface: vlan200
+    # dhcp defaults to true; DHCPv4 lease picked up on vlan200
+```
+
+### Static IPv4 with a gateway on the secondary NIC
+
+```yaml
+additional_nics:
+  - network_interface: vlan300
+    addresses:
+      - 10.30.0.5/24
+    gateway: 10.30.0.1
+```
+
+### Dual-stack static
+
+```yaml
+additional_nics:
+  - network_interface: vlan400
+    addresses:
+      - 10.40.0.5/24
+      - fd00::5/64
+    gateway: 10.40.0.1
+```
+
+### DHCP + static alias on the same link
+
+```yaml
+additional_nics:
+  - network_interface: vlan500
+    dhcp: true                    # explicit — normally would default false because addresses is set
+    addresses:
+      - 10.50.0.200/32            # static alias in addition to the DHCP lease
+```
+
+### Attach the link but leave it unconfigured (bond slave, manual patch)
+
+```yaml
+additional_nics:
+  - network_interface: vlan600
+    dhcp: false
+    # no addresses — link comes up with MAC, no L3 config
+```
+
+### Validation rules (rejected at MachineClass save)
+
+- Addresses must be valid CIDRs. Unspecified (`0.0.0.0/0`, `::/0`), multicast, loopback, and zero-mask are rejected.
+- Gateway must be unicast, same family as at least one address on the NIC, and on-link with at least one address's CIDR.
+- Only one additional NIC per MachineClass may declare a `gateway` (multiple default routes without distinct metrics cause non-deterministic kernel routing).
+- Caps: 16 additional NICs per VM, 16 addresses per NIC.
+
+---
+
 ## DHCP Reservations
 
 Set up static DHCP leases in your router for predictable IPs. All NICs use deterministic MAC addresses derived from the machine request ID, so DHCP reservations survive reprovision. The provider logs each NIC's MAC address at creation:

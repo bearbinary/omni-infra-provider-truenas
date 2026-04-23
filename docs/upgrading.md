@@ -25,6 +25,62 @@ For TrueNAS Docker-Compose-on-host deployments (installed via Apps > Discover > 
 
 ## Version Notes
 
+### Upgrading to v0.16
+
+v0.16 lands the multi-homing fix (additional NICs now actually usable on any segment), the experimental `autoscaler` subcommand, and one breaking change to `disk_size` validation.
+
+#### Breaking: `disk_size` minimum raised from 5 GiB to 20 GiB on the root disk
+
+The primary / OS disk now fails validation below 20 GiB. The additional-disk floor (`additional_disks[].size`) stays at 5 GiB — this change applies only to the MachineClass-level `disk_size`.
+
+**Why:** a Talos control-plane node pulls kube-apiserver + kube-controller-manager + kube-scheduler + etcd + kube-proxy + CNI + CoreDNS during bootstrap, plus the Talos squashfs image and kubelet's 10% GC headroom. A 5–10 GiB root disk fills up mid-install, the kubelet evicts images mid-pull, and etcd never comes up. See [`docs/sizing.md#why-the-root-disk-has-a-20-gib-minimum`](sizing.md#why-the-root-disk-has-a-20-gib-minimum).
+
+**Migration:**
+1. Audit MachineClasses: `omnictl get machineclass -o yaml | grep -B2 "disk_size:"` — anything below 20 will fail to reconcile after the upgrade.
+2. Edit the values to ≥ 20 (default `40` recommended for production).
+3. Upgrade the provider image.
+
+Existing VMs built against an older class are **not retroactively resized**. If a running node is hitting DiskPressure, reprovision the machine against the updated class — Talos is immutable by design (replace, don't mutate).
+
+#### New: Additional NICs are now configured automatically
+
+Prior to v0.16 the provider attached extra NICs at the hypervisor but emitted no Talos config patch to configure them — the links came up with only link-local IPv6 and the VM was effectively single-homed. v0.16 auto-enables DHCPv4 on every `additional_nics[]` entry and exposes optional static-addressing fields.
+
+No action required for existing MachineClasses that only use DHCP on additional NICs — they will start working correctly on the next provision.
+
+**New optional `additional_nics[]` fields:**
+- `dhcp` (boolean, tri-state when omitted) — defaults `true` when `addresses` is empty, `false` when `addresses` is set. Set explicitly to override.
+- `addresses` (array of CIDR strings) — static IPv4/IPv6 addresses for this NIC, e.g. `["10.20.0.5/24"]` or dual-stack `["10.20.0.5/24", "fd00::5/64"]`.
+- `gateway` (IP string, not CIDR) — optional default route. Must be unicast, on-link with at least one address, and same family as at least one address.
+
+**Tighter validation on existing `addresses`:** v0.16 now rejects addresses that would hijack routing or fail at Talos apply time:
+- unspecified (`0.0.0.0/0`, `::/0`, `0.0.0.0/32`, `::/128`)
+- multicast (`224.0.0.0/4`, `ff00::/8`)
+- loopback (`127.0.0.0/8`, `::1/128`)
+- zero-length masks (`/0`)
+
+Gateways must be unicast (not unspecified/multicast/loopback/broadcast), family-match an address on the NIC, and be on-link. Only one additional NIC per MachineClass may declare a `gateway` (multiple defaults without metrics cause non-deterministic kernel routing).
+
+Caps: `MaxAdditionalNICs = 16`, `MaxAddressesPerNIC = 16` — enforced in both Go validation and `schema.json` as `maxItems`.
+
+See [`docs/multihoming.md`](multihoming.md) for examples.
+
+#### New: Experimental `autoscaler` subcommand
+
+`omni-infra-provider-truenas autoscaler` is a new opt-in subcommand implementing the Kubernetes cluster-autoscaler external-gRPC cloud-provider interface. Scale-up only (no scale-down yet), gated per-MachineClass via the `bearbinary.com/autoscale-min` and `bearbinary.com/autoscale-max` annotations. Without the annotations, a MachineClass is not discovered — zero impact on existing deployments.
+
+See [`docs/autoscaler.md`](autoscaler.md) for deploy recipe and the full annotation reference. A Helm chart ships in `deploy/helm/omni-autoscaler/`.
+
+The provisioner subcommand (no argv) is unchanged. Existing Deployments that bump the image tag without also adding `autoscaler` to the args will not start the autoscaler.
+
+#### New: `truenas.config_patch.duration` histogram
+
+Operators with the provider's OTel metrics wired into Prometheus will see a new histogram labeled by `patch_kind` (`data-volumes`, `longhorn-ops`, `nic-mtu`, `nic-interfaces`, `advertised-subnets`). Drop into the existing provider dashboard as a latency panel — no config change needed.
+
+#### New: `config_invalid` and `config_patch` error categories
+
+`truenas.provision.errors` now distinguishes MachineClass validation failures (new `error_category="config_invalid"`) and ConfigPatchRequest emission failures (`error_category="config_patch"`) from real TrueNAS-side NIC/pool errors. Alert-routing rules that match on `error_category=nic_invalid` should be reviewed — if the previous intent was "any NIC-related error", widen the match to `{config_invalid,nic_invalid}`.
+
 ### Upgrading to v0.15
 
 v0.15 is a security-hardening release with **one breaking change** and several new invariants that may surface pre-existing state issues.

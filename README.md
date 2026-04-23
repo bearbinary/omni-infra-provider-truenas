@@ -41,6 +41,8 @@
 
 > **New to Kubernetes?** Start with the [Getting Started guide](docs/getting-started.md) — a step-by-step tutorial from NAS to running cluster, no prior experience required.
 
+> **Experimental: cluster autoscaling.** The provider ships an `autoscaler` subcommand that wires Kubernetes Cluster Autoscaler to Omni — scale-up only, opt-in per MachineClass. See [`docs/autoscaler.md`](docs/autoscaler.md) for the full operator guide, deploy recipe, and experimental-status caveats.
+
 ---
 
 ## Overview
@@ -338,7 +340,7 @@ These fields go in the MachineClass `configpatch` (CLI) or the provider config f
 |---|---|---|---|---|
 | `cpus` | int | Yes | `2` | Virtual CPUs (min: 1) |
 | `memory` | int | Yes | `4096` | Memory in MiB (min: 1024) |
-| `disk_size` | int | Yes | `40` | Root disk in GiB (min: 10) |
+| `disk_size` | int | Yes | `40` | Root disk in GiB (min: 20 — needed for Talos + CP container images during bootstrap; see [sizing guide](docs/sizing.md#why-the-root-disk-has-a-20-gib-minimum)) |
 | `pool` | string | Yes | — | ZFS **pool** name (top-level only — not a dataset path, see below) |
 | `network_interface` | string | Yes | — | Bridge, VLAN, or physical interface for VM NIC |
 | `boot_method` | string | Yes | `UEFI` | `UEFI` or `BIOS` |

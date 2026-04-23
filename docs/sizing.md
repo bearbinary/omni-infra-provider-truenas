@@ -147,6 +147,56 @@ These are starting points, not hard rules. Calibrate against the triggers above.
 | **Large — 3 CP, GitOps + service mesh** | 25–50 | < 1500 | 4–8 | 16–24 GiB | 100 GiB |
 | **Big — dedicated platform team** | 50+ | 1500+ | 8+ | 24+ GiB | 200 GiB+ |
 
+### Why the root disk has a 20 GiB minimum
+
+The provider enforces `disk_size >= 20` at validation time, and the JSON
+schema reflects the same floor. It's not arbitrary — it's the smallest
+number where a Talos control-plane node reliably survives its first boot.
+
+During cluster bootstrap the kubelet pulls and stores, on the **root
+disk**, every control-plane image:
+
+| Image family | Approx pulled size |
+|---|---|
+| `kube-apiserver` | ~120 MiB |
+| `kube-controller-manager` | ~110 MiB |
+| `kube-scheduler` | ~60 MiB |
+| `etcd` | ~150 MiB |
+| `kube-proxy` | ~90 MiB |
+| CNI (flannel / cilium / calico) | ~80–300 MiB |
+| CoreDNS | ~70 MiB |
+| Talos system extensions (qemu-ga, iscsi-tools, util-linux-tools) | ~40 MiB each |
+
+Add the Talos squashfs system image (~300 MiB), its ephemeral partition
+overhead, working copies kept for rollback, container log ringbuffers,
+and the kubelet's own garbage-collection headroom (10% default) and
+**the steady-state consumption on a freshly-installed CP node is
+~4–5 GiB of the root disk**. A 5 GiB root disk runs out during the
+first pull storm; a 10 GiB root disk survives install but enters
+`DiskPressure` the first time kube-apiserver or etcd rolls a new
+image version.
+
+**Observed failure mode when this was 5 GiB** (the v0.14 default for
+additional disks, accidentally applied to the root): control-plane
+nodes entered a loop of *pull image → no space left on device →
+kubelet image GC → evict an image we need → re-pull*, and etcd never
+came up because its image got evicted mid-write.
+
+20 GiB leaves enough headroom that a production-scale CP can absorb a
+Kubernetes minor upgrade (old + new image coexist during the
+rollover) without tripping DiskPressure. For the small-prod sizing
+tier and above the default of 40 GiB is recommended; 20 is the **do
+not go below** line.
+
+Workers technically have lower image pressure (no etcd, often smaller
+CNI set), but the floor is applied uniformly — a 20 GiB zvol costs
+nothing on any TrueNAS pool we ship against, and one root-disk
+minimum across roles makes the validation message operators read when
+it fires actually actionable.
+
+`storage_disk_size` and `additional_disks[].size` keep the **5 GiB**
+minimum — sidecar / data disks don't carry image pressure.
+
 **Rules of thumb worth knowing:**
 
 - **HA CP = odd number (1, 3, 5).** 3 is the standard. 5 only if you expect

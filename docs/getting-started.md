@@ -255,7 +255,7 @@ spec:
     configpatch: |
       cpus: 2
       memory: 2048
-      disk_size: 10
+      disk_size: 20
 EOF
 ```
 
@@ -263,7 +263,9 @@ EOF
 
 > **Windows/PowerShell users:** Save the YAML between the `EOF` markers to a file called `machineclass.yaml`, then run: `omnictl apply -f machineclass.yaml`
 
-This creates a "small" machine template: 2 CPUs, 2 GB RAM, 10 GB disk — suitable for a control plane node.
+This creates a "small" machine template: 2 CPUs, 2 GB RAM, 20 GB disk — suitable for a control plane node.
+
+> **Why 20 GB and not less?** The root disk has to hold the Talos system image plus every control-plane container image the kubelet pulls during bootstrap — `kube-apiserver`, `etcd`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, the CNI, and CoreDNS. A 5–10 GB root disk fills up mid-install and the kubelet starts evicting images it still needs; etcd fails to come up. 20 GB is the validated floor; production control planes typically want 40 GB (the provider default). See [Sizing Guide § Why the root disk has a 20 GiB minimum](sizing.md#why-the-root-disk-has-a-20-gib-minimum) for the full breakdown.
 
 ### Create a Worker MachineClass
 

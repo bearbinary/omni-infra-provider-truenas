@@ -109,7 +109,7 @@ These fields go in the MachineClass `configpatch`:
 |---|---|---|---|---|
 | `cpus` | int | Yes | `2` | Virtual CPUs (min: 1). For control planes, see [Sizing Guide](sizing.md). |
 | `memory` | int | Yes | `4096` | Memory in MiB (min: 1024). For control planes, see [Sizing Guide](sizing.md). |
-| `disk_size` | int | Yes | `40` | Root disk in GiB (min: 10). For control planes, see [Sizing Guide](sizing.md). |
+| `disk_size` | int | Yes | `40` | Root disk in GiB (min: 20 — the floor is there because Talos CP nodes pull kube-apiserver + etcd + scheduler + controller-manager + CNI + CoreDNS images during bootstrap and 10 GiB trips DiskPressure mid-install. See [Sizing Guide § Why the root disk has a 20 GiB minimum](sizing.md#why-the-root-disk-has-a-20-gib-minimum)). |
 | `pool` | string | Yes | `DEFAULT_POOL` | ZFS pool for zvols and ISOs |
 | `network_interface` | string | Yes | `DEFAULT_NETWORK_INTERFACE` | Bridge, VLAN, or physical interface |
 | `boot_method` | string | Yes | `UEFI` | `UEFI` or `BIOS` |
