@@ -411,10 +411,25 @@ jobs:
       - name: Sign release binaries
         run: |
           # See "Sign Docker image" above for why --oidc-issuer is omitted.
+          #
+          # cosign 2.5+ defaults to the new "sigstore bundle" format, which
+          # combines the signature, certificate, and Rekor transparency-log
+          # entry into a single `.sigstore.json` file. The legacy
+          # --output-signature / --output-certificate flags are deprecated
+          # and silently ignored under the new format; the actual sign
+          # operation then fails with `create bundle file: open : no such
+          # file or directory` because no `--bundle` path was supplied.
+          # Verified on the v0.16.1-rc.3 attempt — every sign-blob call
+          # warned about the deprecated flags then errored.
+          # Pass --bundle explicitly to satisfy the new format.
+          # Verification migration: consumers who previously ran
+          #   cosign verify-blob --signature x.sig --certificate x.cert ...
+          # should now use the bundle file:
+          #   cosign verify-blob --bundle x.sigstore.json ...
+          # README example will be updated in a follow-up commit.
           for f in _out/omni-infra-provider-truenas-*; do
             cosign sign-blob --yes \
-              --output-signature "${f}.sig" \
-              --output-certificate "${f}.cert" \
+              --bundle "${f}.sigstore.json" \
               "$f"
           done
 
@@ -454,8 +469,7 @@ jobs:
             _out/omni-infra-provider-truenas-darwin-arm64 \
             _out/checksums.txt \
             _out/sbom.spdx.json \
-            _out/*.sig \
-            _out/*.cert \
+            _out/*.sigstore.json \
             _out/grafana-dashboards.zip \
             _out/overview.json \
             _out/provisioning.json \

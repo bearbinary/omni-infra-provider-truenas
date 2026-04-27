@@ -488,7 +488,15 @@ cosign verify --certificate-identity-regexp="https://github.com/bearbinary/omni-
 
 ### Verify Binary
 
+Releases from v0.16.2 onward sign each binary as a single sigstore bundle
+(`<binary>.sigstore.json`) instead of the legacy `.sig` + `.cert` pair. The
+verification command differs:
+
 ```bash
+# v0.16.2 and later (sigstore bundle):
+cosign verify-blob --bundle omni-infra-provider-truenas-linux-amd64.sigstore.json --certificate-identity-regexp="https://github.com/bearbinary/omni-infra-provider-truenas" --certificate-oidc-issuer="https://token.actions.githubusercontent.com" omni-infra-provider-truenas-linux-amd64
+
+# v0.16.1 and earlier (legacy .sig + .cert):
 cosign verify-blob --certificate omni-infra-provider-truenas-linux-amd64.cert --signature omni-infra-provider-truenas-linux-amd64.sig --certificate-identity-regexp="https://github.com/bearbinary/omni-infra-provider-truenas" --certificate-oidc-issuer="https://token.actions.githubusercontent.com" omni-infra-provider-truenas-linux-amd64
 ```
 
