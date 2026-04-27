@@ -529,5 +529,111 @@ func TestHandleExistingVM_Stopped_StartFails(t *testing.T) {
 
 	require.NotNil(t, result)
 	assert.Error(t, *result)
-	assert.Contains(t, (*result).Error(), "failed to start existing VM")
+	// Non-OOM API errors fall through translateStartError's generic branch.
+	// Wording was updated to include the VM ID and name so operators don't
+	// have to cross-reference logs to identify which VM failed; assertion
+	// pinned to the stable substring rather than the full string.
+	assert.Contains(t, (*result).Error(), "failed to start VM 42")
+	assert.Contains(t, (*result).Error(), "omni_test")
+}
+
+// TestHandleExistingVM_Stopped_StartFails_ENOMEM verifies that an ENOMEM
+// from vm.start translates into the operator-actionable message and is NOT
+// hidden behind the generic "failed to start VM" wrapper. This is the path
+// that, in production v0.16.0, surfaced as an hour of "uploadISO 2/4" with
+// the real cause buried in debug logs.
+func TestHandleExistingVM_Stopped_StartFails_ENOMEM(t *testing.T) {
+	p := testProvisioner(func(method string, _ json.RawMessage) (any, error) {
+		if method == "vm.start" {
+			return nil, &client.APIError{
+				Code:    client.ErrCodeNoMemory,
+				Message: "[ENOMEM] Cannot guarantee memory for guest omni_test",
+			}
+		}
+
+		return nil, nil
+	})
+
+	vm := managedVMPtr(42, "STOPPED")
+	vm.Memory = 4096
+
+	result := p.handleExistingVM(context.Background(), testLogger(), vm, "omni_test")
+
+	require.NotNil(t, result)
+	assert.Error(t, *result)
+	assert.Contains(t, (*result).Error(), "TrueNAS host out of memory",
+		"operator must see host-OOM diagnosis, not a generic start failure")
+	assert.Contains(t, (*result).Error(), "4096 MiB",
+		"requested memory must appear so operator knows what to free")
+}
+
+// TestTranslateStartError_PermanentAfterMaxAttempts verifies the fail-fast
+// behavior. With MaxStartOOMAttempts=2, the third attempt returns the
+// "permanent" message and stops requesting Omni to retry — otherwise a
+// host that is genuinely full sits in an infinite reconcile loop.
+func TestTranslateStartError_PermanentAfterMaxAttempts(t *testing.T) {
+	p := NewProvisioner(client.NewMockClient(func(_ string, _ json.RawMessage) (any, error) {
+		return nil, nil
+	}), ProviderConfig{
+		DefaultPool:         "tank",
+		MaxStartOOMAttempts: 2,
+	})
+
+	enomem := &client.APIError{
+		Code:    client.ErrCodeNoMemory,
+		Message: "[ENOMEM] Cannot guarantee memory for guest omni_test",
+	}
+
+	// Attempts 1 and 2: retriable wording.
+	for i := 1; i <= 2; i++ {
+		err := p.translateStartError(zap.NewNop(), 42, "omni_test", 4096, enomem)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "TrueNAS host out of memory")
+		assert.NotContains(t, err.Error(), "after",
+			"attempt %d should still be in retry phase, not permanent", i)
+	}
+
+	// Attempt 3 — exceeds MaxStartOOMAttempts → permanent failure.
+	err := p.translateStartError(zap.NewNop(), 42, "omni_test", 4096, enomem)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "after 3 attempts",
+		"permanent error must include the attempt count for operator triage")
+	assert.Contains(t, err.Error(), "delete this MachineRequest")
+}
+
+// TestTranslateStartError_NonOOMPassesThrough ensures non-ENOMEM errors are
+// not silently classified as host_oom. A vm.start failure due to (e.g.) a
+// missing CDROM or invalid bootloader is not a host-RAM problem and must
+// not increment the OOM counter or trigger fail-fast.
+func TestTranslateStartError_NonOOMPassesThrough(t *testing.T) {
+	p := NewProvisioner(client.NewMockClient(func(_ string, _ json.RawMessage) (any, error) {
+		return nil, nil
+	}), ProviderConfig{MaxStartOOMAttempts: 2})
+
+	err := p.translateStartError(zap.NewNop(), 42, "omni_test", 4096,
+		&client.APIError{Code: 99, Message: "random other failure"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to start VM 42")
+	assert.NotContains(t, err.Error(), "out of memory")
+
+	// Counter should not have advanced.
+	assert.Equal(t, 0, p.oomCounts["omni_test"])
+}
+
+// TestClearOOMAttempts_ResetsCounter verifies that a successful vm.start
+// (or external clear) resets the budget. Without this, a host that was
+// briefly full and then recovered would carry the prior failure count
+// into the next provisioning event and trigger a premature fail-fast.
+func TestClearOOMAttempts_ResetsCounter(t *testing.T) {
+	p := NewProvisioner(client.NewMockClient(func(_ string, _ json.RawMessage) (any, error) {
+		return nil, nil
+	}), ProviderConfig{MaxStartOOMAttempts: 5})
+
+	assert.Equal(t, 1, p.recordOOMAttempt("omni_test"))
+	assert.Equal(t, 2, p.recordOOMAttempt("omni_test"))
+
+	p.clearOOMAttempts("omni_test")
+
+	assert.Equal(t, 1, p.recordOOMAttempt("omni_test"), "counter must restart from 1 after clear")
 }

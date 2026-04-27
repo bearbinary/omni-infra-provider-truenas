@@ -58,11 +58,13 @@ Your TrueNAS server needs enough resources to run both NAS duties and Kubernetes
 
 **How to think about it:**
 - TrueNAS itself needs ~8 GB RAM
-- Each Kubernetes control plane node: 2 vCPUs + 2 GB RAM + 10 GB disk
+- Each Kubernetes control plane node: 2 vCPUs + 2 GB RAM + 20 GB disk *for a raw cluster*; **4 vCPUs + 4 GB RAM if you'll run Crossplane** (or Rancher/Fleet, Argo with many ApplicationSets, etc. — see [Sizing Guide](sizing.md))
 - Each worker node: 4 vCPUs + 8 GB RAM + 100 GB disk
-- So a 3-node cluster (1 control plane + 2 workers) needs: ~10 vCPUs, ~18 GB RAM, ~210 GB disk — plus what TrueNAS uses
+- So a 3-node raw cluster (1 control plane + 2 workers) needs: ~10 vCPUs, ~18 GB RAM, ~220 GB disk — plus what TrueNAS uses. Add 2 vCPU + 2 GB to that per CP if Crossplane is in scope.
 
 > **Will this affect my NAS?** The VMs share your NAS hardware. If you provision too many VMs, your file sharing and other NAS tasks will slow down. Start small (1-2 nodes) and scale up as you learn what your hardware can handle.
+
+> **Running on an HDD pool?** etcd assumes sub-10 ms fsync; HDDs under load see 50–200 ms. Either add an NVMe SLOG to the pool or apply the [HDD-tuning ConfigPatch](sizing.md#hdd-backed-pools--tune-the-cluster-not-just-the-hardware) so the cluster's default heartbeat, election, and node-monitor timeouts stop interpreting normal HDD latency as failure. Skip this and you'll see intermittent leader changes and `NodeNotReady` flaps with no other obvious cause.
 
 ### Software Requirements
 
@@ -263,7 +265,9 @@ EOF
 
 > **Windows/PowerShell users:** Save the YAML between the `EOF` markers to a file called `machineclass.yaml`, then run: `omnictl apply -f machineclass.yaml`
 
-This creates a "small" machine template: 2 CPUs, 2 GB RAM, 20 GB disk — suitable for a control plane node.
+This creates a "small" machine template: 2 CPUs, 2 GB RAM, 20 GB disk — suitable for a control plane node on a *raw* Kubernetes cluster.
+
+> **Going to install Crossplane?** Bump these to **4 CPUs / 4 GB RAM** before you provision. Crossplane's providers each install a controller plus a CRD set the apiserver keeps in cache; on top of etcd's working memory, 2 GB CPs apiserver-swap under load and the cluster looks intermittently slow. Same advice for Rancher/Fleet, Argo CD with many ApplicationSets, or Prometheus Operator at full mesh-monitoring scale. See the [Sizing Guide § Sizing Table](sizing.md#sizing-table) for the full picture.
 
 > **Why 20 GB and not less?** The root disk has to hold the Talos system image plus every control-plane container image the kubelet pulls during bootstrap — `kube-apiserver`, `etcd`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, the CNI, and CoreDNS. A 5–10 GB root disk fills up mid-install and the kubelet starts evicting images it still needs; etcd fails to come up. 20 GB is the validated floor; production control planes typically want 40 GB (the provider default). See [Sizing Guide § Why the root disk has a 20 GiB minimum](sizing.md#why-the-root-disk-has-a-20-gib-minimum) for the full breakdown.
 
@@ -560,7 +564,7 @@ The VMs will stop when TrueNAS shuts down and restart when it comes back. The pr
 No. This requires TrueNAS **SCALE** (Linux-based) version 25.04 or newer. TrueNAS CORE is not supported.
 
 ### What's the difference between control plane and worker nodes?
-- **Control plane**: Runs the Kubernetes "brain" — the API server, scheduler, and etcd database. Needs minimal resources (2 CPU, 2 GB RAM, 10 GB disk) for a homelab. You need at least 1, ideally 3 for high availability. **Bump it up** once you install GitOps tooling, service meshes, or start running > ~10 nodes — see the [Control Plane Sizing Guide](sizing.md) for concrete triggers and numbers.
+- **Control plane**: Runs the Kubernetes "brain" — the API server, scheduler, and etcd database. Needs minimal resources (2 CPU, 2 GB RAM, 20 GB disk) for a *raw* homelab cluster. **If you plan to run Crossplane, bump to 4 CPU / 4 GB RAM** (same goes for Rancher/Fleet, Argo with many ApplicationSets, Prometheus Operator at full mesh-monitoring scale). You need at least 1 CP, ideally 3 for high availability. Bump further once you install service meshes or start running > ~10 nodes — see the [Control Plane Sizing Guide](sizing.md) for concrete triggers and numbers.
 - **Workers**: Run your actual applications (containers). Need more resources depending on your workloads. Start with 1-2 and add more as needed.
 
 ### Can I mix this with physical machines?

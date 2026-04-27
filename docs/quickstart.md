@@ -108,7 +108,8 @@ These fields go in the MachineClass `configpatch`:
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `cpus` | int | Yes | `2` | Virtual CPUs (min: 1). For control planes, see [Sizing Guide](sizing.md). |
-| `memory` | int | Yes | `4096` | Memory in MiB (min: 1024). For control planes, see [Sizing Guide](sizing.md). |
+| `memory` | int | Yes | `4096` | **Maximum / hard memory limit** in MiB (min: 1024). When `min_memory` is unset, this is fully reserved on the TrueNAS host at vm.start — if the host can't lock the full amount, the VM fails with ENOMEM. For control planes, see [Sizing Guide](sizing.md). |
+| `min_memory` | int | No | — | Optional **soft memory floor** in MiB. When set, the VM starts with `min_memory` reserved and balloons up to `memory` as host RAM is available — useful for over-committing on tight hosts. Must be ≥ 1024 and ≤ `memory`. Note: Talos doesn't auto-load virtio-balloon, so the VM may sit at `min_memory` until balloon is enabled in-guest; size `min_memory` to what Talos actually needs. See [Troubleshooting § Host out of memory](troubleshooting.md#vm-creation-succeeds-but-vm-wont-start-host-out-of-memory). |
 | `disk_size` | int | Yes | `40` | Root disk in GiB (min: 20 — the floor is there because Talos CP nodes pull kube-apiserver + etcd + scheduler + controller-manager + CNI + CoreDNS images during bootstrap and 10 GiB trips DiskPressure mid-install. See [Sizing Guide § Why the root disk has a 20 GiB minimum](sizing.md#why-the-root-disk-has-a-20-gib-minimum)). |
 | `pool` | string | Yes | `DEFAULT_POOL` | ZFS pool for zvols and ISOs |
 | `network_interface` | string | Yes | `DEFAULT_NETWORK_INTERFACE` | Bridge, VLAN, or physical interface |

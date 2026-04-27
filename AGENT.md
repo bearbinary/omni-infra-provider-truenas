@@ -224,6 +224,8 @@ memory: 2048
 disk_size: 10
 ```
 
+> **HDD-backed pool?** etcd defaults assume <10 ms fsync; HDDs hit 50–200 ms under load. Either point CP MachineClasses at an NVMe pool / add an SLOG vdev, **or** apply the HDD-tuning ConfigPatch in [`docs/sizing.md`](docs/sizing.md#hdd-backed-pools--tune-the-cluster-not-just-the-hardware) (raises etcd heartbeat/election timeouts, kubelet status frequency, leader-elect deadlines, apiserver in-flight ceiling). Skipping this on HDDs causes intermittent leader churn and false `NodeNotReady` flaps.
+
 ### Worker Nodes
 
 More resources — runs application workloads and stores container images. Includes a storage disk for Longhorn persistent storage:

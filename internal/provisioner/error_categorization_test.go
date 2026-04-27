@@ -32,6 +32,15 @@ func TestRecordProvisionError_Categories(t *testing.T) {
 		{"timeout", "context deadline exceeded: timeout", "timeout"},
 		{"memory", "host has 8192 MiB total memory but VM requests 32768 MiB", "memory"},
 		{"memory RAM", "not enough RAM", "memory"},
+		// `host_oom` cases — runtime ENOMEM from vm.start (TrueNAS host RAM
+		// is full because other guests have already booked it). Distinct
+		// from `memory` (oversized MachineClass) so dashboards and alerts
+		// can route them to different operator responses.
+		{"host_oom raw libvirt", "truenas api error (code 12): [ENOMEM] Cannot guarantee memory for guest omni_test", "host_oom"},
+		{"host_oom translated", "TrueNAS host out of memory: cannot start VM 700 (omni_test) requesting 4096 MiB", "host_oom"},
+		{"host_oom permanent", "TrueNAS host out of memory after 5 attempts: cannot start VM 700", "host_oom"},
+		{"host_oom preflight", "TrueNAS host has 1024 MiB free (8192 total minus 7168 MiB committed to RUNNING guests)", "host_oom"},
+		{"host_oom user-friendly", "TrueNAS host is out of free RAM — cannot guarantee memory for this VM", "host_oom"},
 		{"image schematic", "failed to generate schematic", "image"},
 		{"image ISO", "failed to download ISO", "image"},
 		{"unknown error", "something completely different", "unknown"},

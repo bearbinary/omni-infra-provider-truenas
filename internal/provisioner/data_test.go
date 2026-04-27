@@ -193,6 +193,56 @@ func TestValidate_NumericBounds(t *testing.T) {
 		require.Error(t, d.Validate())
 	})
 
+	// min_memory validation: zero is the "no balloon" sentinel and must
+	// pass; non-zero values must clear the same MinMemoryMiB floor as
+	// memory and must not exceed memory itself. Without the
+	// `min_memory > memory` guard, TrueNAS returns a libvirt-style error
+	// from vm.create that the operator has to grep logs to identify.
+	t.Run("min_memory zero accepted (no balloon)", func(t *testing.T) {
+		d := base()
+		d.Memory = 4096
+		d.MinMemory = 0
+		require.NoError(t, d.Validate())
+	})
+
+	t.Run("min_memory negative rejected", func(t *testing.T) {
+		d := base()
+		d.Memory = 4096
+		d.MinMemory = -1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("min_memory below MinMemoryMiB rejected", func(t *testing.T) {
+		d := base()
+		d.Memory = 4096
+		d.MinMemory = MinMemoryMiB - 1
+		require.Error(t, d.Validate())
+	})
+
+	t.Run("min_memory above memory rejected", func(t *testing.T) {
+		d := base()
+		d.Memory = 2048
+		d.MinMemory = 4096
+		err := d.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "min_memory",
+			"error should name the field for operator triage")
+	})
+
+	t.Run("min_memory equal to memory accepted", func(t *testing.T) {
+		d := base()
+		d.Memory = 4096
+		d.MinMemory = 4096
+		require.NoError(t, d.Validate())
+	})
+
+	t.Run("min_memory between floor and memory accepted", func(t *testing.T) {
+		d := base()
+		d.Memory = 4096
+		d.MinMemory = 1024
+		require.NoError(t, d.Validate())
+	})
+
 	t.Run("disk_size negative rejected", func(t *testing.T) {
 		d := base()
 		d.DiskSize = -1

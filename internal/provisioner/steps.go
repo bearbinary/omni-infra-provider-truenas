@@ -418,24 +418,78 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		}
 	}
 
-	// Pre-check: verify VM memory doesn't exceed safe threshold of total host RAM.
-	// This checks against total physmem (not free RAM) because TrueNAS dynamically
-	// manages ZFS ARC. A single VM requesting >80% of total RAM would starve ZFS.
+	// Pre-check: verify the host actually has enough free RAM for this VM.
+	//
+	// Two ceilings, both enforced:
+	//
+	//  1. Single-VM ceiling (80% of total physmem) — guards ZFS ARC
+	//     starvation. TrueNAS dynamically reclaims ARC, but a single guest
+	//     larger than 80% of total RAM would force ARC down to a level where
+	//     metadata churn dominates and the box thrashes.
+	//
+	//  2. Free-RAM ceiling (90% of physmem minus already-running guests) —
+	//     guards the runtime ENOMEM that vm.start returns when the host
+	//     can't lock guest memory at boot. The original check only looked
+	//     at total physmem, so a host with 32 GiB total and 28 GiB already
+	//     committed to other VMs would happily accept a new 8 GiB
+	//     MachineClass — and then loop forever on
+	//     `[ENOMEM] Cannot guarantee memory for guest`. Subtracting the
+	//     RUNNING-guest commitment up-front turns that infinite-retry
+	//     pattern into an immediate, actionable provision error.
 	hostMem, memErr := p.client.SystemMemoryAvailable(ctx)
 	if memErr == nil {
-		requestedMiB := int64(data.Memory)
+		// The host has to lock min_memory at vm.start (and only min_memory
+		// if balloon is configured). If min_memory is unset the full memory
+		// value is reserved. Comparing against the *actual reservation*
+		// avoids rejecting valid balloon configs that have memory >>
+		// host-free but min_memory < host-free.
+		reservedMiB := int64(data.Memory)
+		if data.MinMemory > 0 {
+			reservedMiB = int64(data.MinMemory)
+		}
+
+		ceilingMiB := int64(data.Memory)
 		hostMiB := hostMem / (1024 * 1024)
 
-		logger.Debug("memory check",
-			zap.Int64("host_mib", hostMiB),
-			zap.Int64("requested_mib", requestedMiB),
-			zap.Int64("threshold_mib", hostMiB*80/100),
-		)
-
-		if requestedMiB > hostMiB*80/100 {
-			return fmt.Errorf("host has %d MiB total memory but VM requests %d MiB — "+
+		if ceilingMiB > hostMiB*80/100 {
+			return fmt.Errorf("host has %d MiB total memory but VM ceiling is %d MiB — "+
 				"a single VM should not exceed 80%% of host RAM (TrueNAS needs the rest for ZFS ARC). "+
-				"Reduce VM memory or add more host RAM", hostMiB, requestedMiB)
+				"Reduce memory or add more host RAM", hostMiB, ceilingMiB)
+		}
+
+		// Best-effort: if the running-VM aggregate query fails, fall back to
+		// the single-VM ceiling above rather than blocking provisioning on
+		// an observability call. Logged at debug so the pre-flight degrades
+		// silently in the happy path.
+		runningMiB, runErr := p.client.RunningGuestsMemoryMiB(ctx)
+		if runErr != nil {
+			logger.Debug("memory check: skipping running-guest aggregate (non-fatal)",
+				zap.Int64("host_mib", hostMiB),
+				zap.Int64("reserved_mib", reservedMiB),
+				zap.Error(runErr),
+			)
+		} else {
+			freeMiB := hostMiB - runningMiB
+
+			logger.Debug("memory check",
+				zap.Int64("host_mib", hostMiB),
+				zap.Int64("running_mib", runningMiB),
+				zap.Int64("free_mib", freeMiB),
+				zap.Int64("ceiling_mib", ceilingMiB),
+				zap.Int64("reserved_mib", reservedMiB),
+				zap.Int64("free_threshold_mib", freeMiB*90/100),
+			)
+
+			if reservedMiB > freeMiB*90/100 {
+				balloonHint := ""
+				if data.MinMemory == 0 {
+					balloonHint = " Set min_memory to a smaller value to enable memory ballooning instead of a hard reservation."
+				}
+
+				return fmt.Errorf("TrueNAS host has %d MiB free (%d total minus %d MiB committed to RUNNING guests); "+
+					"VM needs %d MiB reserved at start. Stop another guest, shrink this MachineClass, or add host RAM.%s",
+					freeMiB, hostMiB, runningMiB, reservedMiB, balloonHint)
+			}
 		}
 	}
 
@@ -480,6 +534,7 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		UUID:        machineUUID,
 		VCPUs:       data.CPUs,
 		Memory:      data.Memory,
+		MinMemory:   data.MinMemory,
 		CPUMode:     "HOST-PASSTHROUGH",
 		Bootloader:  data.BootMethod,
 		Autostart:   true,
@@ -856,8 +911,10 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	// Start the VM
 	if err := p.client.StartVM(ctx, vm.ID); err != nil {
-		return fmt.Errorf("failed to start VM: %w", err)
+		return p.translateStartError(logger, vm.ID, vmName, data.Memory, err)
 	}
+
+	p.clearOOMAttempts(vmName)
 
 	logger.Info("VM started, waiting for RUNNING state",
 		zap.String("name", vmName),
@@ -865,6 +922,56 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	)
 
 	return provision.NewRetryInterval(15 * time.Second)
+}
+
+// translateStartError converts a vm.start failure into the most actionable
+// error string the operator can act on. ENOMEM is treated specially because
+// the raw `truenas api error (code 12): [ENOMEM] Cannot guarantee memory
+// for guest …` string buries the operational reality (host RAM is full)
+// under TrueNAS's libvirt-style wording, and Omni's MachineRequest UI does
+// not currently render the underlying step error verbatim — so the message
+// has to lead with the diagnosis, not the API code.
+//
+// After MaxStartOOMAttempts consecutive ENOMEM retries on the same
+// MachineRequest, this returns a permanent error so the controller stops
+// silently looping and Omni surfaces the failure on the request status —
+// the operator's ENOMEM signal in v0.16.x was an hour of UI-frozen
+// "uploadISO 2/4" with no visible cause.
+func (p *Provisioner) translateStartError(
+	logger *zap.Logger,
+	vmID int,
+	vmName string,
+	vmMemoryMiB int,
+	err error,
+) error {
+	if !client.IsNoMemory(err) {
+		return fmt.Errorf("failed to start VM %d (%s): %w", vmID, vmName, err)
+	}
+
+	count := p.recordOOMAttempt(vmName)
+
+	logger.Error("vm.start ENOMEM — TrueNAS host out of free RAM",
+		zap.Int("vm_id", vmID),
+		zap.String("vm_name", vmName),
+		zap.Int("requested_mib", vmMemoryMiB),
+		zap.Int("attempt", count),
+		zap.Int("max_attempts", p.config.MaxStartOOMAttempts),
+		zap.Error(err),
+	)
+
+	if p.config.MaxStartOOMAttempts > 0 && count > p.config.MaxStartOOMAttempts {
+		// Permanent failure — surfaces on MachineRequestStatus instead of
+		// continuing to spin. Counter is intentionally not cleared: a
+		// subsequent provider restart resets it (in-memory map), at which
+		// point the operator presumably has freed RAM or shrunk the class.
+		return fmt.Errorf("TrueNAS host out of memory after %d attempts: cannot start VM %d (%s) requesting %d MiB. "+
+			"Free host RAM (stop another guest), shrink this MachineClass memory, or add physical RAM, then delete this MachineRequest to retry",
+			count, vmID, vmName, vmMemoryMiB)
+	}
+
+	return fmt.Errorf("TrueNAS host out of memory: cannot start VM %d (%s) requesting %d MiB (attempt %d/%d). "+
+		"Free a guest or shrink this MachineClass — provider will retry: %w",
+		vmID, vmName, vmMemoryMiB, count, p.config.MaxStartOOMAttempts, err)
 }
 
 // stepHealthCheck runs on every reconcile after the VM is created.
@@ -1061,6 +1168,18 @@ func categorizeError(err error) string {
 		return "auth"
 	case strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline"):
 		return "timeout"
+	// `host_oom` precedes `memory` so the runtime ENOMEM (host RAM full at
+	// vm.start time, surfaced via translateStartError or the raw libvirt
+	// "[ENOMEM] Cannot guarantee memory" string) routes to its own bucket.
+	// Without this split, a transient host-OOM during a provisioning storm
+	// pages the same alert as an oversized MachineClass — two very
+	// different operator responses (free a guest vs. fix the manifest).
+	case strings.Contains(errMsg, "[ENOMEM]") ||
+		strings.Contains(errMsg, "Cannot guarantee memory") ||
+		strings.Contains(errMsg, "host out of memory") ||
+		strings.Contains(errMsg, "TrueNAS host has") ||
+		strings.Contains(errMsg, "TrueNAS host is out of free RAM"):
+		return "host_oom"
 	case strings.Contains(errMsg, "memory") || strings.Contains(errMsg, "RAM"):
 		return "memory"
 	case strings.Contains(errMsg, "schematic") || strings.Contains(errMsg, "ISO"):
@@ -1246,6 +1365,15 @@ func (p *Provisioner) resetNVRAMIfNeeded(ctx context.Context, logger *zap.Logger
 
 		// Try to start the VM after NVRAM reset
 		if err := p.client.StartVM(ctx, vmID); err != nil {
+			if client.IsNoMemory(err) {
+				logger.Error("failed to start VM after NVRAM reset — TrueNAS host out of free RAM",
+					zap.Int("vm_id", vmID),
+					zap.Error(err),
+				)
+
+				return
+			}
+
 			logger.Error("failed to start VM after NVRAM reset", zap.Int("vm_id", vmID), zap.Error(err))
 		}
 	}
@@ -1352,9 +1480,11 @@ func (p *Provisioner) handleExistingVM(ctx context.Context, logger *zap.Logger, 
 	}
 
 	if err := p.client.StartVM(ctx, vm.ID); err != nil {
-		err = fmt.Errorf("failed to start existing VM: %w", err)
-		return &err
+		translated := p.translateStartError(logger, vm.ID, vmName, vm.Memory, err)
+		return &translated
 	}
+
+	p.clearOOMAttempts(vmName)
 
 	retryErr := provision.NewRetryInterval(10 * time.Second)
 	return &retryErr

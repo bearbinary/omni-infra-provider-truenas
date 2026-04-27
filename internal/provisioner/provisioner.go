@@ -19,6 +19,7 @@ type ProviderConfig struct {
 	GracefulShutdownTimeout time.Duration // How long to wait for ACPI shutdown before force (default: 30s, 0=force immediately)
 	PollInterval            time.Duration // How often to poll VM state during graceful shutdown (default: 2s)
 	MaxErrorRecoveries      int           // Max consecutive ERROR state recoveries before deprovisioning a VM (default: 5, negative=disable)
+	MaxStartOOMAttempts     int           // Max consecutive vm.start ENOMEM retries before returning a permanent error (default: 5, negative=disable)
 }
 
 // Provisioner implements the Omni provision.Provisioner interface for TrueNAS.
@@ -35,6 +36,16 @@ type Provisioner struct {
 	// Circuit breaker: track consecutive ERROR recoveries per VM ID
 	errorMu     sync.Mutex
 	errorCounts map[int]int
+
+	// Circuit breaker: track consecutive vm.start ENOMEM retries keyed by
+	// VM name. Distinct from errorCounts because the VM ID isn't stable
+	// across the pre-creation path (preflight reject before VM exists) and
+	// we want the counter to survive a `clearVMErrors` (those track
+	// ERROR-state recovery, not OOM-budgeted retries). vmName maps 1:1 to
+	// the MachineRequest ID via meta.BuildVMName, so it's a stable key
+	// across reconciles for the same request.
+	oomMu     sync.Mutex
+	oomCounts map[string]int
 }
 
 // NewProvisioner creates a new TrueNAS provisioner.
@@ -43,12 +54,17 @@ func NewProvisioner(c *client.Client, cfg ProviderConfig) *Provisioner {
 		cfg.MaxErrorRecoveries = 5
 	}
 
+	if cfg.MaxStartOOMAttempts == 0 {
+		cfg.MaxStartOOMAttempts = 5
+	}
+
 	return &Provisioner{
 		client:         c,
 		config:         cfg,
 		activeImageIDs: make(map[string]bool),
 		activeVMNames:  make(map[string]bool),
 		errorCounts:    make(map[int]int),
+		oomCounts:      make(map[string]int),
 	}
 }
 
@@ -69,6 +85,27 @@ func (p *Provisioner) clearVMErrors(vmID int) {
 	defer p.errorMu.Unlock()
 
 	delete(p.errorCounts, vmID)
+}
+
+// recordOOMAttempt increments the consecutive vm.start ENOMEM retry count
+// for a given VM. Returns the new count.
+func (p *Provisioner) recordOOMAttempt(vmName string) int {
+	p.oomMu.Lock()
+	defer p.oomMu.Unlock()
+
+	p.oomCounts[vmName]++
+
+	return p.oomCounts[vmName]
+}
+
+// clearOOMAttempts resets the OOM retry count (called once vm.start succeeds
+// or the request is deprovisioned). Keeps the map from accumulating dead
+// entries for terminated MachineRequests across long-lived providers.
+func (p *Provisioner) clearOOMAttempts(vmName string) {
+	p.oomMu.Lock()
+	defer p.oomMu.Unlock()
+
+	delete(p.oomCounts, vmName)
 }
 
 // TrackImageID records an image ID as actively in use.

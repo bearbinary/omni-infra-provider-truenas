@@ -16,6 +16,7 @@ This page covers:
 - [Observable triggers — how to tell *right now* that yours is too small](#triggers-scale-up-when)
 - [Sizing table by cluster scale](#sizing-table)
 - [How to actually resize a Talos control plane safely](#how-to-resize)
+- [HDD-backed pools — tune the cluster, not just the hardware](#hdd-backed-pools--tune-the-cluster-not-just-the-hardware)
 
 !!! tip "TL;DR"
     Scale up the control plane when the apiserver is slow, etcd is warning
@@ -81,7 +82,10 @@ Signals:
 
 - **`apply request took too long`** (> 100 ms) → etcd disk fsync is slow. Root
   cause is usually the ZFS pool, not CPU. See [ZFS considerations](#zfs-and-etcd-disk-performance)
-  below. Bumping CP CPU/RAM will *not* fix this.
+  below. Bumping CP CPU/RAM will *not* fix this. If the pool is HDD and you
+  can't add an SLOG, also apply the
+  [HDD timeout patch](#hdd-backed-pools--tune-the-cluster-not-just-the-hardware)
+  so normal HDD latency stops looking like a failure to Kubernetes.
 - **`slow fdatasync`** → same story. The zvol needs a faster vdev layout.
 - **`request stats`** showing leader changes / elections during normal
   operation → CP CPU contention. Bump `cpus`.
@@ -147,6 +151,19 @@ These are starting points, not hard rules. Calibrate against the triggers above.
 | **Large — 3 CP, GitOps + service mesh** | 25–50 | < 1500 | 4–8 | 16–24 GiB | 100 GiB |
 | **Big — dedicated platform team** | 50+ | 1500+ | 8+ | 24+ GiB | 200 GiB+ |
 
+> **Crossplane changes the floor.** The `2 vCPU / 2 GiB` "Homelab" row is for
+> a *raw* Kubernetes cluster — no Crossplane, no service mesh, no heavy
+> operators. **If you run Crossplane at all, the floor is `4 vCPU / 4 GiB`
+> per CP node**, even at homelab scale. Each Crossplane provider installs
+> its own controller plus a CRD set the apiserver has to keep in cache, and
+> the work piles onto the same control-plane RAM that already holds etcd's
+> working set. The 2/2 default boots, but apiserver swaps under load, etcd
+> heartbeats slip, and the cluster looks "intermittently slow" with no
+> single failing component to point at — exactly the failure mode this
+> doc's triggers section is meant to head off. Other operators in the same
+> bucket: Rancher/Fleet, Argo CD with many ApplicationSets, Prometheus
+> Operator at full mesh-monitoring scale, Cilium with policy-heavy CRDs.
+
 ### Why the root disk has a 20 GiB minimum
 
 The provider enforces `disk_size >= 20` at validation time, and the JSON
@@ -207,6 +224,17 @@ minimum — sidecar / data disks don't carry image pressure.
   the bottleneck.
 - **Memory > CPU, usually.** Running out of memory OOMs apiserver. Running
   out of CPU just makes things slow. Budget for memory first.
+- **`memory` is a hard reservation by default.** TrueNAS locks the full
+  `memory` value at `vm.start`. If the host can't guarantee it, the VM
+  fails with ENOMEM and provisioning stalls. On tight homelab hosts where
+  multiple VMs would otherwise oversubscribe RAM, set `min_memory` (≥ 1024
+  MiB, ≤ `memory`) to enable virtio-balloon: the VM starts with
+  `min_memory` reserved and grows toward `memory` as host RAM is
+  available. **Caveat:** Talos doesn't auto-load `virtio-balloon`, so
+  unless you enable it in-guest the VM runs at `min_memory` and `memory`
+  becomes a ceiling that's never reached. Size `min_memory` to what Talos
+  actually needs (1–2 GiB workers, 2–4 GiB CPs). See
+  [Troubleshooting § Host out of memory](troubleshooting.md#vm-creation-succeeds-but-vm-wont-start-host-out-of-memory).
 
 ## How to Resize
 
@@ -307,6 +335,123 @@ not help.** You need a faster storage path:
   loss.
 
 See [Storage Guide](storage.md) for pool layout trade-offs.
+
+### HDD-Backed Pools — Tune the Cluster, Not Just the Hardware
+
+If your CP zvols *must* live on a spinning-disk pool with no SLOG (homelab
+constraint, no spare NVMe slot, budget reality), the fix is twofold:
+
+1. **First, accept the trade-off.** etcd is happiest on storage with **sub-10 ms
+   fsync**. HDDs under load routinely see **50–200 ms**. You will not make an
+   HDD as fast as an SSD with config — you can only stop the cluster from
+   *interpreting normal HDD latency as failure*.
+2. **Then, raise every Kubernetes timeout that assumes SSD-class fsync.** The
+   defaults assume etcd commits in <10 ms. A 5x bump on the heartbeat,
+   election, and node-monitor timers buys enough headroom that a stalled
+   write doesn't trigger leader churn or false `NodeNotReady` flaps.
+
+Apply the patch below as a ConfigPatch in Omni (UI → Cluster → Patches, or
+via `omnictl apply`). Replace `talos-home` with your cluster name.
+
+```yaml
+metadata:
+  namespace: default
+  type: ConfigPatches.omni.sidero.dev
+  id: 400-apiserver-tuning-talos-home
+  labels:
+    omni.sidero.dev/cluster: talos-home
+spec:
+  data: |
+    cluster:
+      apiServer:
+        extraArgs:
+          max-requests-inflight: "1500"
+          max-mutating-requests-inflight: "700"
+          watch-cache-sizes: "compositeresourcedefinitions.apiextensions.crossplane.io#500,releases.helm.crossplane.io#500"
+          request-timeout: "2m0s"
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            memory: 1500Mi
+      controllerManager:
+        extraArgs:
+          kube-api-qps: "50"
+          kube-api-burst: "75"
+          leader-elect-lease-duration: 60s
+          leader-elect-renew-deadline: 40s
+          leader-elect-retry-period: 5s
+          node-monitor-grace-period: 60s
+          node-monitor-period: 5s
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 512Mi
+      scheduler:
+        extraArgs:
+          kube-api-qps: "50"
+          kube-api-burst: "75"
+          leader-elect-lease-duration: 60s
+          leader-elect-renew-deadline: 40s
+          leader-elect-retry-period: 5s
+        resources:
+          requests:
+            cpu: 50m
+            memory: 96Mi
+          limits:
+            memory: 256Mi
+      # etcd tuning for HDD-backed storage. Defaults assume <10ms fsync;
+      # HDDs commonly see 50-200ms under load. 5x timeouts buy headroom.
+      etcd:
+        extraArgs:
+          heartbeat-interval: "500"
+          election-timeout: "5000"
+          auto-compaction-mode: periodic
+          auto-compaction-retention: "1h"
+          quota-backend-bytes: "8589934592"
+          snapshot-count: "100000"
+    machine:
+      kubelet:
+        extraArgs:
+          # Default 10s. Each tick is one apiserver write per node = one
+          # etcd fsync. 30s cuts background etcd load 3x.
+          node-status-update-frequency: 30s
+```
+
+**What each block buys you on HDDs:**
+
+| Knob | Default | HDD value | Why |
+|---|---|---|---|
+| `etcd.heartbeat-interval` | 100 ms | **500 ms** | Heartbeats fsync. Slower fsync → fewer heartbeats per second so the leader doesn't fall behind its own log. |
+| `etcd.election-timeout` | 1000 ms | **5000 ms** | Must be ≥10× heartbeat. Stops a slow fsync from looking like a dead leader and triggering re-election storms. |
+| `etcd.auto-compaction-*` | off | **periodic / 1h** | HDD random I/O for compaction is brutal; hourly periodic compaction is cheaper than letting the DB grow unbounded. |
+| `etcd.quota-backend-bytes` | 2 GiB | **8 GiB** | Compaction is slower on HDD; give the DB more headroom between compactions. |
+| `etcd.snapshot-count` | 10,000 | **100,000** | Snapshots are sync-heavy. Less frequent = less etcd disk thrash. |
+| `controllerManager.node-monitor-grace-period` | 40s | **60s** | Stops false `NodeNotReady` flaps when an apiserver write to update node status sits behind a slow etcd commit. |
+| `kubelet.node-status-update-frequency` | 10s | **30s** | Each tick is one apiserver write per node — i.e. one etcd fsync. 3× fewer ticks = 3× less background etcd load on a slow disk. |
+| `apiServer.max-requests-inflight` | 400/200 | **1500/700** | More CRDs (Crossplane, Argo) → more bursty list/watch traffic. Raises ceiling so the apiserver queues instead of 429-ing controllers. |
+| `*.kube-api-qps` / `kube-api-burst` | 20/30 | **50/75** | Controllers can saturate the apiserver with default QPS once you have ≥20 CRDs. Raise so reconcile loops aren't client-side throttled. |
+| `*.leader-elect-*` | 15s/10s/2s | **60s/40s/5s** | Same logic as etcd election: don't interpret a slow-fsync hiccup as a dead leader. |
+
+**Confirm before you keep the patch.** After applying, watch:
+
+```bash
+omnictl --cluster <name> talosctl logs etcd | grep -iE "took too long|slow|elect"
+```
+
+`apply request took too long` warnings should drop sharply. If you still see
+`leader changed` or `lost the TCP streaming connection` regularly, the disk
+is too slow even with these timeouts — get an SLOG NVMe or move CP zvols to
+a flash pool. There is no software fix below that floor.
+
+> **`watch-cache-sizes` is example-only.** The values shown
+> (`compositeresourcedefinitions...crossplane`, `releases.helm.crossplane.io`)
+> are tuned for a Crossplane-heavy cluster. Drop or replace them for your
+> workload — wrong resource names are silently ignored, but a cache sized for
+> resources you don't have just wastes apiserver RAM.
 
 ## See Also
 

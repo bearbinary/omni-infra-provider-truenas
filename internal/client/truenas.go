@@ -150,6 +150,7 @@ func (e *APIError) Error() string {
 const (
 	ErrCodeNotFound      = 2  // ENOENT — resource does not exist
 	ErrCodeInvalid       = 11 // EINVAL — invalid argument (also used for "already exists" in some contexts)
+	ErrCodeNoMemory      = 12 // ENOMEM — host cannot guarantee guest memory (vm.start)
 	ErrCodeDenied        = 13 // EACCES — permission denied
 	ErrCodeExists        = 17 // EEXIST — resource already exists
 	ErrCodeNoSpace       = 28 // ENOSPC — no space left on device
@@ -181,6 +182,9 @@ func UserFriendlyError(err error) string {
 	switch apiErr.Code {
 	case ErrCodeNoSpace:
 		return "TrueNAS pool is full — free up space or use a different pool"
+	case ErrCodeNoMemory:
+		return "TrueNAS host is out of free RAM — cannot guarantee memory for this VM. " +
+			"Stop another guest, reduce this MachineClass memory, or add host RAM"
 	case ErrCodeDenied:
 		return "TrueNAS permission denied — check API key permissions"
 	case ErrCodeInvalid:
@@ -223,6 +227,30 @@ func IsNotFound(err error) bool {
 	}
 
 	return false
+}
+
+// IsNoMemory returns true if the error indicates the TrueNAS host could not
+// guarantee memory for a guest VM. This is the runtime ENOMEM produced by
+// vm.start when the host has insufficient free RAM (other VMs already
+// committed it, ARC won't release fast enough, etc.) — distinct from a
+// MachineClass that simply requests more memory than the host has total,
+// which the provider's pre-flight check rejects before VM creation.
+//
+// Matches both the structured code (12 / ENOMEM) and the message-based
+// fallback because TrueNAS sometimes returns the libvirt-relayed string
+// without a clean error code.
+func IsNoMemory(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+
+	if apiErr.Code == ErrCodeNoMemory {
+		return true
+	}
+
+	return strings.Contains(apiErr.Message, "[ENOMEM]") ||
+		strings.Contains(apiErr.Message, "Cannot guarantee memory")
 }
 
 // IsAlreadyExists returns true if the error indicates the resource already exists.

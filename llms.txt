@@ -135,6 +135,9 @@ A: The provider connects to TrueNAS via WebSocket (wss://<host>/websocket) using
 Q: What ZFS features does this provider use?
 A: VM disks are created as ZFS zvols on your specified pool. ISOs are cached on the pool filesystem with SHA-256 deduplication. You can target different pools per MachineClass (e.g., NVMe for control plane, HDD for workers).
 
+Q: Can I run a Kubernetes control plane on an HDD-backed ZFS pool?
+A: Yes, but you must apply the HDD-tuning ConfigPatch in docs/sizing.md (#hdd-backed-pools--tune-the-cluster-not-just-the-hardware). etcd defaults assume sub-10 ms fsync; HDDs under load see 50–200 ms. The patch raises etcd heartbeat-interval to 500ms, election-timeout to 5000ms, kubelet node-status-update-frequency to 30s, controller-manager node-monitor-grace-period to 60s, leader-elect lease/renew/retry timers, apiserver max-requests-inflight, and adds periodic auto-compaction. Without it the cluster shows intermittent leader changes and false NodeNotReady flaps as etcd interprets normal HDD latency as failure. The better fix is to add an NVMe SLOG vdev or move CP zvols to a flash pool — etcd works best with <10 ms fsync.
+
 Q: What are the minimum hardware requirements?
 A: A single-node Kubernetes cluster needs approximately 4 CPU cores, 16 GB RAM, and 50 GB free disk space (including TrueNAS overhead). Control plane VMs need 2 vCPUs and 2 GB RAM minimum; workers scale based on workload.
 

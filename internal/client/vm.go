@@ -38,10 +38,17 @@ type CreateVMRequest struct {
 	Description string `json:"description,omitempty"`
 	UUID        string `json:"uuid,omitempty"` // SMBIOS UUID — must match what we tell Omni so Talos identity correlates
 	VCPUs       int    `json:"vcpus"`
-	Memory      int    `json:"memory"` // MiB
-	Bootloader  string `json:"bootloader"`
-	Autostart   bool   `json:"autostart"`
-	CPUMode     string `json:"cpu_mode,omitempty"` // HOST-PASSTHROUGH, HOST-MODEL, or CUSTOM (default)
+	Memory      int    `json:"memory"` // MiB — hard ceiling, fully reserved at vm.start when MinMemory is zero
+	// MinMemory, when non-zero, is sent as the TrueNAS `min_memory` field —
+	// the soft floor for memory ballooning. The VM starts with MinMemory
+	// reserved and balloons up to Memory as host RAM is available.
+	// Omitted via `omitempty` when zero so TrueNAS gets `null` (its
+	// "no balloon, fully reserve Memory" sentinel) rather than a numeric
+	// zero, which the middleware would reject.
+	MinMemory  int    `json:"min_memory,omitempty"` // MiB
+	Bootloader string `json:"bootloader"`
+	Autostart  bool   `json:"autostart"`
+	CPUMode    string `json:"cpu_mode,omitempty"` // HOST-PASSTHROUGH, HOST-MODEL, or CUSTOM (default)
 }
 
 // CreateVM creates a new virtual machine.
@@ -83,6 +90,34 @@ func (c *Client) ListVMs(ctx context.Context) ([]VM, error) {
 	}
 
 	return vms, nil
+}
+
+// RunningGuestsMemoryMiB returns the sum of the `memory` field for all VMs
+// currently in the RUNNING state on the host. Used by the provision-time
+// pre-flight to reject MachineClasses whose RAM, when added to what's
+// already committed by other guests, would exceed host headroom — catching
+// the runtime ENOMEM before vm.start can hit it.
+//
+// Counts only RUNNING VMs (not STOPPED) because TrueNAS only locks guest
+// memory while a VM is live. A stopped VM with 32 GiB configured imposes
+// no memory load until it boots.
+//
+// Provider-managed and externally-managed VMs are both included — the host
+// memory ceiling doesn't care who created the guest.
+func (c *Client) RunningGuestsMemoryMiB(ctx context.Context) (int64, error) {
+	vms, err := c.ListVMs(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	var total int64
+	for _, vm := range vms {
+		if vm.Status.State == "RUNNING" {
+			total += int64(vm.Memory)
+		}
+	}
+
+	return total, nil
 }
 
 // FindVMByName searches for a VM by name.

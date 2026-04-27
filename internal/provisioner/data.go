@@ -63,7 +63,20 @@ type Data struct {
 	Encrypted        bool     `yaml:"encrypted,omitempty"`  // Enable ZFS native encryption on the VM zvol
 	CPUs             int      `yaml:"cpus,omitempty"`
 	Memory           int      `yaml:"memory,omitempty"`
-	DiskSize         int      `yaml:"disk_size,omitempty"`
+
+	// MinMemory is the optional soft floor (MiB) for guest RAM. When set,
+	// TrueNAS launches the VM with `min_memory` MiB reserved and balloons
+	// up to `memory` as host RAM is available. When unset (the default),
+	// `memory` is treated as a hard reservation and vm.start fails with
+	// ENOMEM if the host can't lock the full amount. Must be >= 1024 and
+	// <= memory when set. The Talos kernel does not auto-load
+	// virtio-balloon, so without explicit guest-side enablement the VM
+	// will run with min_memory's reservation and `memory` becomes a
+	// ceiling that's never reached — set min_memory to whatever Talos
+	// actually needs (1–2 GiB for workers, more for control planes).
+	MinMemory int `yaml:"min_memory,omitempty"`
+
+	DiskSize int `yaml:"disk_size,omitempty"`
 
 	// DatasetPrefix is an optional ZFS dataset path under the pool.
 	// When set, zvols are created at <pool>/<dataset_prefix>/omni-vms/<request-id>
@@ -276,6 +289,26 @@ func (d *Data) Validate() error {
 
 	if d.Memory > MaxMemoryMiB {
 		return fmt.Errorf("memory must be <= %d MiB, got %d", MaxMemoryMiB, d.Memory)
+	}
+
+	// `min_memory` is the soft floor for memory ballooning. When unset (0)
+	// it's omitted from the vm.create payload and TrueNAS treats `memory`
+	// as a hard reservation. When set, it must be at least the
+	// MinMemoryMiB floor (anything smaller can't run a Talos kernel) and
+	// at most the configured `memory` ceiling — TrueNAS rejects
+	// min_memory > memory at vm.create time, but catching it here gives a
+	// MachineClass-level error that points at the field, not a libvirt
+	// stack trace four steps later.
+	if d.MinMemory < 0 {
+		return fmt.Errorf("min_memory must be >= 0, got %d", d.MinMemory)
+	}
+
+	if d.MinMemory != 0 && d.MinMemory < MinMemoryMiB {
+		return fmt.Errorf("min_memory must be >= %d MiB when set, got %d", MinMemoryMiB, d.MinMemory)
+	}
+
+	if d.MinMemory > d.Memory {
+		return fmt.Errorf("min_memory (%d MiB) must be <= memory (%d MiB) — min_memory is the soft floor; memory is the ceiling the guest can balloon up to", d.MinMemory, d.Memory)
 	}
 
 	if d.DiskSize < 0 {

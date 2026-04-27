@@ -135,9 +135,105 @@ The provider failed to generate a Talos image schematic.
 
 ### VM creation succeeds but VM won't start
 
-- **Insufficient resources** — TrueNAS needs enough free memory for the VM. Check `memory` in MachineClass config vs. available RAM.
 - **zvol allocation** — ensure the pool has enough free space for the `disk_size` specified
 - **CPU mode** — the provider uses `HOST-PASSTHROUGH` CPU mode. Verify the host CPU supports virtualization (VT-x/AMD-V)
+- **Host out of memory** — see the dedicated section below.
+
+### VM creation succeeds but VM won't start: host out of memory
+
+**Symptom.** The Omni UI sits on `Running Step: "uploadISO" (2/4)` for an
+extended period (the step counter doesn't advance because step 3 is
+silently looping). Provider logs show the real cause repeating every
+~60 seconds:
+
+```
+reconcile failed	{"error": "failed to start existing VM: vm.start (id=NNN) failed:
+  truenas api error (code 12): [ENOMEM] Cannot guarantee memory for guest <name>"}
+```
+
+**Cause.** TrueNAS / KVM cannot lock the full `memory` value at
+`vm.start` because the host doesn't have enough free RAM right now.
+Common scenarios:
+
+- Other VMs are already running and have committed the host RAM (the
+  most common case — pre-flight on the new MachineRequest passed when
+  it was the only VM, but by the time it reached step 3 another VM
+  came up).
+- ZFS ARC has grown to fill the host and isn't releasing fast enough
+  to satisfy the new guest's allocation.
+- The `memory` value is genuinely larger than the host's total RAM (a
+  configuration mistake the provider's pre-flight should reject before
+  this point — if you see ENOMEM with the pre-flight log line missing,
+  file a bug).
+
+This is a **TrueNAS / KVM-level guard, not a provider check**. KVM
+genuinely cannot allocate guest pages it can't lock — bypassing the
+guard would OOM the host kernel.
+
+**Diagnose.**
+
+```bash
+# On the TrueNAS host:
+midclt call vm.query | jq '.[] | select(.status.state == "RUNNING") |
+  {id, name, memory, min_memory}'
+
+# Sum of running-guest memory and host total:
+midclt call system.info | jq '{physmem_mib: (.physmem / 1024 / 1024)}'
+```
+
+If `sum(running .memory)` is close to `physmem_mib`, the host is full.
+
+**Fix — pick one:**
+
+1. **Stop another VM** to free its locked memory. Once vm.start has
+   the headroom it needs, the provider's next reconcile (within ~60 s)
+   will start the stuck VM and provisioning continues.
+
+2. **Set `min_memory` on the MachineClass** to enable memory
+   ballooning. The VM starts with `min_memory` reserved (smaller than
+   `memory`) and balloons up only when host RAM is available:
+
+   ```yaml
+   memory: 4096       # ceiling — what the guest can grow to
+   min_memory: 2048   # floor — what's reserved at vm.start
+   ```
+
+   ⚠️  The Talos kernel does not auto-load `virtio-balloon`, so until
+   balloon is explicitly enabled in-guest, the VM will run at
+   `min_memory` and `memory` becomes a ceiling that's never reached.
+   In practice: size `min_memory` to what Talos actually needs (1–2 GiB
+   for workers, 2–4 GiB for control planes). The pre-flight check
+   compares against `min_memory` when set, so this also unblocks the
+   provider-side validation on tight hosts.
+
+3. **Manually unblock the existing stuck VM** (no code change). On the
+   TrueNAS host:
+
+   ```bash
+   # Replace 700 with the VM ID from the error log.
+   midclt call vm.update 700 '{"min_memory": 2048}'
+   midclt call vm.start 700
+   ```
+
+   The provider doesn't reshape existing VMs after creation, so this
+   override sticks until the VM is deprovisioned.
+
+4. **Reduce `memory` in the MachineClass** if the requested amount is
+   simply too large for the host. Edit the class, then either delete
+   the stuck MachineRequest (provider deprovisions the VM) or wait for
+   the next reconcile to attempt the smaller `memory`.
+
+5. **Add physical RAM** if this is a recurring pattern. Pre-flight is
+   non-blocking when the running-guest aggregate query fails — so a
+   host that's chronically near-full will eventually wedge a
+   provisioning attempt.
+
+**Provider behavior on persistent ENOMEM.** From v0.16.2 onward, the
+provider retries up to `MaxStartOOMAttempts` (default 5) with the
+operator-actionable error message, then returns a **permanent**
+failure that surfaces on `MachineRequestStatus` instead of looping
+forever. Earlier versions retry indefinitely; symptom is the same
+"step 2/4" UI freeze.
 
 ### VM boots but kubelet loops on `DiskPressure` / etcd never starts
 

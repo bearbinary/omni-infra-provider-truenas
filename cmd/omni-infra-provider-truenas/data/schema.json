@@ -15,7 +15,15 @@
       "minimum": 1024,
       "maximum": 16777216,
       "default": 4096,
-      "description": "Memory in MiB (max 16 TiB)"
+      "description": "Maximum / hard memory limit in MiB (max 16 TiB). When min_memory is unset, this value is fully reserved on the TrueNAS host at vm.start — if the host can't guarantee it, the VM fails with ENOMEM. Set min_memory to enable a soft floor with ballooning up to this ceiling."
+    },
+    "min_memory": {
+      "type": ["integer", "null"],
+      "title": "Min Memory (MiB)",
+      "minimum": 0,
+      "maximum": 16777216,
+      "default": 0,
+      "description": "Optional soft memory floor in MiB. When set, the VM starts with min_memory reserved and balloons up to memory as host RAM is available — useful for over-committing on tight hosts. When unset (default), memory is treated as a hard reservation. Must be <= memory. Note: the Talos kernel does not auto-load virtio-balloon, so the VM may run at min_memory until balloon is enabled in-guest; size min_memory to what Talos actually needs (1–2 GiB workers, 2–4 GiB control planes)."
     },
     "disk_size": {
       "type": "integer",
