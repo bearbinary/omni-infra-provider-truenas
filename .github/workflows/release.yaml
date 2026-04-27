@@ -161,6 +161,48 @@ jobs:
             echo "Tag ${TAG} is a stable release."
           fi
 
+      # `:preview` Docker tag — points at the latest released image
+      # considering BOTH stable and pre-release tags in semver order.
+      # Targets soak-cohort users who want the newest available image
+      # regardless of channel:
+      #   - After v0.16.1 stable cut: :preview = :v0.16.1
+      #   - After v0.16.2-rc.1 cut:   :preview = :v0.16.2-rc.1 (newer than 0.16.1)
+      #   - After v0.16.2 stable cut: :preview = :v0.16.2 (newer than -rc.N)
+      #
+      # We push :preview ONLY if THIS release is the newest by semver
+      # order — `sort -rV` correctly handles "stable > its-own-rc" AND
+      # "next-minor-rc > current-stable". Without this guard, a hot-fix
+      # cut on an OLDER branch (e.g. v0.15.6 while v0.16.x is current)
+      # would silently overwrite :preview backward.
+      #
+      # is_newest output is consumed by the metadata-action `enable=`
+      # gate on the `:preview` tag rule below.
+      - name: Determine if this release is the newest by semver
+        id: is_newest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT="${{ github.ref_name }}"
+          # Get all existing release tags from GitHub. The CURRENT tag's
+          # release hasn't been created yet at this workflow stage, so
+          # we add it to the comparison set explicitly. `sort -rV`
+          # handles semver ordering correctly:
+          #   v0.16.2-rc.1 > v0.16.1 (newer minor RC beats older stable)
+          #   v0.16.1 > v0.16.1-rc.5 (stable beats its own RCs)
+          NEWEST=$(
+            (
+              gh release list --limit 100 --json tagName --jq '.[].tagName' || true
+              echo "$CURRENT"
+            ) | sort -rV -u | head -1
+          )
+          if [ "$NEWEST" = "$CURRENT" ]; then
+            echo "is_newest=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${CURRENT} IS the newest release by semver — :preview will be updated."
+          else
+            echo "is_newest=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${CURRENT} is NOT the newest (${NEWEST} is newer). :preview will NOT be updated to avoid moving it backward."
+          fi
+
       - name: Extract release notes from CHANGELOG.md
         run: |
           TAG="${{ steps.version.outputs.tag }}"
@@ -248,6 +290,12 @@ jobs:
           # 3. {{major}}.{{minor}} (`0.16`) — gated to STABLE only.
           # 4. `latest` — gated to STABLE only. v0.16.1-rc.1 displaced
           #    it historically; the guard prevents a recurrence.
+          # 5. `preview` — points at the newest published image across
+          #    BOTH channels (stable AND pre-release) in semver order.
+          #    Gated by `is_newest` so a hot-fix on an old branch
+          #    cannot move :preview backward. Distinct from `:latest`:
+          #    :latest is the stable channel only; :preview tracks the
+          #    leading edge for soak-cohort users.
           # The contains-check on `-` matches every prerelease form
           # (-rc.N, -beta.N, -alpha.N) since semver mandates a `-`.
           tags: |
@@ -255,6 +303,7 @@ jobs:
             type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
             type=raw,value=latest,enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
+            type=raw,value=preview,enable=${{ steps.is_newest.outputs.is_newest == 'true' }}
 
       # Build single-arch (runner-native) image into the local Docker daemon
       # so we can smoke test it *before* pushing multi-arch. If we pushed

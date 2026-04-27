@@ -76,6 +76,40 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
+      # Mirror the is_newest semver-comparison step. Forces `is_newest=true`
+      # in dry-run mode because we can't easily mock the GH release list;
+      # the assertion below pins the algorithm logic separately on
+      # synthetic inputs.
+      - name: Force is_newest=true (dry-run only)
+        id: is_newest
+        run: echo "is_newest=true" >> "$GITHUB_OUTPUT"
+
+      # Independently exercise the semver-newest algorithm with synthetic
+      # tag sets. Catches regressions in the sort -rV invocation (e.g.,
+      # forgetting -V, missing -u, wrong tail/head) without needing a
+      # real release.
+      - name: Assert is_newest algorithm
+        run: |
+          # Helper: returns "true" if CURRENT is the newest of (CURRENT + EXISTING…).
+          newest() {
+            local current="$1"; shift
+            local newest
+            newest=$( ( for t in "$@"; do echo "$t"; done; echo "$current" ) | sort -rV -u | head -1 )
+            [ "$newest" = "$current" ] && echo "true" || echo "false"
+          }
+
+          # Stable beats its own RCs.
+          [ "$(newest v0.16.1 v0.16.1-rc.5 v0.16.0)" = "true" ] || { echo "::error::stable should beat its own rc"; exit 1; }
+          # Newer-minor RC beats older stable.
+          [ "$(newest v0.17.0-rc.1 v0.16.1)" = "true" ] || { echo "::error::newer-minor rc should beat older stable"; exit 1; }
+          # Older stable hot-patch should NOT be newest when newer stable exists.
+          [ "$(newest v0.15.6 v0.16.1 v0.17.0-rc.1)" = "false" ] || { echo "::error::hot-fix on old branch must not be newest"; exit 1; }
+          # First release ever (no prior tags) — trivially newest.
+          [ "$(newest v0.1.0)" = "true" ] || { echo "::error::first-ever release should be newest"; exit 1; }
+          # rc.2 beats rc.1 of same target.
+          [ "$(newest v0.16.1-rc.2 v0.16.1-rc.1)" = "true" ] || { echo "::error::rc.2 should beat rc.1"; exit 1; }
+          echo "OK: is_newest algorithm correct on all 5 cases"
+
       # Run docker/metadata-action with the same tag rules as
       # release.yaml. Assert the emitted tag list is what we expect for
       # the synthetic input — catches a regression in the rules block
@@ -91,6 +125,7 @@ jobs:
             type=semver,pattern={{version}},value=${{ steps.testtag.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.testtag.outputs.tag }},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
             type=raw,value=latest,enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
+            type=raw,value=preview,enable=${{ steps.is_newest.outputs.is_newest == 'true' }}
 
       - name: Assert tag matrix
         run: |
@@ -131,5 +166,11 @@ jobs:
             echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:${MAJOR_MINOR}" \
               || { echo "::error:::${MAJOR_MINOR} missing for stable release"; exit 1; }
           fi
+
+          # :preview is gated by is_newest (forced true in dry-run); MUST
+          # be present here. In production release.yaml it's gated by
+          # the real semver comparison.
+          echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:preview" \
+            || { echo "::error:::preview missing — is_newest gate misconfigured"; exit 1; }
 
           echo "OK: tag matrix is correct for tag=$TAG (is_prerelease=$IS_PRE)"

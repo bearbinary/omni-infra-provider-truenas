@@ -114,6 +114,18 @@ omnictl serviceaccount create --role=InfraProvider infra-provider:truenas
 
 Run the container directly on your TrueNAS host via **Apps > Discover > Install via YAML**. Create an API key first — see [TrueNAS Setup > API Key](docs/truenas-setup.md#5-api-key) for the recommended scoped-role setup (dedicated non-root user, minimum 11 roles). Do **not** use the `root` user's API key.
 
+**Available image tags:**
+
+| Tag | Channel | Use when |
+|---|---|---|
+| `:latest` | Stable | Production / "I want what's been validated" |
+| `:0.16` (or `:X.Y`) | Stable, pinned to minor | You want stable but not silent major bumps |
+| `:v0.16.0` / `:0.16.0` | Specific version | Pinning to exactly one release |
+| `:preview` | Newest published, stable OR pre-release | Soak-cohort / "I want the leading edge to test" |
+| `:v0.16.1-rc.5` / `:0.16.1-rc.5` | Specific pre-release | Pinning to a specific RC for validation |
+
+`:latest` is moved by stable releases only. `:preview` is moved by every release — including pre-releases — but only when the new release is the newest in semver order, so a hot-fix on an old branch cannot move `:preview` backward. If no pre-release is newer than the current stable, `:preview` and `:latest` point at the same image.
+
 ```yaml
 # Paste into TrueNAS Apps > Discover > Install via YAML
 services:
