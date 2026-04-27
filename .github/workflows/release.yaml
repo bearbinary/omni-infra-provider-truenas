@@ -230,8 +230,28 @@ jobs:
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ghcr.io/${{ github.repository }}
+          # Tag rules:
+          #
+          # 1. Exact git ref (`v0.16.0`, `v0.16.1-rc.4`) — published
+          #    UNCONDITIONALLY via `type=raw`. The previous
+          #    `type=semver,pattern=v{{version}}` rule was empirically
+          #    observed to filter prereleases under
+          #    docker/metadata-action@v6.0.0: stable tags emitted
+          #    `:v0.16.0`, but prereleases did NOT emit `:v0.16.1-rc.N`.
+          #    A TrueNAS apps YAML pinned to `:v0.16.1-rc.1` then
+          #    failed with `manifest unknown` because only the
+          #    bare-semver `:0.16.1-rc.1` was actually pushed. Switching
+          #    to `type=raw` makes the v-prefixed tag track every
+          #    release shape uniformly.
+          # 2. Bare semver (`0.16.0`, `0.16.1-rc.4`) — kept for tooling
+          #    that expects the no-`v` form.
+          # 3. {{major}}.{{minor}} (`0.16`) — gated to STABLE only.
+          # 4. `latest` — gated to STABLE only. v0.16.1-rc.1 displaced
+          #    it historically; the guard prevents a recurrence.
+          # The contains-check on `-` matches every prerelease form
+          # (-rc.N, -beta.N, -alpha.N) since semver mandates a `-`.
           tags: |
-            type=semver,pattern=v{{version}},value=${{ steps.version.outputs.tag }}
+            type=raw,value=${{ steps.version.outputs.tag }}
             type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
             type=raw,value=latest,enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
