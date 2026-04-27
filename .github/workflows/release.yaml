@@ -139,6 +139,28 @@ jobs:
         id: version
         run: echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
+      # Pre-release detection. Semver pre-release tags (vX.Y.Z-rc.N,
+      # vX.Y.Z-beta.N, vX.Y.Z-alpha.N) carry a `-` after the version core.
+      # Stable tags never do. Downstream steps consume `is_prerelease` to:
+      #  1. Suppress the `latest` and `{major}.{minor}` Docker tags so a
+      #     prerelease does not displace the stable image users pull by
+      #     default.
+      #  2. Pass `--prerelease` to `gh release create` so the GitHub release
+      #     does not become the repo's "Latest release".
+      # Cutting a pre-release is documented in the cutting-pre-release skill;
+      # the corresponding stable release is cut afterward via cutting-release.
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "$TAG" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} is a pre-release (will not be marked latest)."
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} is a stable release."
+          fi
+
       - name: Extract release notes from CHANGELOG.md
         run: |
           TAG="${{ steps.version.outputs.tag }}"
@@ -211,8 +233,8 @@ jobs:
           tags: |
             type=semver,pattern=v{{version}},value=${{ steps.version.outputs.tag }}
             type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }}
-            type=raw,value=latest
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }},enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ steps.prerelease.outputs.is_prerelease == 'false' }}
 
       # Build single-arch (runner-native) image into the local Docker daemon
       # so we can smoke test it *before* pushing multi-arch. If we pushed
@@ -387,11 +409,22 @@ jobs:
       # Single atomic release creation — all assets uploaded together.
       # With immutable releases, assets cannot be modified after creation.
       # If this step fails, delete the release and re-tag to retry.
+      #
+      # Pre-release tags (vX.Y.Z-rc.N etc.) get `--prerelease`, which marks
+      # the release as a prerelease on GitHub AND implicitly excludes it from
+      # being chosen as the repo's "Latest release". Without that flag a
+      # prerelease would hijack `gh release download` (no version pin) and
+      # show up at the top of the releases page, defeating the soak window.
       - name: Create GitHub Release with all assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          ARGS=()
+          if [ "${{ steps.prerelease.outputs.is_prerelease }}" = "true" ]; then
+            ARGS+=("--prerelease")
+          fi
           gh release create "${{ steps.version.outputs.tag }}" \
+            "${ARGS[@]}" \
             --title "${{ steps.version.outputs.tag }}" \
             --notes-file RELEASE_NOTES.md \
             _out/omni-infra-provider-truenas-linux-amd64 \

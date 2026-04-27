@@ -72,7 +72,44 @@ All via environment variables (`.env` file loaded automatically). Key ones: `OMN
 - **`docs/backlog.md`** — Feature roadmap and backlog items
 - **`docs/getting-started.md`** — Beginner tutorial: NAS to running Kubernetes cluster, no prior experience needed
 - **`docs/upgrading.md`** — Version upgrade guide and breaking changes
+- **`docs/release-testing.md`** — Pre-release validation and promotion process: trigger matrix, pre-soak test matrix (fresh / upgrade / skip-version / rollback), soak window durations, signals to watch, promotion criteria, TrueNAS apps catalog chart bump, post-promotion rollback path. **Required reading before promoting any pre-release to stable.**
 - **`docs/provider-research.md`** — Internal research: analysis of all existing Omni providers (architecture patterns, boot methods, SDK usage)
+
+## Release Process
+
+Two flavors of release, both driven by `.github/workflows/release.yaml` on tag push.
+The workflow detects the tag shape and adapts:
+
+- **Stable** — `vX.Y.Z` (no `-` in the version core). Published as the repo's "Latest
+  release" and tagged in GHCR as `:latest` and `:X.Y` in addition to the version-pinned
+  tags. Cut via the `cutting-release` skill.
+- **Pre-release** — `vX.Y.Z-rc.N` / `-beta.N` / `-alpha.N`. Workflow's `Detect prerelease`
+  step keys off the `-` in the tag name and (a) passes `--prerelease` to
+  `gh release create` so the release does not become "Latest", (b) suppresses the
+  `:latest` and `:X.Y` Docker tags so a soak-window image cannot displace the stable
+  pull. Cut via the `cutting-pre-release` skill when a fix or feature needs validation
+  in a real deployment before promotion to stable — patch releases alone are no longer
+  safe for first-touch fixes now that the system is live.
+
+Both paths require: signed tag (`git tag -s`), a matching `## [vX.Y.Z…]` entry in
+`CHANGELOG.md` (the workflow extracts release notes from it via awk), and explicit
+per-version push authorization from the user.
+
+**Provider is on the TrueNAS apps community train** (`truenas/apps` →
+`ix-dev/community/omni-infra-provider-truenas/`). A bad stable release lands in
+the TrueNAS UI as "Update Available" for every existing install. Therefore every
+minor or major bump (and any patch that touches a surface in the trigger matrix)
+goes through:
+
+1. `cutting-pre-release` — cut `vX.Y.Z-rc.N`
+2. `validating-pre-release` — run the soak matrix and observe the soak window
+   per `docs/release-testing.md`
+3. `cutting-release` — promote to `vX.Y.Z` from the same commit as the passing rc
+4. Catalog chart bump in `truenas/apps` (third-party repo → `public-pr-guard`
+   rules apply: hand the maintainer a draft, do not auto-submit)
+
+Skipping the soak on a minor / major bump is the explicit anti-pattern this
+process exists to prevent.
 
 ## Contribution Model
 
