@@ -377,8 +377,17 @@ jobs:
 
       - name: Sign Docker image
         run: |
+          # `--oidc-issuer` is intentionally NOT passed. cosign 2.5+ rejects
+          # the combination of an explicit service URL with the new
+          # signing-config / TUF trust root with:
+          #   "cannot specify service URLs and use signing config"
+          # In GitHub Actions the OIDC issuer is auto-discovered from the
+          # ACTIONS_ID_TOKEN_REQUEST_URL environment variable (set when the
+          # job has `permissions: id-token: write`), so the explicit flag is
+          # redundant for keyless signing in GHA. Pre-cosign-2.5 builds
+          # accepted both; v0.16.1-rc.2 was the first run after the upgrade
+          # and surfaced the regression.
           cosign sign --yes \
-            --oidc-issuer=https://token.actions.githubusercontent.com \
             ghcr.io/${{ github.repository }}@${{ steps.docker-push.outputs.digest }}
 
       - name: Generate SBOM
@@ -393,17 +402,17 @@ jobs:
 
       - name: Attest SBOM to image
         run: |
+          # See "Sign Docker image" above for why --oidc-issuer is omitted.
           cosign attest --yes \
-            --oidc-issuer=https://token.actions.githubusercontent.com \
             --predicate _out/sbom.spdx.json \
             --type spdxjson \
             ghcr.io/${{ github.repository }}@${{ steps.docker-push.outputs.digest }}
 
       - name: Sign release binaries
         run: |
+          # See "Sign Docker image" above for why --oidc-issuer is omitted.
           for f in _out/omni-infra-provider-truenas-*; do
             cosign sign-blob --yes \
-              --oidc-issuer=https://token.actions.githubusercontent.com \
               --output-signature "${f}.sig" \
               --output-certificate "${f}.cert" \
               "$f"
