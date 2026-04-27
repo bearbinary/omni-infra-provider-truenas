@@ -346,7 +346,19 @@ jobs:
           # image across platforms — pulling the same digest under two
           # platforms fails with "cannot overwrite digest" because Docker
           # stores each image by digest and refuses to rebind it.
-          TAGGED="ghcr.io/${{ github.repository }}:${{ steps.version.outputs.tag }}"
+          #
+          # Source the tag from `steps.meta.outputs.version` (the parsed
+          # semver string, e.g. `0.16.1-rc.1`) instead of
+          # `steps.version.outputs.tag` (the raw git ref, e.g.
+          # `v0.16.1-rc.1`). Reason: metadata-action emits tags using its
+          # parsed version — so `:0.16.1-rc.1` is published, but
+          # `:v0.16.1-rc.1` is NOT (the `pattern=v{{version}}` rule was
+          # observed empirically not to fire for prereleases under
+          # docker/metadata-action@v6.0.0). Using the raw git ref here
+          # produced `manifest unknown` on the v0.16.1-rc.1 attempt because
+          # the pulled tag never existed. The parsed version is always
+          # what's pushed, so it always exists.
+          TAGGED="ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"
           for platform in linux/amd64 linux/arm64; do
             echo "--- smoke test ${platform}"
             # Pre-pull silently so 'docker run' stderr (cache-miss progress)
