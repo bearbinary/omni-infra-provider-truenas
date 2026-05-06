@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -216,26 +218,25 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 	isoDataset := data.BasePath() + "/talos-iso"
 	isoPath := "/mnt/" + isoDataset + "/" + isoFileName
 
-	isoHashProperty := "org.omni:iso-sha256-" + imageID
+	hashProp := isoHashProperty(imageID)
+	sizeProp := isoSizeProperty(imageID)
+	mtimeProp := isoMtimeProperty(imageID)
 
 	// Use singleflight to prevent concurrent downloads of the same ISO
 	_, err, _ = p.isoGroup.Do(imageID, func() (any, error) {
-		// Check if ISO already exists
-		exists, err := p.client.FileExists(ctx, isoPath)
+		// One stat call serves both purposes: existence (stat == nil → cache
+		// miss) and the size/mtime view that verifyCachedISO compares against
+		// the recorded TOFU baseline. The previous code did FileExists and
+		// then StatFile separately, paying two filesystem.stat RPCs per
+		// cache-hit provision for the same path.
+		stat, err := p.client.StatFile(ctx, isoPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to check ISO existence: %w", err)
+			return nil, fmt.Errorf("failed to stat ISO %s: %w", isoPath, err)
 		}
 
-		if exists {
-			// Cache hit — ensure the stored hash hasn't been poisoned by a
-			// previous mismatch. This protects against the scenario where a
-			// prior provision detected a factory compromise and marked the
-			// on-disk ISO as tainted; we refuse to reuse it until the
-			// operator has cleaned up (no filesystem.unlink in the client
-			// today — see docs/hardening.md for the manual cleanup recipe).
-			storedHash, _ := p.client.GetDatasetUserProperty(ctx, isoDataset, isoHashProperty)
-			if cachedISOPoisoned(storedHash) {
-				return nil, fmt.Errorf("ISO %s is marked POISONED from a prior factory-compromise detection — delete %s on TrueNAS and retry (see docs/hardening.md)", imageID, isoPath)
+		if stat != nil {
+			if err := p.verifyCachedISO(ctx, logger, isoDataset, isoPath, imageID, hashProp, sizeProp, mtimeProp, stat); err != nil {
+				return nil, err
 			}
 
 			logger.Debug("ISO already exists, skipping download", zap.String("path", isoPath))
@@ -266,7 +267,16 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 		// downloads (cache loss + re-provision), we compare against the
 		// recorded hash. Mismatch means someone changed the bytes under the
 		// same factory URL — the ISO is treated as compromised.
-		expectedHash, _ := p.client.GetDatasetUserProperty(ctx, isoDataset, isoHashProperty)
+		//
+		// Capture the read error explicitly. A previous version dropped it,
+		// which made any transient property-read failure indistinguishable
+		// from the legitimate first-use case (storedHash == "") and let an
+		// attacker who could induce a single failed RPC silently rotate the
+		// TOFU baseline to bytes of their choosing.
+		expectedHash, err := p.client.GetDatasetUserProperty(ctx, isoDataset, hashProp)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read TOFU baseline hash for %s: %w — refusing to provision; retry once the property RPC is healthy", imageID, err)
+		}
 
 		if cachedISOPoisoned(expectedHash) {
 			return nil, fmt.Errorf("ISO %s is marked POISONED from a prior factory-compromise detection — delete %s on TrueNAS and retry", imageID, isoPath)
@@ -331,10 +341,18 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 			// Mismatch: mark the stored hash with POISONED- prefix so a
 			// future provision refuses to use this ISO (cache hit branch
 			// checks the poison marker). Fail the current provision loudly.
-			_ = p.client.SetDatasetUserProperty(ctx, isoDataset, isoHashProperty, poisonMarker(downloadedHash))
+			//
+			// The previous version dropped the SetDatasetUserProperty error,
+			// which meant a transient marker-write failure left the
+			// confirmed-bad bytes accessible with the *trusted* baseline
+			// still in place — a future cache hit would silently reuse
+			// them. setIfPoisonable retries the write with backoff and
+			// surfaces a "MANUAL CLEANUP REQUIRED" log if every attempt
+			// fails so operators know to delete the file by hand.
+			persisted := setIfPoisonable(ctx, logger, p.client, isoDataset, hashProp, poisonMarker(downloadedHash), imageID, isoPath)
 
 			if telemetry.ISOHashMismatches != nil {
-				telemetry.ISOHashMismatches.Add(ctx, 1)
+				telemetry.ISOHashMismatches.Add(ctx, 1, metric.WithAttributes(attribute.String("detection_path", "download")))
 			}
 
 			logger.Error("ISO hash mismatch — possible supply-chain compromise at factory.talos.dev",
@@ -342,19 +360,42 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 				zap.String("expected_sha256", expectedHash),
 				zap.String("got_sha256", downloadedHash),
 				zap.String("iso_path", isoPath),
+				zap.Bool("poison_marker_persisted", persisted),
 			)
 
-			return nil, fmt.Errorf("ISO hash mismatch for %s: expected %s, got %s — delete %s and rotate factory trust before retrying", imageID, expectedHash, downloadedHash, isoPath)
+			msg := "ISO hash mismatch for %s: expected %s, got %s — delete %s and rotate factory trust before retrying"
+			if !persisted {
+				msg += " (POISON marker NOT persisted; on-disk bytes still trusted by next run)"
+			}
+
+			return nil, fmt.Errorf(msg, imageID, expectedHash, downloadedHash, isoPath)
+		}
+
+		// Stat the just-uploaded file to capture size + mtime alongside the
+		// hash. These three properties together let a future cache hit
+		// detect a post-baseline byte swap without requiring a re-hash of
+		// the on-disk bytes (which TrueNAS doesn't expose a streaming RPC
+		// for — pulling the bytes back to hash them locally would itself
+		// be a DoS surface).
+		uploadedStat, statErr := p.client.StatFile(ctx, isoPath)
+		if statErr != nil {
+			// Best-effort: don't fail the provision because we can't read
+			// our own upload back. The cache hit re-verification will
+			// gracefully degrade to "first-use" for the missing fields.
+			logger.Warn("failed to stat uploaded ISO for TOFU metadata — cache-hit re-verification will degrade to first-use",
+				zap.String("path", isoPath),
+				zap.Error(statErr),
+			)
 		}
 
 		// Record the hash so future downloads of this imageID are verified.
 		// Non-fatal: if the set fails we still return success because the
 		// upload succeeded and the hash comparison is a best-effort defense.
-		if err := p.client.SetDatasetUserProperty(ctx, isoDataset, isoHashProperty, downloadedHash); err != nil {
-			logger.Warn("failed to record ISO hash for TOFU verification — future downloads will re-establish trust-on-first-use",
-				zap.String("image_id", imageID),
-				zap.Error(err),
-			)
+		recordTOFUProperty(ctx, logger, p.client, isoDataset, hashProp, downloadedHash, "hash", imageID)
+
+		if uploadedStat != nil {
+			recordTOFUProperty(ctx, logger, p.client, isoDataset, sizeProp, strconv.FormatInt(uploadedStat.Size, 10), "size", imageID)
+			recordTOFUProperty(ctx, logger, p.client, isoDataset, mtimeProp, formatISOMtime(uploadedStat.Mtime), "mtime", imageID)
 		}
 
 		if telemetry.ISODownloadDuration != nil {
@@ -538,6 +579,19 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	// Attach CDROM with Talos ISO (cached under <basePath>/talos-iso/)
 	isoPath := "/mnt/" + basePath + "/talos-iso/" + state.ImageId + ".iso"
+
+	// TOCTOU re-verify: stepUploadISO ran the metadata check earlier in
+	// the provision sequence, but the bytes can change between then and
+	// now (replication firing mid-provision is the realistic
+	// non-malicious trigger; an attacker with TrueNAS write access who
+	// can race the provisioner is the malicious one). Stat the file
+	// again and compare against the recorded baseline before the CDROM
+	// gets bound to the VM. Drift here POISON-marks the hash and aborts
+	// the create so we never boot from tampered bytes.
+	isoDataset := basePath + "/talos-iso"
+	if err := p.reverifyISOBeforeAttach(ctx, logger, isoDataset, isoPath, state.ImageId); err != nil {
+		return err
+	}
 
 	cdrom, err := p.client.AddCDROM(ctx, vm.ID, isoPath)
 	if err != nil {
@@ -1209,6 +1263,17 @@ func categorizeError(err error) string {
 		return telemetry.ErrCategoryHostOOM
 	case strings.Contains(errMsg, "memory") || strings.Contains(errMsg, "RAM"):
 		return telemetry.ErrCategoryMemory
+	// TOFU baseline / cached-ISO stat failures route to a dedicated
+	// bucket rather than falling through to ErrCategoryImage on the
+	// generic "ISO" substring match — operators graphing a degrading
+	// TrueNAS property RPC must see a distinct signal from a flaky
+	// Image Factory. Match on the wording from verifyCachedISO and the
+	// download-path error captured in stepUploadISO so a future re-word
+	// breaks loud rather than silent.
+	case strings.Contains(errMsg, "TOFU baseline") ||
+		strings.Contains(errMsg, "stat cached ISO") ||
+		strings.Contains(errMsg, "metadata re-verification"):
+		return telemetry.ErrCategoryTOFURead
 	case strings.Contains(errMsg, "schematic") || strings.Contains(errMsg, "ISO"):
 		return telemetry.ErrCategoryImage
 	default:

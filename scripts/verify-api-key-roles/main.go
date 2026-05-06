@@ -34,10 +34,13 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/truenasrpc"
 )
 
 type rpcReq struct {
@@ -64,21 +67,10 @@ type probe struct {
 	nextID atomic.Int64
 }
 
-// normalizeParams mirrors internal/client/ws.go — TrueNAS 25.10 requires
-// JSON-RPC params to be an array (positional). nil → empty array, non-array
-// values (maps, structs) get wrapped in a single-element array.
-func normalizeParams(params any) any {
-	if params == nil {
-		return []any{}
-	}
-
-	switch params.(type) {
-	case []any, []map[string]any, []string, []int:
-		return params
-	default:
-		return []any{params}
-	}
-}
+// normalizeParams delegates to the shared internal/truenasrpc package so
+// the probe and the production client cannot drift on JSON-RPC param
+// shape.
+func normalizeParams(params any) any { return truenasrpc.NormalizeParams(params) }
 
 func (p *probe) call(method string, params any) (json.RawMessage, error) {
 	id := p.nextID.Add(1)
@@ -139,6 +131,14 @@ func main() {
 
 	if host == "" || apiKey == "" || pool == "" {
 		fmt.Fprintln(os.Stderr, "Set TRUENAS_HOST, TRUENAS_API_KEY, and TRUENAS_POOL env vars.")
+		os.Exit(2)
+	}
+
+	// Validate up front so a typo'd host like `good.tld@evil.tld` fails
+	// before any auth-bearing request leaves the process. Defense in depth
+	// alongside the per-call validation in uploadFile.
+	if err := validateProbeHost(host); err != nil {
+		fmt.Fprintf(os.Stderr, "TRUENAS_HOST rejected: %v\n", err)
 		os.Exit(2)
 	}
 
@@ -345,10 +345,55 @@ func main() {
 	}
 }
 
+// validateProbeHost delegates to internal/truenasrpc.ValidateHost so the
+// probe and production client share one source of truth — including the
+// strict DNS-character allow-list that the probe's earlier in-line copy
+// was missing. The probe handles real Bearer tokens against real hosts;
+// it must not have a weaker validator than production.
+func validateProbeHost(host string) error { return truenasrpc.ValidateHost(host) }
+
+// probeUploadClient is the http.Client used to talk to /_upload. Cached
+// at package scope (constructed once on first reference) so successive
+// calls reuse the same connection pool / TLS session, mirroring how
+// production reuses the wsTransport.uploadClient. A new *http.Transport
+// per call would defeat keep-alive and drop one idle conn per call into
+// finalizer-land. The probe today only fires once but the pattern stays
+// correct as the probe grows.
+//
+// CheckRedirect: refuse to follow 3xx. Go's default would re-send the
+// Bearer header (full TRUENAS_API_KEY) to the redirect target, so a
+// compromised or MITM'd TrueNAS could harvest the operator's key by
+// returning `302 Location: https://attacker.tld/`. The unconditional
+// ErrUseLastResponse covers all 3xx classes, including the dangerous
+// 307/308 that preserve method and body. ws.go does the same thing on
+// the production path; this probe must not regress.
+var probeUploadClient = sync.OnceValue(func() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // probe tool
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: 30 * time.Second,
+	}
+})
+
+// newProbeUploadClient is kept for the existing test that asserts the
+// CheckRedirect behavior. Production callsites use probeUploadClient()
+// directly so the same shared client persists across uploads.
+func newProbeUploadClient() *http.Client { return probeUploadClient() }
+
 // uploadFile exercises the /_upload HTTP endpoint used for Talos ISO uploads.
 // Matches the provider's internal/client/ws.go upload path.
 func uploadFile(p *probe, destPath string, data []byte) error {
-	uploadURL := fmt.Sprintf("https://%s/_upload/", p.host)
+	if err := validateProbeHost(p.host); err != nil {
+		return fmt.Errorf("refusing to send Bearer token to unvalidated TRUENAS_HOST: %w", err)
+	}
+
+	// Build the URL via net/url rather than fmt.Sprintf so the Host slot
+	// can't carry a hand-crafted path/userinfo that smuggles the request
+	// to a different destination. Mirrors ws.go's "fmt.Sprintf +
+	// unvalidated host = bearer exfil. Never again." comment.
+	uploadURL := (&url.URL{Scheme: "https", Host: p.host, Path: "/_upload/"}).String()
 
 	var body bytes.Buffer
 
@@ -382,12 +427,7 @@ func uploadFile(p *probe, destPath string, data []byte) error {
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
-	client := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec
-		Timeout:   30 * time.Second,
-	}
-
-	resp, err := client.Do(req)
+	resp, err := probeUploadClient().Do(req)
 	if err != nil {
 		return err
 	}

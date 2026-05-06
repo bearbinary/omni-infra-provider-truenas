@@ -79,6 +79,35 @@ func TestFileExists_False(t *testing.T) {
 	assert.False(t, exists)
 }
 
+func TestStatFile_ReturnsSizeAndMtime(t *testing.T) {
+	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
+		assert.Equal(t, "filesystem.stat", method)
+
+		return map[string]any{
+			"size":  int64(125_829_120),
+			"mtime": 1766353846.6033258,
+			"type":  "FILE",
+		}, nil
+	})
+
+	info, err := c.StatFile(context.Background(), "/mnt/tank/talos-iso/test.iso")
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(t, int64(125_829_120), info.Size)
+	assert.InDelta(t, 1766353846.6033258, info.Mtime, 1e-9)
+	assert.Equal(t, "FILE", info.Type)
+}
+
+func TestStatFile_NotFoundReturnsNilNoError(t *testing.T) {
+	c := newMockClient(t, func(_ string, _ json.RawMessage) (any, *jsonRPCError) {
+		return nil, notFoundErr()
+	})
+
+	info, err := c.StatFile(context.Background(), "/mnt/tank/talos-iso/missing.iso")
+	require.NoError(t, err, "absent files must not be an error — callers distinguish via nil info")
+	assert.Nil(t, info)
+}
+
 func TestPoolExists_True(t *testing.T) {
 	c := newMockClient(t, func(method string, _ json.RawMessage) (any, *jsonRPCError) {
 		assert.Equal(t, "pool.query", method)

@@ -78,6 +78,20 @@ func TestIsLocalOmniEndpoint_TableDriven(t *testing.T) {
 
 		// Edge: hostname that CONTAINS localhost must not match.
 		{"https://localhost-hijacker.example", false},
+
+		// SAST-flagged bypass: userinfo-as-host. Go parses `127.0.0.1` as
+		// userinfo and `evil.com` as the actual connect target, so the
+		// predicate must NOT call this local even though `127.0.0.1`
+		// literally appears in the string.
+		{"http://127.0.0.1@evil.com", false},
+		{"http://localhost@evil.com", false},
+		{"https://[::1]@evil.com", false},
+
+		// SAST-flagged bypass: subdomain wildcard under attacker DNS.
+		// `127.0.0.1.evil.com` is a DNS name that the resolver returns
+		// whatever evil.com publishes — it is never loopback.
+		{"http://127.0.0.1.evil.com", false},
+		{"http://127.0.0.1.evil.com:8080", false},
 	}
 
 	for _, tc := range cases {

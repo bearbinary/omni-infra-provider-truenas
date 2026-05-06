@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
+	"github.com/bearbinary/omni-infra-provider-truenas/internal/truenasrpc"
 )
 
 const (
@@ -40,90 +40,16 @@ const (
 	wsMaxMessageBytes = 16 << 20
 )
 
-// isLoopbackHost returns true when host is a loopback literal or an IP that
-// resolves to loopback. Used to quiet the cleartext-fallback warning on
-// dev/CI setups, which legitimately use ws://127.0.0.1.
-func isLoopbackHost(host string) bool {
-	hostname := host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		hostname = h
-	}
+// isLoopbackHost / validateHost / normalizeParams previously lived here
+// and were copy-pasted into the operator probe (scripts/verify-api-key-roles)
+// with comments saying "Mirrors internal/client/ws.go". They moved to
+// internal/truenasrpc so both binaries share one source of truth — the
+// probe handles the same Bearer token as production and must not have a
+// weaker host validator than production.
 
-	if hostname == "localhost" {
-		return true
-	}
-
-	if ip := net.ParseIP(hostname); ip != nil {
-		return ip.IsLoopback()
-	}
-
-	return false
-}
-
-// validateHost rejects TRUENAS_HOST values that would let an attacker smuggle a
-// different destination into the Bearer-token upload URL. Accepts bare host or
-// host:port; rejects schemes, paths, user-info, query, and fragment components.
-func validateHost(host string) error {
-	if host == "" {
-		return fmt.Errorf("host is empty")
-	}
-
-	if strings.ContainsAny(host, "/?#@ \t\r\n") {
-		return fmt.Errorf("host %q must be a bare hostname or host:port (no scheme, path, or user-info)", host)
-	}
-
-	u, err := url.Parse("https://" + host)
-	if err != nil {
-		return fmt.Errorf("host %q is not a valid hostname: %w", host, err)
-	}
-
-	if u.Host != host {
-		return fmt.Errorf("host %q normalized to %q — use a bare hostname or host:port", host, u.Host)
-	}
-
-	if u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("host %q must be a bare hostname or host:port", host)
-	}
-
-	// Extract hostname without port; allow IP literals and DNS labels.
-	hostname := u.Hostname()
-	if hostname == "" {
-		return fmt.Errorf("host %q has no hostname component", host)
-	}
-
-	// IPv4/IPv6 literals are fine as-is.
-	if net.ParseIP(hostname) != nil {
-		return nil
-	}
-
-	// DNS labels: letters, digits, hyphens, dots. No underscores or other surprises.
-	for _, r := range hostname {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '.':
-		default:
-			return fmt.Errorf("host %q contains invalid character %q", host, r)
-		}
-	}
-
-	return nil
-}
-
-// normalizeParams ensures params are sent as a JSON array (TrueNAS middleware expects positional params).
-func normalizeParams(params any) any {
-	if params == nil {
-		return []any{}
-	}
-
-	switch params.(type) {
-	case []any, []map[string]any, []string, []int:
-		return params
-	default:
-		return []any{params}
-	}
-}
+func isLoopbackHost(host string) bool { return truenasrpc.IsLoopbackHost(host) }
+func validateHost(host string) error  { return truenasrpc.ValidateHost(host) }
+func normalizeParams(params any) any  { return truenasrpc.NormalizeParams(params) }
 
 // wsTransport implements Transport over a WebSocket connection to TrueNAS.
 // Used for all deployments (local and remote) since TrueNAS 25.10.

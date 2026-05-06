@@ -53,6 +53,13 @@ const (
 	ErrCategoryHostOOM       = "host_oom"
 	ErrCategoryMemory        = "memory"
 	ErrCategoryImage         = "image"
+	// ErrCategoryTOFURead covers the TOFU baseline / cached-ISO stat
+	// failure modes added with the cache-hit re-verification work. These
+	// errors used to fall through to ErrCategoryImage via a substring
+	// match on "ISO", which lumped them with Talos-factory download
+	// failures and made a degrading TrueNAS property RPC indistinguishable
+	// from a flaky Image Factory on the dashboard.
+	ErrCategoryTOFURead = "tofu_read"
 )
 
 // Pre-defined metric instruments for the provider.
@@ -113,8 +120,30 @@ var (
 	// Supply-chain: TOFU hash mismatches on Talos ISO download. A non-zero
 	// value indicates either a factory.talos.dev compromise, a MITM on the
 	// download path, or a legitimate image re-publish under the same URL —
-	// all cases require operator attention.
+	// all cases require operator attention. Labelled by detection_path
+	// ("download" vs "cache_hit_metadata") so the runbook for "factory
+	// rotated under the same URL" stays separate from "bytes were tampered
+	// at rest on TrueNAS after the baseline was recorded".
 	ISOHashMismatches metric.Int64Counter
+
+	// Supply-chain: TOFU POISON marker writes that exhausted retries. A
+	// non-zero value means a confirmed-bad ISO is still on disk with the
+	// trusted baseline in place — a future cache hit will silently reuse
+	// the bad bytes. Manual cleanup is required; the corresponding log
+	// line carries the path. Critical-severity alert.
+	ISOPoisonMarkerWriteFailed metric.Int64Counter
+
+	// Supply-chain: per-attempt counter for failed POISON marker writes.
+	// Distinct from ISOPoisonMarkerWriteFailed (which fires once per
+	// exhaustion) — this lets a degrading TrueNAS property RPC show up
+	// as a leading indicator before retries exhaust.
+	ISOPoisonMarkerRetries metric.Int64Counter
+
+	// Supply-chain: TOFU companion property (size, mtime, hash) writes
+	// that failed at upload-time. Each failure silently degrades the next
+	// cache-hit verification to "first use" for the missing field.
+	// Labelled by property={size|mtime|hash}.
+	ISOTOFUMetadataWriteFailed metric.Int64Counter
 
 	// Health check
 	HealthCheckErrors metric.Int64Counter
@@ -187,7 +216,16 @@ func initMetrics() {
 		metric.WithExplicitBucketBoundaries(1, 5, 10, 30, 60, 120, 300, 600, 900),
 	)
 	ISOHashMismatches, _ = meter.Int64Counter("truenas.iso.hash_mismatches",
-		metric.WithDescription("Total ISO downloads whose SHA-256 did not match the trust-on-first-use value — indicates possible supply-chain compromise"),
+		metric.WithDescription("Total ISO TOFU mismatches by detection_path — indicates possible supply-chain compromise"),
+	)
+	ISOPoisonMarkerWriteFailed, _ = meter.Int64Counter("truenas.iso.poison_marker_write_failed",
+		metric.WithDescription("POISON marker writes that exhausted retries — confirmed-bad ISO remains accessible until manual cleanup"),
+	)
+	ISOPoisonMarkerRetries, _ = meter.Int64Counter("truenas.iso.poison_marker_retries",
+		metric.WithDescription("Per-attempt counter for failed POISON marker writes — leading indicator for degrading TrueNAS property RPC"),
+	)
+	ISOTOFUMetadataWriteFailed, _ = meter.Int64Counter("truenas.iso.tofu_metadata_write_failed",
+		metric.WithDescription("TOFU companion property writes (hash/size/mtime) that failed at upload-time, labelled by property"),
 	)
 
 	// Connection & resilience

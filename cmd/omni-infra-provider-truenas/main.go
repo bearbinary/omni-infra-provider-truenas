@@ -9,6 +9,8 @@ import (
 	_ "embed" // Required for //go:embed directives (schema.json, icon.svg)
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -100,44 +102,56 @@ func consumeSecretEnv(name string) string {
 // decide whether PROVIDER_ID is required (multi-tenant SaaS Omni) or optional
 // (self-hosted dev loop).
 //
-// The check is hostname-boundary aware: `https://localhost-hijacker.example`
-// must NOT match as local. Each prefix is therefore checked with a required
-// trailing separator (`:` for port form, `/` for path form, or end-of-string
-// for bare-host form).
+// Implementation parses the URL with net/url and tests the resolved
+// hostname against IsLoopback. Earlier prefix-and-digit heuristics matched
+// `http://127.0.0.1@evil.com` (userinfo-as-host) and `http://127.0.0.1.evil.com`
+// (subdomain) as local — both let an attacker-controlled DNS pointer slip
+// past the PROVIDER_ID gate while the predicate said "local". Any URL
+// carrying user-info is rejected outright since loopback connections never
+// need it.
 func isLocalOmniEndpoint(endpoint string) bool {
-	e := strings.ToLower(endpoint)
-
-	prefixes := []string{
-		"http://localhost", "https://localhost", "grpc://localhost",
-		"http://127.", "https://127.", "grpc://127.",
-		"http://[::1]", "https://[::1]", "grpc://[::1]",
+	if endpoint == "" {
+		return false
 	}
 
-	for _, prefix := range prefixes {
-		if !strings.HasPrefix(e, prefix) {
-			continue
-		}
-
-		// What comes after the prefix must be a port separator, path, query,
-		// fragment, or end-of-string — otherwise we've matched a deceptive
-		// name like "localhost-hijacker.example".
-		rest := e[len(prefix):]
-		if rest == "" {
-			return true
-		}
-
-		switch rest[0] {
-		case ':', '/', '?', '#':
-			return true
-		}
-
-		// Special case: 127.X prefix matches if the next char is a digit
-		// (part of an IPv4 octet). 127.foo is never a valid IP so reject.
-		if strings.HasSuffix(prefix, "127.") && rest[0] >= '0' && rest[0] <= '9' {
-			return true
-		}
+	// grpc:// is not in net/url's well-known scheme list but it parses
+	// fine — net/url just treats the scheme as opaque. Lower-case the
+	// scheme half so HTTPS://LOCALHOST also matches. The host comparison
+	// further down already lower-cases the hostname.
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
 	}
 
+	if parsed.User != nil {
+		// e.g. http://127.0.0.1@evil.com — Go parses 127.0.0.1 as userinfo
+		// and evil.com as the host, so the *connection* goes to the
+		// attacker. Refuse to call this endpoint local regardless of what
+		// the userinfo string contains.
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return false
+	}
+
+	if host == "localhost" {
+		return true
+	}
+
+	// Strip the [...] from IPv6 literals before parsing — url.Hostname()
+	// already does that for us, but be defensive in case of future
+	// stdlib changes.
+	host = strings.Trim(host, "[]")
+
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+
+	// Anything else (e.g. `127.0.0.1.evil.com`) is a DNS name. DNS labels
+	// resolve via the resolver at dial time; we cannot trust the textual
+	// `127.` prefix to mean loopback.
 	return false
 }
 
@@ -519,49 +533,40 @@ func runStartupChecks(ctx context.Context, logger *zap.Logger, tnClient *truenas
 	return nil
 }
 
+// newHealthCheck builds the Checker passed into health.NewServer. The
+// checker only returns errors — telemetry.HealthCheckErrors is now
+// incremented exactly once by health.Server.refresh on every failed
+// check (regardless of which sub-step failed). The previous design
+// incremented the counter inside specific sub-paths here, which left
+// transport-level errors (Ping context-deadline, raw WS hangup)
+// invisible to the existing TrueNASHealthCheckFailing alert.
 func newHealthCheck(tnClient *truenasclient.Client, pool, networkInterface string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if err := tnClient.Ping(ctx); err != nil {
-			recordHealthCheckError(ctx)
-
 			return fmt.Errorf("TrueNAS API unreachable: %w", err)
 		}
 
 		exists, err := tnClient.PoolExists(ctx, pool)
 		if err != nil {
-			recordHealthCheckError(ctx)
-
 			return fmt.Errorf("failed to check pool %q: %w", pool, err)
 		}
 
 		if !exists {
-			recordHealthCheckError(ctx)
-
 			return fmt.Errorf("pool %q not found on TrueNAS", pool)
 		}
 
 		if networkInterface != "" {
 			valid, nicErr := tnClient.NetworkInterfaceValid(ctx, networkInterface)
 			if nicErr != nil {
-				recordHealthCheckError(ctx)
-
 				return fmt.Errorf("failed to validate network interface %q: %w", networkInterface, nicErr)
 			}
 
 			if !valid {
-				recordHealthCheckError(ctx)
-
 				return fmt.Errorf("network interface %q not found on TrueNAS", networkInterface)
 			}
 		}
 
 		return nil
-	}
-}
-
-func recordHealthCheckError(ctx context.Context) {
-	if telemetry.HealthCheckErrors != nil {
-		telemetry.HealthCheckErrors.Add(ctx, 1)
 	}
 }
 

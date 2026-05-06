@@ -172,3 +172,43 @@ groups:
         annotations:
           summary: "Orphan VMs detected and cleaned up"
           description: "The cleanup process is finding and removing orphan VMs. This may indicate provider restarts or Omni state drift."
+
+      # Supply-chain: TOFU hash mismatch on Talos ISO. Either the factory
+      # rotated bytes under the same URL (download path) or someone tampered
+      # with the cached file on TrueNAS (cache_hit_metadata path). Both
+      # require operator investigation; the detection_path label tells the
+      # on-call which runbook to follow.
+      - alert: TrueNASISOHashMismatch
+        expr: rate(truenas_iso_hash_mismatches_total[1h]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Talos ISO TOFU mismatch ({{ $labels.detection_path }})"
+          description: "An ISO failed TOFU hash verification. detection_path={{ $labels.detection_path }}: 'download' = factory rotated under the same URL; 'cache_hit_metadata' = on-disk bytes were tampered after the baseline was recorded. See docs/hardening.md cleanup recipe."
+
+      # Supply-chain: a confirmed-bad ISO is still on disk because the
+      # POISON marker write failed every retry. The next provision will
+      # silently reuse the bad bytes until an operator deletes the file by
+      # hand. Highest-severity log line in the provider — alert immediately.
+      - alert: TrueNASISOPoisonMarkerWriteFailed
+        expr: rate(truenas_iso_poison_marker_write_failed_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Manual ISO cleanup required on TrueNAS"
+          description: "POISON marker write exhausted retries. Confirmed-bad bytes remain trusted by the next cache hit until operator deletes the file. See provider logs (grep MANUAL CLEANUP REQUIRED) for the exact path; cleanup steps in docs/hardening.md."
+
+      # Supply-chain: companion property writes (size / mtime / hash) failing
+      # at upload-time silently degrade cache-hit re-verification to
+      # "first-use" for the missing field. Sustained failure means TOFU
+      # detection narrows over time without a loud signal.
+      - alert: TrueNASISOTOFUMetadataWriteFailing
+        expr: rate(truenas_iso_tofu_metadata_write_failed_total[30m]) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ISO TOFU metadata write failing for property {{ $labels.property }}"
+          description: "Companion property write ({{ $labels.property }}) is failing at upload-time. Cache-hit re-verification will degrade for this field. Check TrueNAS user-property quota and provider WS health."

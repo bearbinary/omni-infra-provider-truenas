@@ -303,20 +303,45 @@ func (c *Client) DeleteDataset(ctx context.Context, path string) error {
 	return nil
 }
 
-// FileExists checks if a file exists at the given path on TrueNAS.
-// JSON-RPC method: filesystem.stat
-func (c *Client) FileExists(ctx context.Context, path string) (bool, error) {
-	var stat map[string]any
+// FileInfo is the subset of filesystem.stat output the provider needs.
+// Mtime is a unix epoch float (TrueNAS reports sub-second precision via
+// the fractional component) — kept as float64 to preserve exactly what the
+// JSON-RPC response carried, so callers comparing recorded vs. fresh values
+// don't lose bits to int truncation.
+type FileInfo struct {
+	Size  int64   `json:"size"`
+	Mtime float64 `json:"mtime"`
+	Type  string  `json:"type"`
+}
 
-	if err := c.call(ctx, "filesystem.stat", []any{path}, &stat); err != nil {
+// StatFile returns the FileInfo for a path on TrueNAS, or nil if the path
+// does not exist (no error). RPC failures are surfaced — callers must treat
+// a non-nil error as "unknown state", not as "absent".
+//
+// JSON-RPC method: filesystem.stat
+func (c *Client) StatFile(ctx context.Context, path string) (*FileInfo, error) {
+	var info FileInfo
+
+	if err := c.call(ctx, "filesystem.stat", []any{path}, &info); err != nil {
 		if IsNotFound(err) {
-			return false, nil
+			return nil, nil
 		}
 
-		return false, fmt.Errorf("filesystem.stat %q failed: %w", path, err)
+		return nil, fmt.Errorf("filesystem.stat %q failed: %w", path, err)
 	}
 
-	return true, nil
+	return &info, nil
+}
+
+// FileExists checks if a file exists at the given path on TrueNAS.
+// Wraps StatFile for callers that don't need size/mtime.
+func (c *Client) FileExists(ctx context.Context, path string) (bool, error) {
+	info, err := c.StatFile(ctx, path)
+	if err != nil {
+		return false, err
+	}
+
+	return info != nil, nil
 }
 
 // UploadFile uploads a file to the given path on TrueNAS.

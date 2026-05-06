@@ -291,9 +291,29 @@ These are the invariants the v0.15 security hardening pass established. Each one
 
 ### ZFS encryption passphrase storage (known weakness)
 
-When `encrypted: true` is set on a MachineClass, the provider generates a per-zvol passphrase via `crypto/rand` and stores it as a ZFS user property (`org.omni:passphrase`) on the same zvol. This is a **defense against physical disk theft, not against TrueNAS admins**: any user with `pool.dataset.query` access on that dataset can read the passphrase in one call.
+When `encrypted: true` is set on a MachineClass, the provider generates a per-zvol passphrase via `crypto/rand` and stores it as a ZFS user property (`org.omni:passphrase`) on the same encrypted zvol. **This is a deliberate trade-off for unattended unlock**, but it materially shrinks what `encrypted: true` protects against. Operators who turn the flag on should understand exactly what they are buying.
 
-If your threat model includes a TrueNAS administrator, do not enable `encrypted: true` — it does not protect against them. Future work (`v0.16+`): wrap the passphrase with a provider-held KEK supplied via env var, so the on-disk user property becomes ciphertext the provider alone can unwrap. Tracked in `docs/backlog.md`.
+**What ZFS user properties actually are.** They are dataset *metadata*, not encrypted data. They are readable by any caller that can:
+
+- call `pool.dataset.query` / `zfs.dataset.user_props_query` on the dataset (any TrueNAS user with `DATASET_READ` on the path),
+- run `zfs get -p` on the imported pool from a shell on the host,
+- read snapshot stream metadata (`zfs send` of an encrypted dataset still emits user properties in the stream — replication targets see the passphrase),
+- mount the pool on a different machine after physical media access (the keys ZFS needs to fetch the *data* are NOT needed to read user properties).
+
+**What `encrypted: true` therefore does and does not protect against:**
+
+| Threat | Protected? |
+|---|---|
+| Stolen disks, attacker has no other access | ✅ Yes — without TrueNAS host access, the user property cannot be read; the data ciphertext is useless. |
+| Pool exported and re-imported on attacker hardware | ❌ No — the user property is metadata that imports with the pool. |
+| Snapshot replication to an attacker-controlled target | ❌ No — `zfs send` carries the user property in the stream. |
+| TrueNAS user with `pool.dataset.query` (read-only DATASET_READ) | ❌ No — one RPC reveals the passphrase. |
+| TrueNAS administrator | ❌ No — superset of the previous row. |
+| Lower-privileged workload sharing the same pool that can call `pool.dataset.query` | ❌ No. |
+
+If any of the ❌ rows are in your threat model, **do not rely on `encrypted: true`** — pair it with disk-level encryption you control (e.g. SED with a KEK held off-host), or scope dataset permissions so only the provider's TrueNAS user can read user properties on the target dataset, or accept that the flag is documentation rather than defense for that workload.
+
+**Future work (`v0.17+`).** Wrap the passphrase with a provider-held KEK supplied via env var (or a TrueNAS system keychain reference, or external KMS), so the on-disk user property becomes ciphertext the provider alone can unwrap. Tracked in `docs/backlog.md`. This is a breaking change for upgrades — existing zvols hold a plaintext property and would need a one-time rewrap.
 
 ### ISO supply chain (TOFU)
 
@@ -303,12 +323,25 @@ Starting in v0.15 the provider records the SHA-256 of each Talos ISO downloaded 
 - **Match** — continue.
 - **Mismatch** — the recorded hash is overwritten with `POISONED-<new-hash>` and the provision fails loudly. The on-disk ISO is left in place (no `filesystem.unlink` in the client today).
 
+The TOFU defense was strengthened in a later release with three additions:
+
+1. **Property-read errors no longer silently degrade to "first use".** A transient `pool.dataset.query` failure used to look identical to an absent property — i.e. it became "no recorded hash, record this one as the new baseline" — which let an attacker who could induce a single failed RPC silently rotate the trusted hash. Read errors now abort the provision; the operator retries once the property RPC is healthy.
+2. **Cache-hit re-verification via size + mtime.** Alongside `iso-sha256-<id>` the provider records `org.omni:iso-size-<id>` and `org.omni:iso-mtime-<id>`. On every cache hit, the file is `filesystem.stat`'d and the live values are compared against the recorded ones. A swap that doesn't preserve both metadata fields (replication-induced mtime change, in-place edit changing size, foreign workload writing to the dataset) is caught here and POISON-marked. A sophisticated attacker who can preserve both fields after a same-size byte swap still bypasses the metadata check — full re-hash on every cache hit would be stronger but TrueNAS exposes no streaming-hash RPC, and pulling the ISO bytes back to hash them locally would itself be a DoS surface.
+
+   **Important caveat — same trust boundary.** The bytes and the user properties live behind the same TrueNAS API surface (`pool.dataset.update` accepts both). An attacker with TrueNAS write access who can rewrite the file can in the same RPC sequence rewrite `iso-sha256-<id>` + `iso-size-<id>` + `iso-mtime-<id>` to match the new bytes. From verifyCachedISO's view that is indistinguishable from a legitimate re-record. Stat-based detection is therefore meaningful against (a) actors who can write the file but not the properties — a misconfigured share, a replication target, a foreign workload — and (b) non-malicious metadata drift. It is **not** meaningful against TrueNAS admin or API-key compromise. The only true mitigation for that threat model is to store the TOFU triple in a sink the provider's API key has no write access to (Omni-side ConfigMap, sealed append-only file, external KMS reference), and that work is tracked in `docs/backlog.md`.
+
+3. **POISON marker write retries.** On a TOFU mismatch, the marker write is retried up to three times with backoff before the provision fails. If every attempt fails, the provider logs `MANUAL CLEANUP REQUIRED` at error level AND increments the `truenas_iso_poison_marker_write_failed_total` counter so the `TrueNASISOPoisonMarkerWriteFailed` alert fires immediately. The previous version dropped the marker-write error, which left confirmed-bad bytes accessible with the trusted baseline still in place — a future cache hit would have silently reused them.
+
+4. **TOCTOU re-verify before CDROM attach.** stepUploadISO's metadata check runs before the VM exists; the bytes can change between then and CDROM attach (replication firing mid-provision is the realistic non-malicious trigger). The provider re-stats the ISO and re-runs verifyCachedISO immediately before attaching the CDROM device. A drift detected at this point POISON-marks the hash and aborts the create, so the VM never boots from tampered bytes.
+
 To recover from a poisoned ISO after investigating the mismatch:
 
 ```
 # On TrueNAS CLI, after verifying the upstream image yourself:
 cli -c "storage dataset query user_properties" | grep iso-sha256   # find the property
 # Remove both the ISO file and the property manually via Shell + `zfs inherit`.
+# Also clear the iso-size-<id> and iso-mtime-<id> companion properties so
+# the next provision establishes a clean TOFU baseline.
 ```
 
 Then retry the provision. This intentionally surfaces operator action rather than silently trusting a changed image.
