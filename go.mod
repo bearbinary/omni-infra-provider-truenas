@@ -5,7 +5,7 @@ go 1.26.1
 toolchain go1.26.2
 
 require (
-	github.com/cosi-project/runtime v1.14.1
+	github.com/cosi-project/runtime v1.14.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/grafana/pyroscope-go v1.2.8
