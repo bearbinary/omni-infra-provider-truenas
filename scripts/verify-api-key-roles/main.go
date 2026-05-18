@@ -186,14 +186,14 @@ func main() {
 	}
 
 	// Item 14 (Sec): API key is no longer needed in process memory after
-	// the WebSocket session is authenticated. Zero it so a core dump or
-	// swap leak during the remaining probes cannot exfiltrate the key.
-	// The HTTP upload path still needs the bearer; rebuild it from the
-	// secret before clearing.
+	// the WebSocket session is authenticated. Zero the SecretString so a
+	// core dump or swap leak during the remaining probes cannot exfiltrate
+	// the key. The local `apiKey` string is left as-is because Go strings
+	// are immutable — re-binding the local does not zero the heap backing
+	// array; SecretString zero is the meaningful clear.
 	uploadClient := newProbeUploadClient(insecure)
 	bearer := "Bearer " + p.apiKey.Reveal()
 	p.apiKey = truenasclient.SecretString{}
-	apiKey = ""
 
 	results := []result{}
 	add := func(method, role string, err error) {

@@ -195,7 +195,6 @@ func (p *Provisioner) gracefullyStopVM(ctx context.Context, logger *zap.Logger, 
 	return p.waitForGracefulStop(ctx, logger, vmID, gracefulTimeout)
 }
 
-
 // waitForGracefulStop polls the VM state until it's STOPPED or the timeout/context expires.
 // Returns true if the VM stopped gracefully, false if timeout or context cancelled.
 func (p *Provisioner) waitForGracefulStop(ctx context.Context, logger *zap.Logger, vmID int, timeout time.Duration) bool {

@@ -68,8 +68,8 @@ type MockTransportCtx struct {
 	Handler MockHandlerCtx
 }
 
-func (t *MockTransportCtx) Name() string  { return "mock-ctx" }
-func (t *MockTransportCtx) Close() error  { return nil }
+func (t *MockTransportCtx) Name() string { return "mock-ctx" }
+func (t *MockTransportCtx) Close() error { return nil }
 func (t *MockTransportCtx) UploadFile(_ context.Context, _ string, _ io.Reader, _ int64) error {
 	return nil
 }
