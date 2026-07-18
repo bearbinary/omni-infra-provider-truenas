@@ -320,7 +320,28 @@ func (t *wsTransport) Name() string {
 // Close waits for in-flight calls to complete (up to 10s), then closes the connection.
 // The final close itself is bounded so a half-open TCP (no RST, no FIN) can't wedge
 // shutdown — we set SO_LINGER=0 and then run Close under a short deadline.
+//
+// closed is flipped under connMu's write lock BEFORE wg.Wait() runs, and
+// Call/UploadFile check closed under connMu's read lock before wg.Add(1).
+// This ordering matters: sync.WaitGroup forbids a positive Add from
+// starting concurrently with a Wait that observes the counter at zero.
+// Previously closed was set only after Wait() returned, so a Call/UploadFile
+// could Add(1) at the exact moment Wait's internal counter reached zero —
+// "panic: sync: WaitGroup is reused before previous Wait has returned".
+// Serializing the closed-check-then-Add against the closed-flip-then-Wait
+// via the same mutex makes that interleaving impossible: any Add that's
+// already past the check holds the read lock, so Close's write lock (and
+// therefore its Wait) can't proceed until that Add has landed.
 func (t *wsTransport) Close() error {
+	t.connMu.Lock()
+	if t.closed {
+		t.connMu.Unlock()
+		return nil
+	}
+	t.closed = true
+	conn := t.conn
+	t.connMu.Unlock()
+
 	done := make(chan struct{})
 
 	go func() {
@@ -332,11 +353,6 @@ func (t *wsTransport) Close() error {
 	case <-done:
 	case <-time.After(closeTimeout):
 	}
-
-	t.connMu.Lock()
-	t.closed = true
-	conn := t.conn
-	t.connMu.Unlock()
 
 	// Drop unsent bytes immediately (SO_LINGER=0) on the underlying TCP socket
 	// so a dead peer doesn't block the Close call.
@@ -523,7 +539,13 @@ func nextWSRequestID() string {
 // mutex, so a slow call on one goroutine can't stall unrelated calls on
 // other goroutines, and ctx cancellation unblocks the waiter immediately.
 func (t *wsTransport) Call(ctx context.Context, method string, params any, result any) error {
+	t.connMu.RLock()
+	if t.closed {
+		t.connMu.RUnlock()
+		return fmt.Errorf("transport is closed")
+	}
 	t.wg.Add(1)
+	t.connMu.RUnlock()
 	defer t.wg.Done()
 
 	// Fast-path: try once, reconnect + retry on connection errors.
@@ -685,7 +707,13 @@ func isAPIError(err error, target **APIError) bool {
 // filesystem.put requires pipe-based upload which isn't available over WebSocket calls,
 // so we fall back to the HTTP multipart upload endpoint.
 func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.Reader, size int64) error {
+	t.connMu.RLock()
+	if t.closed {
+		t.connMu.RUnlock()
+		return fmt.Errorf("transport is closed")
+	}
 	t.wg.Add(1)
+	t.connMu.RUnlock()
 	defer t.wg.Done()
 
 	ctx, span := tracer.Start(ctx, "truenas.upload_file",

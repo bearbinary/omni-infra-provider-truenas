@@ -378,3 +378,68 @@ func TestWS_ConcurrentCallRaceStress(t *testing.T) {
 		t.Fatal("stress test deadlocked — reader/writer split has a regression")
 	}
 }
+
+// TestWS_CloseDoesNotRaceWithConcurrentCalls pins the fix for a real
+// production crash: "panic: sync: WaitGroup is reused before previous Wait
+// has returned" inside wsTransport.Close(). It reproduced because Close set
+// `closed` only after wg.Wait() returned, so Call/UploadFile could still
+// wg.Add(1) at the exact moment Wait's internal counter reached zero —
+// exactly the interleaving sync.WaitGroup forbids. The fix flips `closed`
+// under connMu's write lock before calling Wait, and Call/UploadFile check
+// `closed` under the read lock before calling Add, so an Add already past
+// the check must land before Close's write lock (and therefore its Wait)
+// can proceed. This test hammers concurrent Call and concurrent Close
+// together; a regression panics the whole test binary within a handful of
+// iterations, with or without -race.
+func TestWS_CloseDoesNotRaceWithConcurrentCalls(t *testing.T) {
+	t.Parallel()
+
+	m := &controllableMiddleware{}
+	host := startControllable(t, m)
+
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	// Keep issuing calls until the transport reports closed.
+	for range 8 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for {
+				ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+				var out map[string]any
+				callErr := transport.Call(ctx, "system.info", nil, &out)
+				cancel()
+
+				if callErr != nil {
+					return
+				}
+			}
+		}()
+	}
+
+	// Race multiple concurrent Close callers — Close must be idempotent and
+	// must never panic no matter how many goroutines race it.
+	for range 4 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			assert.NoError(t, transport.Close())
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Close/Call race did not converge — possible deadlock regression")
+	}
+}
