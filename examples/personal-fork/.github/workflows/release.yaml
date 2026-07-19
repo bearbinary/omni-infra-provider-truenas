@@ -86,6 +86,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          if [[ "$TAG" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
@@ -93,8 +102,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ env.TAG }}
+            ${{ steps.prerelease.outputs.is_prerelease == 'false' && format('ghcr.io/{0}:latest', github.repository) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
