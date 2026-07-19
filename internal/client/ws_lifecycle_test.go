@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -422,6 +423,81 @@ func TestWS_UploadFileAfterCloseReturnsErrTransportClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTransportClosed),
 		"UploadFile after Close must return ErrTransportClosed sentinel (got %v)", err)
+}
+
+// TestWS_CloseDoesNotRaceWithConcurrentUploads mirrors
+// TestWS_CloseDoesNotRaceWithConcurrentCalls on the UploadFile side. Same
+// hazard, same fix location, same failure mode ("panic: sync: WaitGroup is
+// reused before previous Wait has returned") — but the Call side test alone
+// cannot cover the UploadFile branch that also does wg.Add(1) under the
+// same closed-check protocol. Uses a TLS server that answers /websocket
+// (for auth handshake) and /_upload/ (200 OK, drain body) so the upload
+// completes successfully in the non-Close path.
+func TestWS_CloseDoesNotRaceWithConcurrentUploads(t *testing.T) {
+	t.Parallel()
+
+	m := &controllableMiddleware{}
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "_upload") {
+			// Drain then 200 — mimics TrueNAS accepting the multipart upload.
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		m.handler(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	host := strings.TrimPrefix(server.URL, "https://")
+
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	// 4 uploaders in tight loop.
+	for range 4 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for {
+				payload := bytes.NewReader([]byte("hello"))
+				ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+				upErr := transport.UploadFile(ctx, "/mnt/tank/iso/x.iso", payload, int64(payload.Len()))
+				cancel()
+
+				if upErr != nil {
+					// Any error (ErrTransportClosed, ctx, upload rejected on
+					// half-closed transport) means Close has landed and we
+					// should stop.
+					return
+				}
+			}
+		}()
+	}
+
+	// 4 Close racers.
+	for range 4 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			assert.NoError(t, transport.Close())
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Close/Upload race did not converge — possible deadlock regression")
+	}
 }
 
 // TestWS_CloseDoesNotRaceWithConcurrentCalls pins the fix for a real

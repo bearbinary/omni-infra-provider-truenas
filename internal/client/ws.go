@@ -714,15 +714,10 @@ func isAPIError(err error, target **APIError) bool {
 // filesystem.put requires pipe-based upload which isn't available over WebSocket calls,
 // so we fall back to the HTTP multipart upload endpoint.
 func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.Reader, size int64) error {
-	t.connMu.RLock()
-	if t.closed {
-		t.connMu.RUnlock()
-		return ErrTransportClosed
-	}
-	t.wg.Add(1)
-	t.connMu.RUnlock()
-	defer t.wg.Done()
-
+	// Start the span BEFORE the closed-check. Upload-during-shutdown must
+	// still produce a trace with codes.Error so the failure is not invisible
+	// on the dashboard — the RLock+closed-check path is exactly where an
+	// unlucky-timed shutdown surfaces to the caller.
 	ctx, span := tracer.Start(ctx, "truenas.upload_file",
 		trace.WithAttributes(
 			attribute.String("file.path", destPath),
@@ -730,6 +725,17 @@ func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.R
 		),
 	)
 	defer span.End()
+
+	t.connMu.RLock()
+	if t.closed {
+		t.connMu.RUnlock()
+		span.RecordError(ErrTransportClosed)
+		span.SetStatus(codes.Error, ErrTransportClosed.Error())
+		return ErrTransportClosed
+	}
+	t.wg.Add(1)
+	t.connMu.RUnlock()
+	defer t.wg.Done()
 
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
