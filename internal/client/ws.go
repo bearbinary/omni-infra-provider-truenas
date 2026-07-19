@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
@@ -340,14 +341,25 @@ func (t *wsTransport) Name() string {
 // already past the check holds the read lock, so Close's write lock (and
 // therefore its Wait) can't proceed until that Add has landed.
 func (t *wsTransport) Close() error {
+	ctx := context.Background()
+
 	t.connMu.Lock()
 	if t.closed {
 		t.connMu.Unlock()
+		if telemetry.WSCloseOutcome != nil {
+			telemetry.WSCloseOutcome.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "already_closed")))
+		}
+		slog.Debug("truenas websocket Close short-circuited (already closed)",
+			slog.String("host", t.host))
 		return nil
 	}
 	t.closed = true
 	conn := t.conn
 	t.connMu.Unlock()
+
+	slog.Info("truenas websocket Close initiated",
+		slog.String("host", t.host),
+		slog.Duration("budget", closeTimeout))
 
 	done := make(chan struct{})
 
@@ -356,9 +368,14 @@ func (t *wsTransport) Close() error {
 		close(done)
 	}()
 
+	inflightTimedOut := false
 	select {
 	case <-done:
 	case <-time.After(closeTimeout):
+		inflightTimedOut = true
+		slog.Warn("truenas websocket Close in-flight drain timed out",
+			slog.String("host", t.host),
+			slog.Duration("budget", closeTimeout))
 	}
 
 	// Drop unsent bytes immediately (SO_LINGER=0) on the underlying TCP socket
@@ -377,8 +394,21 @@ func (t *wsTransport) Close() error {
 
 	select {
 	case err := <-closeDone:
+		outcome := "clean"
+		if inflightTimedOut {
+			outcome = "inflight_timeout"
+		}
+		if telemetry.WSCloseOutcome != nil {
+			telemetry.WSCloseOutcome.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+		}
 		return err
 	case <-time.After(closeTimeout):
+		slog.Warn("truenas websocket Close underlying conn close timed out",
+			slog.String("host", t.host),
+			slog.Duration("budget", closeTimeout))
+		if telemetry.WSCloseOutcome != nil {
+			telemetry.WSCloseOutcome.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "close_timeout")))
+		}
 		return fmt.Errorf("websocket close timed out after %s", closeTimeout)
 	}
 }
@@ -394,6 +424,10 @@ func (t *wsTransport) reconnect() error {
 	if t.closed {
 		return ErrTransportClosed
 	}
+
+	slog.Info("truenas websocket reconnect initiated",
+		slog.String("host", t.host),
+		slog.Int("max_attempts", maxReconnectAttempts))
 
 	// Circuit breaker: prevent rapid reconnect cycling under persistent failures.
 	if sinceLastReconnect := time.Since(t.lastReconnect); sinceLastReconnect < reconnectCooldown {
@@ -429,6 +463,11 @@ func (t *wsTransport) reconnect() error {
 				backoff = maxBackoff
 			}
 		}
+
+		slog.Debug("truenas websocket reconnect attempt",
+			slog.String("host", t.host),
+			slog.Int("attempt", attempt+1),
+			slog.Int("max_attempts", maxReconnectAttempts))
 
 		conn, err := dialWebSocket(t.host, t.insecureSkipVerify)
 		if err != nil {
@@ -549,6 +588,9 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 	t.connMu.RLock()
 	if t.closed {
 		t.connMu.RUnlock()
+		if telemetry.WSCallRejected != nil {
+			telemetry.WSCallRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "closed")))
+		}
 		return ErrTransportClosed
 	}
 	t.wg.Add(1)
@@ -731,6 +773,9 @@ func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.R
 		t.connMu.RUnlock()
 		span.RecordError(ErrTransportClosed)
 		span.SetStatus(codes.Error, ErrTransportClosed.Error())
+		if telemetry.WSCallRejected != nil {
+			telemetry.WSCallRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "closed")))
+		}
 		return ErrTransportClosed
 	}
 	t.wg.Add(1)
