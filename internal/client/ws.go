@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -266,6 +267,23 @@ func (t *wsTransport) startReader() {
 // all pending calls with that error. A new reader is started on reconnect.
 func (t *wsTransport) readLoop(conn *websocket.Conn, done chan struct{}) {
 	defer close(done)
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("truenas websocket goroutine panic",
+				slog.String("site", "read_loop"),
+				slog.String("host", t.host),
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())))
+			if telemetry.WSGoroutinePanics != nil {
+				telemetry.WSGoroutinePanics.Add(context.Background(), 1,
+					metric.WithAttributes(attribute.String("site", "read_loop")))
+			}
+			// Re-panic to preserve fail-fast crash-loop behavior. The log +
+			// metric above make the next same-class regression diagnosable
+			// from Grafana instead of a raw pod log.
+			panic(r)
+		}
+	}()
 
 	for {
 		var resp wsResponse
@@ -364,6 +382,23 @@ func (t *wsTransport) Close() error {
 	done := make(chan struct{})
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("truenas websocket goroutine panic",
+					slog.String("site", "close_wait"),
+					slog.String("host", t.host),
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())))
+				if telemetry.WSGoroutinePanics != nil {
+					telemetry.WSGoroutinePanics.Add(context.Background(), 1,
+						metric.WithAttributes(attribute.String("site", "close_wait")))
+				}
+				// Re-panic — the WaitGroup-reuse panic that motivated the fix
+				// was here; keep crash-loop semantics so a same-class regression
+				// is still loud, but leave a Grafana breadcrumb this time.
+				panic(r)
+			}
+		}()
 		t.wg.Wait()
 		close(done)
 	}()
@@ -389,6 +424,20 @@ func (t *wsTransport) Close() error {
 	closeDone := make(chan error, 1)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("truenas websocket goroutine panic",
+					slog.String("site", "close_conn"),
+					slog.String("host", t.host),
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())))
+				if telemetry.WSGoroutinePanics != nil {
+					telemetry.WSGoroutinePanics.Add(context.Background(), 1,
+						metric.WithAttributes(attribute.String("site", "close_conn")))
+				}
+				panic(r)
+			}
+		}()
 		closeDone <- conn.Close()
 	}()
 
