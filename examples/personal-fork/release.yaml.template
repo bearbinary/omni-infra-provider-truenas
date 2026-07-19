@@ -21,10 +21,6 @@ name: Release-Example-Personal-Fork
 # attestation, preview channel, immutable-release guard). Downgrade only
 # on a personal fork where the same guarantees don't apply.
 #
-# Attribution: pattern derived from `emil-jacero/omni-infra-provider-truenas`
-# commit 009eef6 — first documented reduction of this project's release
-# workflow to a single-arch fork-friendly shape.
-#
 # Usage:
 #   1. Copy this file to `.github/workflows/release.yaml` in your fork.
 #   2. Update Dockerfile OCI labels (vendor / url / source) to point at
@@ -35,13 +31,14 @@ name: Release-Example-Personal-Fork
 #      and `:latest`.
 #
 # What this workflow does NOT do (intentional):
-#   - Verify the git tag signature. Add `git tag --verify` if you want that.
 #   - Publish a `preview` / `{major}.{minor}` channel.
 #   - Sign the image with cosign or attest an SBOM.
 #   - Build multi-arch. `linux/amd64` covers TrueNAS SCALE; add
 #     `linux/arm64` under `platforms:` if you need it.
-#   - Suppress `:latest` on pre-release tags. If you cut `-rc.N` tags on a
-#     fork, add the `is_prerelease` gate from the upstream workflow.
+#   - Enforce the CHANGELOG.md release-notes extraction / immutable-release
+#     guard from the upstream workflow.
+# See README's comparison table for the full delta and the threat each
+# absent control leaves unmitigated.
 
 on:
   push:

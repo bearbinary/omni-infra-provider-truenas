@@ -55,25 +55,35 @@ Never let your first tag be the first CI run. Options:
 Compared to the upstream `bearbinary/omni-infra-provider-truenas` release
 workflow:
 
-| Guarantee | Upstream | This template |
-|---|---|---|
-| Signed-tag verify (`git tag --verify`) | ✅ | ❌ |
-| Immutable-release guard (`gh release view`) | ✅ | ❌ |
-| CHANGELOG.md release-notes extraction | ✅ | ❌ |
-| Multi-arch build (amd64 + arm64) | ✅ | ❌ (amd64 only) |
-| QEMU-emulated multi-arch smoke test | ✅ | ❌ |
-| `:preview` newest-by-semver channel | ✅ | ❌ |
-| `:{major}.{minor}` stable channel | ✅ | ❌ |
-| Pre-release detection (suppress `:latest` on `-rc.N`) | ✅ | ❌ |
-| cosign keyless image signing | ✅ | ❌ |
-| SPDX SBOM generation + cosign attestation | ✅ | ❌ |
-| Binary signing (`cosign sign-blob` → `.sigstore.json`) | ✅ | ❌ |
-| Dockerfile invariant checks (`USER 65534:65534`, `--chmod=0755`) | ✅ | ❌ |
-| Observability bundle (dashboards + alerts on release page) | ✅ | ❌ |
+> **Warning — still absent from this template.** Even with the hardening
+> commits landed, this template does NOT run cosign keyless image signing,
+> SPDX SBOM generation, or multi-arch builds. Do not use it as a
+> distribution-grade pipeline for consumers who verify signatures or
+> pull `linux/arm64`.
+
+| Guarantee | Upstream | This template | If dropped, attacker with... |
+|---|---|---|---|
+| Signed-tag verify (`git tag --verify`) | ✅ | ✅ | your GitHub credentials can publish any release from a lightweight tag |
+| Immutable GitHub Release object (`gh release view` guard) | ✅ | ❌ | write access can retract & republish release notes silently |
+| Immutable GHCR tag | ❌ | ❌ | write access can overwrite `:vX.Y.Z` — consumers pulling by tag silently get the new image (footgun in both flavors) |
+| CHANGELOG.md release-notes extraction | ✅ | ❌ | write access can drift the GitHub Release body from what CHANGELOG says shipped |
+| Multi-arch build (amd64 + arm64) | ✅ | ❌ (amd64 only) | no attacker impact — feature gap, not a security control |
+| QEMU-emulated multi-arch smoke test | ✅ | ❌ | no attacker impact — regression net for arm64 only |
+| `:preview` newest-by-semver channel | ✅ | ❌ | no attacker impact — feature gap |
+| `:{major}.{minor}` stable channel | ✅ | ❌ | no attacker impact — feature gap |
+| Pre-release detection (suppress `:latest` on `-rc.N`) | ✅ | ✅ | write access can ship an unstable rc as `:latest` to every consumer |
+| cosign keyless image signing | ✅ | ❌ | GHCR write access can push an image consumers cannot cryptographically distinguish from a legit build |
+| SPDX SBOM generation + cosign attestation | ✅ | ❌ | no downstream way to audit what shipped |
+| Binary signing (`cosign sign-blob` → `.sigstore.json`) | ✅ | ❌ | binary downloads have no offline verification path |
+| Dockerfile invariant checks (`USER 65534:65534`, `--chmod=0755`) | ✅ | ❌ | a fork edit that reintroduces a root Dockerfile is not caught pre-release |
+| Observability bundle (dashboards + alerts on release page) | ✅ | ❌ | no attacker impact — feature gap |
 
 Each of those is a supply-chain guarantee that costs CI time to produce.
-For a personal fork with a small trusted audience, they are usually
-overkill; for the canonical distribution they are load-bearing.
+For a personal fork with a small trusted audience, the pure-feature gaps
+are usually overkill; for the canonical distribution they are load-bearing.
+The security-control gaps (cosign, SBOM, immutable release, Dockerfile
+invariants) are the ones to think twice about before shipping to anyone
+other than yourself.
 
 ## Known failure modes
 
