@@ -358,6 +358,15 @@ func (t *wsTransport) Name() string {
 // via the same mutex makes that interleaving impossible: any Add that's
 // already past the check holds the read lock, so Close's write lock (and
 // therefore its Wait) can't proceed until that Add has landed.
+//
+// Idempotency + concurrent-Close semantic: the FIRST Close (the one that
+// wins the connMu.Lock and flips t.closed to true) owns the drain — it
+// runs wg.Wait, applies SO_LINGER=0, and calls conn.Close. Subsequent
+// Close callers (sequential or concurrent) hit the t.closed short-circuit
+// and return nil immediately without waiting. This is intentional: the
+// drain contract belongs to one caller, and racing goroutines should not
+// each pay a 10s grace budget. Pinned by TestWS_CloseIsIdempotent and
+// TestWS_ConcurrentCloseAllWaitForDrain.
 func (t *wsTransport) Close() error {
 	ctx := context.Background()
 

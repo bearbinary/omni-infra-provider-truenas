@@ -658,11 +658,136 @@ func TestWS_CloseDoesNotRaceWithConcurrentCalls(t *testing.T) {
 			done := make(chan struct{})
 			go func() { wg.Wait(); close(done) }()
 
+			// Deadlock timer tightened 30s → 5s. Under the pre-fix code a
+			// panic surfaces well within 5s; a latency regression that
+			// pushes Close past 5s (e.g. wg.Wait blocking behind a stuck
+			// in-flight call) will now trip the timer instead of hiding
+			// under a 30s ceiling.
 			select {
 			case <-done:
-			case <-time.After(30 * time.Second):
-				t.Fatal("Close/Call race did not converge — possible deadlock regression")
+			case <-time.After(5 * time.Second):
+				t.Fatal("Close/Call race did not converge — possible deadlock or latency regression")
 			}
 		})
 	}
+}
+
+// TestWS_CloseIsIdempotent pins the sequential idempotency contract that
+// wsTransport.Close short-circuits on the second and subsequent calls with
+// no error. No race here — this is the plain-old "operator shutdown +
+// deferred cleanup + finaliser" three-Close pattern.
+func TestWS_CloseIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	m := &controllableMiddleware{}
+	host := startControllable(t, m)
+
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
+
+	require.NoError(t, transport.Close(), "first Close")
+	require.NoError(t, transport.Close(), "second Close (idempotent)")
+	require.NoError(t, transport.Close(), "third Close (idempotent)")
+}
+
+// TestWS_ConcurrentCloseAllWaitForDrain documents the semantic that only
+// the FIRST Close waits for in-flight Call/UploadFile to drain; second
+// and subsequent concurrent Close callers short-circuit on the closed
+// flag and return immediately with no error. This is intentional: the
+// drain contract belongs to the first Close, and racing callers should
+// not each pay a 10s grace budget.
+//
+// If a future refactor wants "every Close waits for drain," it must:
+//  1. Flip this test's expectation.
+//  2. Document the change in the Close doc comment.
+//  3. Justify the O(N * closeTimeout) worst case that comes with it.
+func TestWS_ConcurrentCloseAllWaitForDrain(t *testing.T) {
+	t.Parallel()
+
+	// Middleware that blocks method-call responses until a channel is
+	// signalled, then returns an ok result.
+	release := make(chan struct{})
+
+	m := &controllableMiddleware{
+		respond: func(conn *websocket.Conn, _, id string) bool {
+			<-release
+			result, _ := json.Marshal(map[string]any{"ok": true})
+			resp, _ := json.Marshal(map[string]any{"msg": "result", "id": id, "result": json.RawMessage(result)})
+			_ = conn.WriteMessage(websocket.TextMessage, resp)
+			return true
+		},
+	}
+	host := startControllable(t, m)
+
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
+
+	// Start N slow calls that will block until release.
+	const n = 4
+
+	callDone := make(chan struct{}, n)
+
+	for range n {
+		go func() {
+			var out map[string]any
+			_ = transport.Call(context.Background(), "system.info", nil, &out)
+			callDone <- struct{}{}
+		}()
+	}
+
+	// Give calls a beat to Add(1) to the WaitGroup.
+	time.Sleep(100 * time.Millisecond)
+
+	// Start 4 concurrent Close goroutines, recording return times.
+	const closers = 4
+
+	closeReturned := make(chan time.Time, closers)
+
+	for range closers {
+		go func() {
+			_ = transport.Close()
+			closeReturned <- time.Now()
+		}()
+	}
+
+	// Give closers a beat to enter Close and race for the connMu.Lock.
+	time.Sleep(100 * time.Millisecond)
+
+	// Now release the in-flight calls and record when the FIRST call
+	// returns (which is what the FIRST Close's wg.Wait is waiting for).
+	close(release)
+
+	callReturnTimes := make([]time.Time, 0, n)
+	for range n {
+		<-callDone
+		callReturnTimes = append(callReturnTimes, time.Now())
+	}
+
+	// The FIRST Close (the one that flipped t.closed = true) must return
+	// AFTER all in-flight calls have returned. Subsequent concurrent
+	// Closes are allowed to short-circuit early.
+	closeReturnTimes := make([]time.Time, 0, closers)
+	for range closers {
+		closeReturnTimes = append(closeReturnTimes, <-closeReturned)
+	}
+
+	// The last-returning Close is the one that took the write lock and
+	// waited on wg.Wait. It must be AFTER all in-flight calls returned.
+	var latestClose time.Time
+	for _, ct := range closeReturnTimes {
+		if ct.After(latestClose) {
+			latestClose = ct
+		}
+	}
+
+	var latestCall time.Time
+	for _, ct := range callReturnTimes {
+		if ct.After(latestCall) {
+			latestCall = ct
+		}
+	}
+
+	assert.True(t, !latestClose.Before(latestCall),
+		"the drain-owning Close (last return) must be at-or-after all in-flight calls returned; latestClose=%s latestCall=%s",
+		latestClose, latestCall)
 }
