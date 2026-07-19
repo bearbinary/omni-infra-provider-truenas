@@ -15,7 +15,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.opentelemetry.io/otel"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // TestSignalEndpoint_AppendsPath pins the URL-join behavior that fixes the
@@ -275,6 +278,24 @@ func TestInit_HTTPProtobuf_DeliversToEndpoint(t *testing.T) {
 	_, span := tracer.Start(context.Background(), "test-span")
 	span.End()
 
+	// Emit a log through the otelzap bridge — mirrors the production wiring in
+	// cmd/omni-infra-provider-truenas/main.go where the global LoggerProvider
+	// (set by Init) is teed from zap via otelzap.NewCore. Without this
+	// assertion the otlplog exporter's HTTP path is untested — otlplog is a
+	// pre-1.0 API (v0.19 → v0.20 in this repo) where the wire path can change
+	// silently, and Loki gaps would be the first production signal.
+	otelCore := otelzap.NewCore("test-provider-http")
+	logger := zap.New(zapcore.NewTee(zapcore.NewNopCore(), otelCore))
+	logger.Info("otlplog delivery probe")
+	require.NoError(t, logger.Sync())
+
+	// Record a metric so /v1/metrics also fires; the periodic reader flushes
+	// on shutdown so the assertion below can verify all three paths.
+	meter := otel.Meter("test")
+	counter, err := meter.Int64Counter("test.counter")
+	require.NoError(t, err)
+	counter.Add(context.Background(), 1)
+
 	require.NoError(t, shutdown(context.Background()))
 
 	assert.Positive(t, hits.Load(), "HTTP exporter should have made at least one request")
@@ -283,15 +304,23 @@ func TestInit_HTTPProtobuf_DeliversToEndpoint(t *testing.T) {
 	pathsCopy := append([]string(nil), gotPaths...)
 	mu.Unlock()
 
-	var sawV1Traces bool
+	sawSignal := map[string]bool{
+		"/v1/traces":  false,
+		"/v1/metrics": false,
+		"/v1/logs":    false,
+	}
 
 	for _, p := range pathsCopy {
-		if strings.HasSuffix(p, "/v1/traces") {
-			sawV1Traces = true
+		for suffix := range sawSignal {
+			if strings.HasSuffix(p, suffix) {
+				sawSignal[suffix] = true
+			}
 		}
 	}
 
-	assert.True(t, sawV1Traces, "expected a request to .../v1/traces, got paths: %v", pathsCopy)
+	assert.True(t, sawSignal["/v1/traces"], "expected a request to .../v1/traces, got paths: %v", pathsCopy)
+	assert.True(t, sawSignal["/v1/metrics"], "expected a request to .../v1/metrics, got paths: %v", pathsCopy)
+	assert.True(t, sawSignal["/v1/logs"], "expected a request to .../v1/logs — otlplog wire path may have shifted; got paths: %v", pathsCopy)
 }
 
 func TestInit_UnsupportedProtocol(t *testing.T) {
