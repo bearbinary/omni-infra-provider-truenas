@@ -113,6 +113,13 @@ jobs:
           fi
           echo "OK: tag ${TAG} verifies"
 
+      # NOTE: this runs `make test` which is UNIT tests only. If your fork
+      # keeps the cassette-based integration tests, add:
+      #   env: { CI_REQUIRE_CASSETTES: "1" }
+      #   run: go test -count=1 -run TestIntegration_ ./internal/client/... ./internal/cleanup/... ./internal/provisioner/...
+      # A release that passes `make test` but has broken cassette replay
+      # is exactly the failure mode CLAUDE.md's cassette memory was written
+      # to prevent.
       - name: Test (unit, race-enabled)
         run: make test
 
