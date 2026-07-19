@@ -1,4 +1,11 @@
-name: Release
+name: Release-Example-Personal-Fork
+# ==================================================================
+# NOT SCANNED BY GITHUB ACTIONS
+# This workflow lives under examples/personal-fork/ as a copy-paste
+# template for FORK owners. The live release workflow for this repo
+# is at /.github/workflows/release.yaml. Do not edit as if this were
+# the live workflow.
+# ==================================================================
 
 # Personal-fork release workflow — single-arch (linux/amd64, matches TrueNAS
 # SCALE's x86_64 target), no signed-tag gate, no cosign / SBOM / multi-arch.

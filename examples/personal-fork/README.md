@@ -28,7 +28,7 @@ tag channels, multi-arch (amd64 + arm64), and a pre-push smoke gate.
 
 | File | Where it goes in your fork |
 |---|---|
-| `.github/workflows/release.yaml` | `.github/workflows/release.yaml` (replace upstream file) |
+| `release.yaml.template` | Copy to `.github/workflows/release.yaml` (replace upstream file) |
 | `Dockerfile.labels.patch` | Reference — apply the label block by hand to your fork's root `Dockerfile` |
 
 ## What this workflow does
