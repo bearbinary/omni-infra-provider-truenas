@@ -55,6 +55,7 @@ jobs:
     # participate in shell tokenization in any step below.
     env:
       TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -102,7 +103,7 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository }}:${{ env.TAG }}
+            ghcr.io/${{ env.REPO }}:${{ env.TAG }}
             ${{ steps.prerelease.outputs.is_prerelease == 'false' && format('ghcr.io/{0}:latest', github.repository) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -116,7 +117,7 @@ jobs:
       - name: Smoke test pushed image
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/${{ github.repository }}:${TAG}"
+          IMAGE="ghcr.io/${REPO}:${TAG}"
           docker pull --quiet "${IMAGE}"
           OUTPUT=$(docker run --rm "${IMAGE}" --version 2>&1)
           echo "stdout: ${OUTPUT}"
