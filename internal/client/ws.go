@@ -40,6 +40,13 @@ const (
 	wsMaxMessageBytes = 16 << 20
 )
 
+// ErrTransportClosed is returned by Call and UploadFile when the transport
+// has been shut down. Exposed as a sentinel so callers can errors.Is()
+// rather than substring-matching on the error message — the three sites
+// (Close reentry, Call, UploadFile) previously all built the same string
+// via fmt.Errorf and were one keystroke away from drifting apart.
+var ErrTransportClosed = errors.New("transport is closed")
+
 // isLoopbackHost / validateHost / normalizeParams previously lived here
 // and were copy-pasted into the operator probe (scripts/verify-api-key-roles)
 // with comments saying "Mirrors internal/client/ws.go". They moved to
@@ -385,7 +392,7 @@ func (t *wsTransport) reconnect() error {
 	defer t.connMu.Unlock()
 
 	if t.closed {
-		return fmt.Errorf("transport is closed")
+		return ErrTransportClosed
 	}
 
 	// Circuit breaker: prevent rapid reconnect cycling under persistent failures.
@@ -542,7 +549,7 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 	t.connMu.RLock()
 	if t.closed {
 		t.connMu.RUnlock()
-		return fmt.Errorf("transport is closed")
+		return ErrTransportClosed
 	}
 	t.wg.Add(1)
 	t.connMu.RUnlock()
@@ -710,7 +717,7 @@ func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.R
 	t.connMu.RLock()
 	if t.closed {
 		t.connMu.RUnlock()
-		return fmt.Errorf("transport is closed")
+		return ErrTransportClosed
 	}
 	t.wg.Add(1)
 	t.connMu.RUnlock()

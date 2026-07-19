@@ -1,8 +1,10 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -377,6 +379,49 @@ func TestWS_ConcurrentCallRaceStress(t *testing.T) {
 		// "never finishes," not "finishes slowly."
 		t.Fatal("stress test deadlocked — reader/writer split has a regression")
 	}
+}
+
+// TestWS_CallAfterCloseReturnsErrTransportClosed pins the contract that
+// callers can errors.Is(err, ErrTransportClosed) rather than substring-
+// matching on the error message. The three post-Close reject sites in ws.go
+// previously each hand-rolled fmt.Errorf("transport is closed") — one
+// keystroke away from drift.
+func TestWS_CallAfterCloseReturnsErrTransportClosed(t *testing.T) {
+	t.Parallel()
+
+	m := &controllableMiddleware{}
+	host := startControllable(t, m)
+
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
+
+	require.NoError(t, transport.Close())
+
+	var out map[string]any
+	err = transport.Call(context.Background(), "system.info", nil, &out)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrTransportClosed),
+		"Call after Close must return ErrTransportClosed sentinel (got %v)", err)
+}
+
+// TestWS_UploadFileAfterCloseReturnsErrTransportClosed pins the same
+// contract on the UploadFile side.
+func TestWS_UploadFileAfterCloseReturnsErrTransportClosed(t *testing.T) {
+	t.Parallel()
+
+	m := &controllableMiddleware{}
+	host := startControllable(t, m)
+
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
+
+	require.NoError(t, transport.Close())
+
+	payload := bytes.NewReader([]byte("hello"))
+	err = transport.UploadFile(context.Background(), "/mnt/test/file", payload, int64(payload.Len()))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrTransportClosed),
+		"UploadFile after Close must return ErrTransportClosed sentinel (got %v)", err)
 }
 
 // TestWS_CloseDoesNotRaceWithConcurrentCalls pins the fix for a real
