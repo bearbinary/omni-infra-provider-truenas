@@ -4,6 +4,9 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Build
+- **Go toolchain 1.26.3 → 1.26.5** and full `go get -u ./... && go mod tidy` sweep against the current module graph. Direct-dep highlights: `github.com/siderolabs/omni/client` v1.6.4 → v1.9.3, `github.com/cosi-project/runtime` v1.14.1 → v1.16.2, `github.com/grafana/pyroscope-go` v1.2.8 → v1.4.1, OpenTelemetry stable exporters v1.43.0 → v1.44.0, OTel log signals v0.19.0 → v0.20.0, `google.golang.org/grpc` v1.80.0 → v1.82.1, `go.uber.org/zap` v1.27.1 → v1.28.0, `golang.org/x/{crypto,net,sys,text,sync,term}` refreshed. Also picks up cleanups on the k8s side (`k8s.io/{api,apimachinery,client-go}` v0.35.x → v0.36.2, adds `k8s.io/cli-runtime` + `sigs.k8s.io/kustomize/{api,kyaml}` transitively). All packages build, `go vet` clean, full `-race` test suite green.
+
 ## [v0.16.2] — 2026-05-23 — Two-batch SAST hardening sweep + Go toolchain bump
 
 Combined outcome of two SAST-driven hardening passes against `v0.16.1` plus
