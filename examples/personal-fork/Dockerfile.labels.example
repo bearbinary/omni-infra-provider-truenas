@@ -1,12 +1,11 @@
 # Dockerfile OCI label overrides for a personal fork
 #
-# Replace the LABEL block near the top of the root `Dockerfile` (right after
-# the FROM line) with the version below, substituting your fork's URL and
-# your name / handle. Rebranding the labels prevents a `docker inspect` on
-# your published image from misattributing it to Bear Binary.
-#
-# Attribution: pattern derived from `emil-jacero/omni-infra-provider-truenas`
-# commit 009eef6.
+# This is a comment-annotated SNIPPET, not a unified diff — do not try to
+# `git apply` or `patch -p1` this file. Replace the LABEL block near the top
+# of the root `Dockerfile` (right after the FROM line) with the version below
+# by hand, substituting your fork's URL and your name / handle. Rebranding
+# the labels prevents a `docker inspect` on your published image from
+# misattributing it to Bear Binary.
 #
 # --- upstream ---
 # LABEL org.opencontainers.image.title="omni-infra-provider-truenas" \

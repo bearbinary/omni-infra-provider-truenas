@@ -28,7 +28,7 @@ name: Release-Example-Personal-Fork
 # Usage:
 #   1. Copy this file to `.github/workflows/release.yaml` in your fork.
 #   2. Update Dockerfile OCI labels (vendor / url / source) to point at
-#      your fork — see `../Dockerfile.labels.patch` for the exact block.
+#      your fork — see `./Dockerfile.labels.example` for the exact block.
 #   3. Push a signed tag: `git tag -s v0.16.2-fork.1 -m ...` then
 #      `git push origin v0.16.2-fork.1`.
 #   4. Watch the run publish `ghcr.io/<you>/omni-infra-provider-truenas:v0.16.2-fork.1`
