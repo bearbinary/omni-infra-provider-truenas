@@ -1,0 +1,27 @@
+name: Lint example workflows
+
+on:
+  push:
+    paths:
+      - "examples/**/*.yaml"
+      - "examples/**/*.yml"
+      - ".github/workflows/lint-examples.yaml"
+  pull_request:
+    paths:
+      - "examples/**/*.yaml"
+      - "examples/**/*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Run actionlint on example workflows
+        run: |
+          # actionlint is a static analyzer for GitHub Actions workflows.
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color examples/personal-fork/release.yaml.template
