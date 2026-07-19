@@ -42,6 +42,14 @@ tag channels, multi-arch (amd64 + arm64), and a pre-push smoke gate.
 7. Smoke test: `docker pull` + `docker run --rm <image> --version`, assert
    the reported version matches the git tag.
 
+## Testing this template before your first real release
+
+Never let your first tag be the first CI run. Options:
+
+1. **Scratch tag**: `git tag v0.0.0-test.1 && git push origin v0.0.0-test.1`, watch the run publish `ghcr.io/<you>/omni-infra-provider-truenas:v0.0.0-test.1`, then `gh release delete v0.0.0-test.1 --yes && git push origin :refs/tags/v0.0.0-test.1`. Note: the GHCR image is still there until you delete it via `gh api DELETE /user/packages/container/<name>/versions/<id>`.
+2. **`act` locally**: `act push --eventpath scratch-tag-event.json -s GITHUB_TOKEN=$(gh auth token)` — see the [act docs](https://github.com/nektos/act) for buildx compatibility.
+3. **`workflow_dispatch` variant**: add `workflow_dispatch:` under `on:` and trigger a dry run from the Actions tab.
+
 ## What this workflow does NOT do (intentional)
 
 Compared to the upstream `bearbinary/omni-infra-provider-truenas` release
@@ -66,6 +74,15 @@ workflow:
 Each of those is a supply-chain guarantee that costs CI time to produce.
 For a personal fork with a small trusted audience, they are usually
 overkill; for the canonical distribution they are load-bearing.
+
+## Known failure modes
+
+- **`Smoke test failed: expected v0.16.2, got v0.16.2-dirty`** — working tree had untracked changes; ldflag path picked them up. Commit or stash.
+- **`Smoke test failed: expected v0.16.2, got dev`** — the `-X main.version=` ldflag didn't take effect. Check `main.go` has `var version = "dev"` (not `const`).
+- **`docker: Error response from daemon: pull access denied`** on the smoke step — GHCR package visibility defaults to private. Go to `https://github.com/users/<you>/packages/container/omni-infra-provider-truenas/settings` and set visibility to public if you want unauthenticated pulls to work.
+- **Tag deleted after publish** — the GHCR image at `:<tag>` and `:latest` are NOT removed by `git push origin :refs/tags/<tag>`. Delete via `gh api DELETE /user/packages/container/omni-infra-provider-truenas/versions/<id>`. A new tag with the same name will OVERWRITE the image (GHCR tags are mutable; consumers pulling by tag will silently get the new image).
+- **GHA cache poisoning** — `cache-to: type=gha,mode=max` shares scope with PR workflows. If your fork accepts PRs, an attacker with PR-write access can populate the cache with a poisoned layer that lands in the next release build. Consider `mode=min` or dropping the cache on the release job if your fork accepts collaborators.
+- **`:latest` on pre-release tags** — this template gates `:latest` on stable tags only (no `-` in the version). If you disable the `Detect prerelease` step, EVERY tag including `-rc.N` will overwrite `:latest` for consumers.
 
 ## Upgrading a fork off this template
 
