@@ -1,0 +1,25 @@
+# Dockerfile OCI label overrides for a personal fork
+#
+# Replace the LABEL block near the top of the root `Dockerfile` (right after
+# the FROM line) with the version below, substituting your fork's URL and
+# your name / handle. Rebranding the labels prevents a `docker inspect` on
+# your published image from misattributing it to Bear Binary.
+#
+# Attribution: pattern derived from `emil-jacero/omni-infra-provider-truenas`
+# commit 009eef6.
+#
+# --- upstream ---
+# LABEL org.opencontainers.image.title="omni-infra-provider-truenas" \
+#       org.opencontainers.image.description="TrueNAS SCALE infrastructure provider for Sidero Omni" \
+#       org.opencontainers.image.url="https://github.com/bearbinary/omni-infra-provider-truenas" \
+#       org.opencontainers.image.source="https://github.com/bearbinary/omni-infra-provider-truenas" \
+#       org.opencontainers.image.vendor="Bear Binary" \
+#       org.opencontainers.image.licenses="MIT"
+#
+# --- fork (edit YOUR-HANDLE + description + vendor) ---
+LABEL org.opencontainers.image.title="omni-infra-provider-truenas" \
+      org.opencontainers.image.description="TrueNAS SCALE infrastructure provider for Sidero Omni (personal fork)" \
+      org.opencontainers.image.url="https://github.com/YOUR-HANDLE/omni-infra-provider-truenas" \
+      org.opencontainers.image.source="https://github.com/YOUR-HANDLE/omni-infra-provider-truenas" \
+      org.opencontainers.image.vendor="Your Name" \
+      org.opencontainers.image.licenses="MIT"
