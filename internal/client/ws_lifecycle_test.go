@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -515,52 +516,61 @@ func TestWS_CloseDoesNotRaceWithConcurrentUploads(t *testing.T) {
 func TestWS_CloseDoesNotRaceWithConcurrentCalls(t *testing.T) {
 	t.Parallel()
 
-	m := &controllableMiddleware{}
-	host := startControllable(t, m)
+	// The Add-during-Wait race is probabilistic. A single-shot invocation
+	// can pass under a lucky scheduler even against the pre-fix code. 20
+	// iterations catches the regression >99% of the time within ~600ms
+	// (each iter is ~25-50ms). Fresh transport per iter so a hung goroutine
+	// doesn't leak state between subtests.
+	for iter := range 20 {
+		t.Run(fmt.Sprintf("iter-%d", iter), func(t *testing.T) {
+			m := &controllableMiddleware{}
+			host := startControllable(t, m)
 
-	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
-	require.NoError(t, err)
+			transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+			require.NoError(t, err)
 
-	var wg sync.WaitGroup
+			var wg sync.WaitGroup
 
-	// Keep issuing calls until the transport reports closed.
-	for range 8 {
-		wg.Add(1)
+			// Keep issuing calls until the transport reports closed.
+			for range 8 {
+				wg.Add(1)
 
-		go func() {
-			defer wg.Done()
+				go func() {
+					defer wg.Done()
 
-			for {
-				ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-				var out map[string]any
-				callErr := transport.Call(ctx, "system.info", nil, &out)
-				cancel()
+					for {
+						ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+						var out map[string]any
+						callErr := transport.Call(ctx, "system.info", nil, &out)
+						cancel()
 
-				if callErr != nil {
-					return
-				}
+						if callErr != nil {
+							return
+						}
+					}
+				}()
 			}
-		}()
-	}
 
-	// Race multiple concurrent Close callers — Close must be idempotent and
-	// must never panic no matter how many goroutines race it.
-	for range 4 {
-		wg.Add(1)
+			// Race multiple concurrent Close callers — Close must be idempotent
+			// and must never panic no matter how many goroutines race it.
+			for range 4 {
+				wg.Add(1)
 
-		go func() {
-			defer wg.Done()
+				go func() {
+					defer wg.Done()
 
-			assert.NoError(t, transport.Close())
-		}()
-	}
+					assert.NoError(t, transport.Close())
+				}()
+			}
 
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
+			done := make(chan struct{})
+			go func() { wg.Wait(); close(done) }()
 
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("Close/Call race did not converge — possible deadlock regression")
+			select {
+			case <-done:
+			case <-time.After(30 * time.Second):
+				t.Fatal("Close/Call race did not converge — possible deadlock regression")
+			}
+		})
 	}
 }
