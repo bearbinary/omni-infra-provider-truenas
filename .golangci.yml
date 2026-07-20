@@ -5,6 +5,7 @@ run:
 
 linters:
   enable:
+    - depguard
     - errcheck
     - govet
     - ineffassign
@@ -12,6 +13,13 @@ linters:
     - unused
     - gocritic
     - misspell
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: "golang.org/x/crypto/openpgp"
+              desc: "unmaintained (GO-2026-5932); use github.com/ProtonMail/gopenpgp/v3 primitives"
   exclusions:
     rules:
       - linters: [gosec]

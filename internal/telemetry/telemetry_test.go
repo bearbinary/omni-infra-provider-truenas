@@ -15,7 +15,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.opentelemetry.io/otel"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // TestSignalEndpoint_AppendsPath pins the URL-join behavior that fixes the
@@ -126,47 +129,106 @@ func TestInit_OTELOnly_InvalidEndpoint(t *testing.T) {
 	require.NotNil(t, shutdown)
 
 	// Shutdown flush will fail trying to reach the invalid endpoint; the
-	// important contract is that it returns rather than hanging forever.
+	// important contract is that it RETURNS (with or without error) rather
+	// than hanging forever. Run in a goroutine and enforce a wall-clock
+	// deadline — previously we called `_ = shutdown(ctx)` which happily
+	// accepted a hang and only surfaced via `go test -timeout`.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = shutdown(ctx)
+
+	done := make(chan struct{})
+
+	go func() {
+		_ = shutdown(ctx)
+
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown hung past 10s deadline — the 'returns rather than hanging forever' contract regressed")
+	}
 }
 
 func TestInit_PyroscopeOnly_InvalidURL(t *testing.T) {
-	// An invalid Pyroscope URL must either fail fast at Init or succeed and
-	// defer the failure to flush time — either way, no panic. Asserting one
-	// of those two branches instead of the older `_ = err` no-op.
+	// Pyroscope v1.4.1 defers URL validation to first flush — pyroscope.Start
+	// succeeds even with a bogus URL, and the "unsupported protocol scheme"
+	// surfaces later via the logger. That's the contract we ship on, and we
+	// pin it here so a future bump that switches to fail-fast will trip this
+	// test and force a review of the callers who rely on Init succeeding.
 	shutdown, err := Init(context.Background(), Config{
 		PyroscopeURL:   "not-a-valid-url",
 		ServiceName:    "test-provider",
 		ServiceVersion: "test",
 	})
+	require.NoError(t, err, "pyroscope v1.4.1 defers URL validation to flush; Init must succeed")
+	require.NotNil(t, shutdown, "successful Init must return a shutdown func")
 
-	if err != nil {
-		assert.Nil(t, shutdown, "failed Init must not return a shutdown func — caller has nothing to tear down")
-		return
+	// Shutdown must return within a wall-clock deadline even though the
+	// deferred upload will fail. Same rationale as TestInit_OTELOnly_InvalidEndpoint.
+	done := make(chan struct{})
+
+	go func() {
+		_ = shutdown(context.Background())
+
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown hung past 10s deadline")
 	}
-
-	require.NotNil(t, shutdown)
-	_ = shutdown(context.Background())
 }
 
 func TestInit_BothConfigured(t *testing.T) {
-	// Both OTEL and Pyroscope — with invalid endpoints, just verify no panic
+	// Both OTEL and Pyroscope wired up against local stub servers. Previously
+	// this test swallowed errors and just verified "no panic"; it now proves
+	// both exporters actually deliver hits at their respective endpoints.
+
+	var otelHits atomic.Int32
+
+	otelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		otelHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer otelSrv.Close()
+
+	var pyroHits atomic.Int32
+
+	pyroSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pyroHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer pyroSrv.Close()
+
 	shutdown, err := Init(context.Background(), Config{
-		OTELEndpoint:   "localhost:4317",
+		OTELEndpoint:   otelSrv.URL,
+		OTELProtocol:   "http/protobuf",
 		OTELInsecure:   true,
-		PyroscopeURL:   "http://localhost:4040",
+		PyroscopeURL:   pyroSrv.URL,
 		ServiceName:    "test-provider",
 		ServiceVersion: "v0.0.0-test",
 	})
+	require.NoError(t, err, "both-configured Init must succeed against stub servers")
+	require.NotNil(t, shutdown)
 
-	if err != nil {
-		return // acceptable if services aren't running
-	}
+	// Emit a span so the OTEL exporter has something to flush at shutdown.
+	tracer := otel.Tracer("test")
+	_, span := tracer.Start(context.Background(), "test-span")
+	span.End()
 
-	// Shutdown should not panic
-	_ = shutdown(context.Background())
+	// Pyroscope uploads on a 15s tick by default — wait longer than one tick
+	// so at least one ingest attempt reaches the stub, then shut down.
+	require.Eventually(t, func() bool {
+		return pyroHits.Load() > 0
+	}, 20*time.Second, 500*time.Millisecond, "pyroscope should have made at least one ingest request")
+
+	require.NoError(t, shutdown(context.Background()))
+
+	assert.Positive(t, otelHits.Load(), "OTEL HTTP exporter should have delivered at least one signal")
+	assert.Positive(t, pyroHits.Load(), "Pyroscope should have delivered at least one profile upload")
 }
 
 func TestInit_RealOTELCollector(t *testing.T) {
@@ -275,6 +337,24 @@ func TestInit_HTTPProtobuf_DeliversToEndpoint(t *testing.T) {
 	_, span := tracer.Start(context.Background(), "test-span")
 	span.End()
 
+	// Emit a log through the otelzap bridge — mirrors the production wiring in
+	// cmd/omni-infra-provider-truenas/main.go where the global LoggerProvider
+	// (set by Init) is teed from zap via otelzap.NewCore. Without this
+	// assertion the otlplog exporter's HTTP path is untested — otlplog is a
+	// pre-1.0 API (v0.19 → v0.20 in this repo) where the wire path can change
+	// silently, and Loki gaps would be the first production signal.
+	otelCore := otelzap.NewCore("test-provider-http")
+	logger := zap.New(zapcore.NewTee(zapcore.NewNopCore(), otelCore))
+	logger.Info("otlplog delivery probe")
+	require.NoError(t, logger.Sync())
+
+	// Record a metric so /v1/metrics also fires; the periodic reader flushes
+	// on shutdown so the assertion below can verify all three paths.
+	meter := otel.Meter("test")
+	counter, err := meter.Int64Counter("test.counter")
+	require.NoError(t, err)
+	counter.Add(context.Background(), 1)
+
 	require.NoError(t, shutdown(context.Background()))
 
 	assert.Positive(t, hits.Load(), "HTTP exporter should have made at least one request")
@@ -283,15 +363,23 @@ func TestInit_HTTPProtobuf_DeliversToEndpoint(t *testing.T) {
 	pathsCopy := append([]string(nil), gotPaths...)
 	mu.Unlock()
 
-	var sawV1Traces bool
+	sawSignal := map[string]bool{
+		"/v1/traces":  false,
+		"/v1/metrics": false,
+		"/v1/logs":    false,
+	}
 
 	for _, p := range pathsCopy {
-		if strings.HasSuffix(p, "/v1/traces") {
-			sawV1Traces = true
+		for suffix := range sawSignal {
+			if strings.HasSuffix(p, suffix) {
+				sawSignal[suffix] = true
+			}
 		}
 	}
 
-	assert.True(t, sawV1Traces, "expected a request to .../v1/traces, got paths: %v", pathsCopy)
+	assert.True(t, sawSignal["/v1/traces"], "expected a request to .../v1/traces, got paths: %v", pathsCopy)
+	assert.True(t, sawSignal["/v1/metrics"], "expected a request to .../v1/metrics, got paths: %v", pathsCopy)
+	assert.True(t, sawSignal["/v1/logs"], "expected a request to .../v1/logs — otlplog wire path may have shifted; got paths: %v", pathsCopy)
 }
 
 func TestInit_UnsupportedProtocol(t *testing.T) {
