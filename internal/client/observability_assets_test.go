@@ -33,7 +33,14 @@ func TestAlertingRules_ValidYAML(t *testing.T) {
 
 	for i, r := range ruleList {
 		rule := r.(map[string]any)
-		assert.NotEmpty(t, rule["alert"], "rule %d should have 'alert' name", i)
+		// Prometheus rules are either alerting (`alert:` key) or recording
+		// (`record:` key). Exactly one must be set; both must carry `expr`.
+		_, isAlert := rule["alert"]
+		_, isRecord := rule["record"]
+		assert.True(t, isAlert || isRecord,
+			"rule %d must be either an alerting rule (alert:) or a recording rule (record:)", i)
+		assert.False(t, isAlert && isRecord,
+			"rule %d cannot be both alerting and recording", i)
 		assert.NotEmpty(t, rule["expr"], "rule %d should have 'expr'", i)
 	}
 }
