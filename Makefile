@@ -41,8 +41,8 @@ test-record:  ## Re-record cassettes from live TrueNAS (requires TRUENAS_TEST_HO
 lint:
 	golangci-lint run ./...
 
-lint-concurrency:  ## Enforce: every long-lived goroutine owner (sync.WaitGroup on struct) has a *_lifecycle_test.go companion
-	@bash hack/check-goroutine-owners.sh
+lint-concurrency:  ## Enforce: every long-lived goroutine owner (sync.WaitGroup / errgroup.Group on struct) has a *_lifecycle_test.go / *_stress_test.go / *_race_test.go companion
+	go run ./internal/hack/lintconcurrency/cmd/lintconcurrency ./...
 
 lint-helm:  ## Lint and validate Helm chart
 	helm lint deploy/helm/omni-infra-provider-truenas
