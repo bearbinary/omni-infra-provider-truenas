@@ -40,23 +40,50 @@ jobs:
           CI_REQUIRE_CASSETTES: "1"
         run: go test -count=1 -run TestIntegration_ ./internal/client/... ./internal/cleanup/... ./internal/provisioner/...
 
-  # Deterministic race stress. Iterates concurrency-heavy tests 100× to
+  # Deterministic race stress. Iterates concurrency-heavy packages 30× to
   # surface probabilistic races that single-run testing can pass under a
   # lucky scheduler. Emil's WaitGroup fix would have shown up in this job
   # on the pre-fix commit; single-run `make test` did not always fail.
-  # Gated on push to main + on labels touching concurrency-heavy packages.
+  #
+  # Trigger policy: push-to-main always runs. On pull_request we diff
+  # against the PR base and only run if a concurrency-heavy path changed.
+  # The previous `contains(labels.*.name, 'concurrency')` gate required a
+  # human to remember to add the label — nobody did, and the stress job
+  # only ran after merge. Path-based triggering removes the human step.
   race-stress:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'concurrency')
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Need previous commit(s) so `git diff` against the PR base can
+          # resolve; a shallow fetch-depth: 1 would break the diff on PRs.
+          fetch-depth: 2
+
+      - name: Detect if concurrency-heavy paths changed
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BASE="${{ github.event.pull_request.base.sha }}"
+          # Fetch the base ref so diff can resolve against a SHA that
+          # isn't on the shallow-cloned PR branch.
+          git fetch --no-tags --depth=1 origin "$BASE" || true
+          if git diff --name-only "$BASE" HEAD | grep -qE '^(internal/client/|internal/singleton/|internal/noderotation/|Makefile$|hack/check-goroutine-owners\.sh$|internal/hack/lintconcurrency/)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        if: steps.filter.outputs.run == 'true'
         with:
           go-version-file: go.mod
 
-      - name: Race stress (100× iterate concurrency-heavy tests)
+      - name: Race stress (30× iterate concurrency-heavy tests)
+        if: steps.filter.outputs.run == 'true'
         run: make test-stress
 
   secrets:
