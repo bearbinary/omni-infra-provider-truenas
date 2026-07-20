@@ -1,6 +1,37 @@
 groups:
   - name: truenas-provider
+    # Explicit interval: 30s so Cortex / Thanos ruler consumers evaluate
+    # every 30s instead of falling back to the ruler's global default
+    # (which varies across deployments). Matches the Prometheus scrape
+    # cadence typical for the provider's /metrics endpoint.
+    interval: 30s
     rules:
+      # SLI recording rule: 5-minute rolling ratio of clean wsTransport.Close
+      # outcomes vs. all outcomes. Foundation for future SLI work — an alert
+      # can page on `truenas:ws_close_success_ratio_5m < 0.99` without every
+      # dashboard re-deriving the ratio.
+      - record: truenas:ws_close_success_ratio_5m
+        expr: |
+          sum(rate(truenas_ws_close_outcome_total{outcome="clean"}[5m]))
+            /
+          sum(rate(truenas_ws_close_outcome_total[5m]))
+
+      # Reconnect storm — a leading indicator for the close-race class.
+      # Distinct from TrueNASWSReconnectsHigh (rate > 0.1/s for 10m):
+      # this fires faster (5m) on a higher threshold (>0.5/s), catching
+      # the "TrueNAS peer is flapping and every close-race window is
+      # about to open" scenario before the class-A alert reaches its
+      # 10m for-window.
+      - alert: TrueNASWSReconnectStorm
+        expr: rate(truenas_ws_reconnects_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebSocket reconnect storm ({{ printf \"%.2f\" $value }} reconnects/s over 5m)"
+          description: "wsTransport is reconnecting > 0.5/s. Every reconnect widens the close-race window (reconnect() holds connMu.Lock across backoff + dial retries). If this is sustained, expect TrueNASWSCloseTimeouts to follow. Check TrueNAS middleware health and network path."
+          runbook_url: "https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability"
+
       # VM provisioning errors are increasing
       - alert: TrueNASProviderVMErrors
         expr: rate(truenas_vms_errored_total[5m]) > 0
