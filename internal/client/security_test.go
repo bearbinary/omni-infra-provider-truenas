@@ -139,7 +139,6 @@ func TestAPIKeyNotInTransportString(t *testing.T) {
 	// the API key is redacted
 	transport := &wsTransport{
 		apiKey: NewSecretString("1-WIku99SLhxc2q9c8nZuE"),
-		host:   "truenas.local",
 	}
 
 	// The apiKey field should be redacted when formatted

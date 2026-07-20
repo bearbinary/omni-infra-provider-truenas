@@ -65,8 +65,8 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 	shutdown = func(ctx context.Context) error {
 		var errs []error
 		for _, fn := range shutdownFuncs {
-			if err := fn(ctx); err != nil {
-				errs = append(errs, err)
+			if fnErr := fn(ctx); fnErr != nil {
+				errs = append(errs, fnErr)
 			}
 		}
 		if len(errs) > 0 {
