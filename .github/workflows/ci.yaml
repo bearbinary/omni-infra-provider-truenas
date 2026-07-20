@@ -127,6 +127,21 @@ jobs:
       - name: lint-concurrency (goroutine-owner test coverage)
         run: make lint-concurrency
 
+      # Prometheus alert rule unit tests. A typo in a label matcher or
+      # metric name on truenas-provider.rules.yml used to ship as a silent
+      # no-op alert; promtool test rules catches those at CI time. Version
+      # pinned so a compromised release cannot execute arbitrary code —
+      # rotate the pin only when the release on GitHub is verified still
+      # authored by the prometheus maintainers.
+      - name: Install promtool v2.55.1
+        run: |
+          curl -sSfL https://github.com/prometheus/prometheus/releases/download/v2.55.1/prometheus-2.55.1.linux-amd64.tar.gz -o /tmp/prom.tar.gz
+          tar -xzf /tmp/prom.tar.gz -C /tmp
+          sudo mv /tmp/prometheus-2.55.1.linux-amd64/promtool /usr/local/bin/
+
+      - name: Test Prometheus alert rules
+        run: promtool test rules deploy/observability/alerts/*_test.yml
+
       # shellcheck on every script under scripts/ — cheap to run, catches
       # the class of regressions that don't surface until an operator
       # actually runs the script on a stale shell. v0.16.x added

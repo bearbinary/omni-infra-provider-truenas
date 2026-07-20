@@ -1,0 +1,111 @@
+# promtool unit tests for concurrency-race-prevention alerts.
+#
+# Runs via `promtool test rules deploy/observability/alerts/*_test.yml`
+# in CI (see .github/workflows/ci.yaml, `lint` job). Enforces:
+#
+#   1. TrueNASWSGoroutinePanicRecurrence fires on a single counter
+#      increment (the whole point of the alert — the WaitGroup-reuse
+#      regression only surfaced as one bump before crash-loop).
+#
+#   2. TrueNASWSCloseTimeouts does NOT fire on a single close-timeout
+#      (the pre-fix `rate > 0 for 10m` shape flapped on isolated events)
+#      but DOES fire once cumulative events in the 10m window reach 3.
+#
+#   3. TrueNASWSCallRejectedAfterClose fires on a sustained rate of
+#      transport-closed rejections, catching the shutdown-order
+#      regression class.
+#
+# A typo in a label matcher on the rules file now fails CI here instead
+# of shipping a silent no-op alert.
+
+rule_files:
+  - truenas-provider.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ------------------------------------------------------------------
+  # Test 1: single panic increment fires the recurrence alert.
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'truenas_ws_goroutine_panics_total{site="read_loop"}'
+        # 0 for 2m, then step to 1 and hold — mimics one recovered panic.
+        values: '0 0 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TrueNASWSGoroutinePanicRecurrence
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              site: read_loop
+              alertname: TrueNASWSGoroutinePanicRecurrence
+            exp_annotations:
+              summary: 'WebSocket transport goroutine panicked (read_loop)'
+              description: "A wsTransport lifecycle goroutine (site=read_loop) panicked and was caught by the recover wrapper. The process re-panicked — expect crash-loop until the underlying race is fixed. Grep provider logs for event=goroutine_panic (or 'ws transport goroutine panicked') + the site label for the panic value and stack. See docs/concurrency-patterns.md for the class."
+              runbook_url: 'https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability'
+
+  # ------------------------------------------------------------------
+  # Test 2: single close-timeout must NOT fire the close-timeout alert.
+  # Regression test for the `rate > 0 for 10m` shape that flapped on
+  # isolated events sustained through the rate window.
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'truenas_ws_close_outcome_total{outcome="inflight_timeout"}'
+        # One event ever — value 1, held. increase() over 10m sees 1.
+        values: '1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: TrueNASWSCloseTimeouts
+        # exp_alerts empty = alert must not be firing.
+        exp_alerts: []
+
+  # ------------------------------------------------------------------
+  # Test 3: sustained close-timeouts within a 10m window DOES fire.
+  # increase() extrapolates over the window, so the raw counter delta
+  # can look like ~5 real events and still yield increase >= 3 after
+  # extrapolation — the exp threshold. This mirrors the on-call intent
+  # (a genuine pattern, not a one-off).
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'truenas_ws_close_outcome_total{outcome="inflight_timeout"}'
+        # Ramps from 0 to 5 across the first 6 minutes, then holds.
+        # extrapolated increase() over [10m] at eval_time=11m ≈ 4.44,
+        # comfortably >= 3.
+        values: '0 0 1 2 3 4 5 5 5 5 5 5 5'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: TrueNASWSCloseTimeouts
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              outcome: inflight_timeout
+              alertname: TrueNASWSCloseTimeouts
+            exp_annotations:
+              summary: 'wsTransport.Close hit inflight_timeout >= 3 times in 10 minutes'
+              description: "wsTransport.Close hit the inflight_timeout branch. If this exceeds the pod's terminationGracePeriodSeconds, the singleton lease is left dirty and requires stale-heartbeat takeover on next boot. Check the chart's podGracePeriodSeconds value and reconnect() backoff duration."
+              runbook_url: 'https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability'
+
+  # ------------------------------------------------------------------
+  # Test 4: sustained call-rejected-after-close rate fires the alert.
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'truenas_ws_call_rejected_total{reason="closed"}'
+        # Linear rise = sustained non-zero rate. 1/min → rate > 0 across
+        # the full window.
+        values: '0+1x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: TrueNASWSCallRejectedAfterClose
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              reason: closed
+              alertname: TrueNASWSCallRejectedAfterClose
+            exp_annotations:
+              summary: 'WS calls rejected because transport is closed'
+              description: "wsTransport.Call/UploadFile is returning ErrTransportClosed. Sustained rate indicates a shutdown-ordering bug — a caller is still issuing calls after Close() has been called. Grep logs (event=call_rejected) or query Loki: {job=\"truenas-provider\", event=\"call_rejected\"}. See docs/concurrency-patterns.md."
+              runbook_url: 'https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability'
