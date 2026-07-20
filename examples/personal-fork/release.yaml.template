@@ -1,0 +1,182 @@
+name: Release-Example-Personal-Fork
+# ==================================================================
+# NOT SCANNED BY GITHUB ACTIONS
+# This workflow lives under examples/personal-fork/ as a copy-paste
+# template for FORK owners. The live release workflow for this repo
+# is at /.github/workflows/release.yaml. Do not edit as if this were
+# the live workflow.
+# ==================================================================
+
+# Personal-fork release workflow — single-arch (linux/amd64, matches TrueNAS
+# SCALE's x86_64 target), no signed-tag gate, no cosign / SBOM / multi-arch.
+#
+# Purpose: a fork usually exists to ship ONE targeted change (a bugfix, a
+# feature) — not to reproduce upstream's full supply-chain pipeline. This
+# workflow gets a working `ghcr.io/<owner>/<repo>:<tag>` published from a
+# `v*` tag push with the minimum viable surface: test → build → smoke → push.
+#
+# DO NOT USE for the canonical `bearbinary/omni-infra-provider-truenas`
+# release — that project's `.github/workflows/release.yaml` has additional
+# guarantees (signed tags, multi-arch, cosign keyless signing, SPDX SBOM
+# attestation, preview channel, immutable-release guard). Downgrade only
+# on a personal fork where the same guarantees don't apply.
+#
+# Usage:
+#   1. Copy this file to `.github/workflows/release.yaml` in your fork.
+#   2. Update Dockerfile OCI labels (vendor / url / source) to point at
+#      your fork — see `./Dockerfile.labels.example` for the exact block.
+#   3. Push a signed tag: `git tag -s v0.16.2-fork.1 -m ...` then
+#      `git push origin v0.16.2-fork.1`.
+#   4. Watch the run publish `ghcr.io/<you>/omni-infra-provider-truenas:v0.16.2-fork.1`
+#      and `:latest`.
+#
+# What this workflow does NOT do (intentional):
+#   - Publish a `preview` / `{major}.{minor}` channel.
+#   - Sign the image with cosign or attest an SBOM.
+#   - Build multi-arch. `linux/amd64` covers TrueNAS SCALE; add
+#     `linux/arm64` under `platforms:` if you need it.
+#   - Enforce the CHANGELOG.md release-notes extraction / immutable-release
+#     guard from the upstream workflow.
+# See README's comparison table for the full delta and the threat each
+# absent control leaves unmitigated.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    # $TAG is routed through a job-level env var (not inlined as a bare
+    # github.ref_name expression) so a maliciously-named tag can't
+    # participate in shell tokenization in any step below.
+    env:
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Verify Go toolchain minimum
+        run: |
+          set -euo pipefail
+          # This provider needs Go 1.26+ (see CLAUDE.md upstream). If a fork
+          # downgrades go.mod, the build silently succeeds on an old compiler.
+          version=$(go version | awk '{print $3}' | sed 's/^go//')
+          major=$(echo "$version" | cut -d. -f1)
+          minor=$(echo "$version" | cut -d. -f2)
+          if [ "$major" -lt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -lt 26 ]; }; then
+            echo "::error::Go $version is too old; provider requires 1.26+"; exit 1
+          fi
+          echo "OK: Go $version >= 1.26"
+
+      # Refetch annotated tag object; actions/checkout creates a lightweight
+      # local tag on tag-triggered workflows even with fetch-tags: true.
+      # (Mirror upstream release.yaml's handling.)
+      - name: Refetch annotated tag object
+        run: git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" --force
+
+      # NOTE: git tag --verify uses gitsigners / allowed_signers configuration.
+      # Fork operators MUST commit `.github/allowed_signers` (a
+      # `principal <ssh-key>` line per authorized signer) AND configure it via
+      # `git config gpg.ssh.allowedSignersFile .github/allowed_signers` in the
+      # runner (either via a preceding step or via a repo-level git config).
+      # Without allowed_signers set up the verify step will fail with
+      # "no principal matched". See upstream repo for the pattern.
+      - name: Verify tag signature
+        run: |
+          set -euo pipefail
+          # This template REQUIRES signed tags. If you skip signing on a personal
+          # fork, delete this step AND the README warning that says signing is
+          # enforced. See README § "Signed-tag verification" for the threat model.
+          if ! git tag --verify "${TAG}" 2>&1; then
+            echo "::error::Tag ${TAG} is not signed or the signature did not verify."
+            echo "::error::Re-tag with 'git tag -s ${TAG}' from a trusted signing key."
+            exit 1
+          fi
+          echo "OK: tag ${TAG} verifies"
+
+      # NOTE: this runs `make test` which is UNIT tests only. If your fork
+      # keeps the cassette-based integration tests, add:
+      #   env: { CI_REQUIRE_CASSETTES: "1" }
+      #   run: go test -count=1 -run TestIntegration_ ./internal/client/... ./internal/cleanup/... ./internal/provisioner/...
+      # A release that passes `make test` but has broken cassette replay
+      # is exactly the failure mode CLAUDE.md's cassette memory was written
+      # to prevent.
+      - name: Test (unit, race-enabled)
+        run: make test
+
+      - name: Build linux/amd64 binary
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p _out
+          go build -ldflags="-s -w -X main.version=${TAG}" \
+            -o _out/omni-infra-provider-truenas-linux-amd64 \
+            ./cmd/omni-infra-provider-truenas
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          if [[ "$TAG" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ env.REPO }}:${{ env.TAG }}
+            ${{ steps.prerelease.outputs.is_prerelease == 'false' && format('ghcr.io/{0}:latest', github.repository) || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # --version exits 0 immediately without needing Omni or TrueNAS config —
+      # catches the "binary missing execute bit / crashed on startup" class of
+      # regression without needing to smoke-test against real credentials.
+      # build-push-action with push:true (no load:true) only sends the image
+      # to the registry, not the runner's local Docker daemon — pull it back
+      # down before `docker run` can see it.
+      - name: Smoke test pushed image
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${REPO}:${TAG}"
+          docker pull --quiet "${IMAGE}"
+          OUTPUT=$(docker run --rm "${IMAGE}" --version 2>&1)
+          echo "stdout: ${OUTPUT}"
+          if [ "${OUTPUT}" != "${TAG}" ]; then
+            echo "::error::Smoke test failed: expected version ${TAG}, got ${OUTPUT}"
+            exit 1
+          fi
+          echo "Smoke test passed: image runs and reports version ${OUTPUT}"
