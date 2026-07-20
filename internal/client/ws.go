@@ -144,6 +144,15 @@ type wsResponse struct {
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *wsError        `json:"error,omitempty"`
 	Session string          `json:"session,omitempty"`
+
+	// connLost marks a synthetic response fabricated by readLoop's fan-out
+	// when the connection drops. It must surface as a retryable connection
+	// error, never as an *APIError — otherwise the same conn-drop event
+	// yields retryable or non-retryable errors depending on whether the
+	// waiter's select wakes on respCh or readerDone (both become ready
+	// within microseconds of each other). Unexported, so JSON decoding of
+	// real middleware responses can never set it.
+	connLost bool
 }
 
 type wsError struct {
@@ -318,7 +327,7 @@ func (t *wsTransport) readLoop(conn *websocket.Conn, done chan struct{}) {
 				// unless a response was already delivered, in which case the
 				// waiter has already consumed it.
 				select {
-				case ch <- &wsResponse{ID: id, Error: &wsError{Error: -1, Reason: "connection lost: " + err.Error()}}:
+				case ch <- &wsResponse{ID: id, connLost: true, Error: &wsError{Error: -1, Reason: "connection lost: " + err.Error()}}:
 				default:
 				}
 			}
@@ -503,19 +512,26 @@ func (t *wsTransport) Close() error {
 }
 
 // sleepInterruptible sleeps for d unless Close signals shutdown first (via
-// closeCh). Returns false when the transport is closing. reconnect holds
-// connMu's write lock across its sleeps and Close closes closeCh before
-// blocking on that lock — this select is the only way the sleep can observe
-// the shutdown and let reconnect release the lock early.
-func (t *wsTransport) sleepInterruptible(d time.Duration) bool {
+// closeCh) or the caller's ctx expires. Returns nil after a full sleep,
+// ErrTransportClosed on shutdown, or the ctx error. reconnect holds connMu's
+// write lock across its sleeps and Close closes closeCh before blocking on
+// that lock — this select is the only way the sleep can observe the shutdown
+// and let reconnect release the lock early. The ctx arm matters just as
+// much: without it, a caller with a short deadline sleeps the full
+// circuit-breaker cooldown while holding the write lock, and every other
+// Call (RLock) queues behind the pending writer for up to 30s per failed
+// caller.
+func (t *wsTransport) sleepInterruptible(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 
 	select {
 	case <-t.closeCh:
-		return false
+		return ErrTransportClosed
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-timer.C:
-		return true
+		return nil
 	}
 }
 
@@ -523,14 +539,15 @@ func (t *wsTransport) sleepInterruptible(d time.Duration) bool {
 // drain (failing all pending calls), and establishes a new connection with
 // exponential backoff. Takes connMu write lock for the duration so no caller
 // can observe a half-transition. All sleeps (cooldown + backoff) go through
-// sleepInterruptible so a concurrent Close aborts the reconnect and gets the
-// lock promptly; the residual hold is bounded by one dial+handshake (~10s
-// handshake timeout), not the full backoff budget.
+// sleepInterruptible so a concurrent Close (or the caller's own ctx expiry)
+// aborts the reconnect and gets the lock released promptly; the residual
+// hold is bounded by one dial+handshake (~10s handshake timeout), not the
+// full backoff budget.
 // observedGen is the connGen snapshot the caller took before its failed
 // call; when it is stale the connection has already been replaced by a
 // concurrent reconnect and this call returns nil immediately so the caller
 // retries against the fresh conn (see connGen field comment).
-func (t *wsTransport) reconnect(observedGen uint64) error {
+func (t *wsTransport) reconnect(ctx context.Context, observedGen uint64) error {
 	t.connMu.Lock()
 	defer t.connMu.Unlock()
 
@@ -549,8 +566,8 @@ func (t *wsTransport) reconnect(observedGen uint64) error {
 	// Circuit breaker: prevent rapid reconnect cycling under persistent failures.
 	if sinceLastReconnect := time.Since(t.lastReconnect); sinceLastReconnect < reconnectCooldown {
 		wait := reconnectCooldown - sinceLastReconnect
-		if !t.sleepInterruptible(wait) {
-			return ErrTransportClosed
+		if err := t.sleepInterruptible(ctx, wait); err != nil {
+			return err
 		}
 	}
 
@@ -576,8 +593,8 @@ func (t *wsTransport) reconnect(observedGen uint64) error {
 
 	for attempt := range maxReconnectAttempts {
 		if attempt > 0 {
-			if !t.sleepInterruptible(backoff) {
-				return ErrTransportClosed
+			if err := t.sleepInterruptible(ctx, backoff); err != nil {
+				return err
 			}
 			backoff *= 2
 			if backoff > maxBackoff {
@@ -743,7 +760,7 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 		return err
 	}
 
-	if reconnErr := t.reconnect(gen); reconnErr != nil {
+	if reconnErr := t.reconnect(ctx, gen); reconnErr != nil {
 		return errors.Join(
 			fmt.Errorf("call failed: %w", err),
 			fmt.Errorf("reconnect failed: %w", reconnErr),
@@ -791,6 +808,14 @@ func (t *wsTransport) doCall(ctx context.Context, method string, params any, res
 
 	select {
 	case resp := <-respCh:
+		// Synthetic fan-out from readLoop after a conn drop: return the same
+		// retryable connection error the readerDone branch below produces, so
+		// Call's reconnect+retry fires regardless of which branch wins the
+		// select race.
+		if resp.connLost {
+			return fmt.Errorf("connection lost during call: %s", resp.Error.Reason)
+		}
+
 		return t.handleResponse(resp, result)
 	case <-ctx.Done():
 		return ctx.Err()

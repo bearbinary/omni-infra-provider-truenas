@@ -176,20 +176,40 @@ func TestWS_ReaderGoroutineExitsOnClose(t *testing.T) {
 
 // TestWS_ReaderFailsAllPendingOnConnDrop verifies that killing the conn
 // while calls are in-flight causes every waiter to return promptly instead
-// of wedging indefinitely.
+// of wedging indefinitely. Conn-drop errors are retryable: each waiter's
+// Call reconnects (one succeeds, the rest dedupe on connGen) and retries
+// against the fresh connection — the server answers on post-drop conns, so
+// every call must come back nil via the transparent retry.
+//
+// Historical note: the fan-out's synthetic response used to decode as an
+// *APIError, which Call treats as non-retryable — so waiters woken via
+// respCh errored out while waiters woken via readerDone (a select race,
+// both ready within µs) reconnected and retried. On loaded CI runners the
+// readerDone branch won often and retries hung 30s against the
+// never-responding server, flaking this test 12/20. Retryability now
+// depends only on the conn-drop event, not on select ordering.
 func TestWS_ReaderFailsAllPendingOnConnDrop(t *testing.T) {
 	t.Parallel()
 
 	var closeOnce sync.Once
-	var closeConn atomic.Value // *websocket.Conn
+	var firstConn atomic.Value // *websocket.Conn — the conn we drop
 
 	m := &controllableMiddleware{
 		onConnect: func(conn *websocket.Conn) {
-			closeConn.Store(conn)
+			// Only remember the FIRST conn; reconnects must not overwrite it.
+			firstConn.CompareAndSwap(nil, conn)
 		},
-		respond: func(_ *websocket.Conn, _, _ string) bool {
-			// Never respond — we'll drop the conn externally.
-			return false
+		respond: func(conn *websocket.Conn, _, id string) bool {
+			if c, _ := firstConn.Load().(*websocket.Conn); c == conn {
+				// Never respond on the first conn — we'll drop it externally.
+				return false
+			}
+			// Post-drop conns answer normally so retried calls succeed.
+			result, _ := json.Marshal(map[string]any{"ok": true})
+			resp, _ := json.Marshal(map[string]any{"msg": "result", "id": id, "result": json.RawMessage(result)})
+			_ = conn.WriteMessage(websocket.TextMessage, resp)
+
+			return true
 		},
 	}
 	host := startControllable(t, m)
@@ -212,22 +232,23 @@ func TestWS_ReaderFailsAllPendingOnConnDrop(t *testing.T) {
 
 	// Give calls a moment to register pending entries, then drop the server
 	// side of the conn. The client reader will observe the read error and
-	// fail all pending waiters.
+	// fail all pending waiters, which then reconnect + retry.
 	time.Sleep(100 * time.Millisecond)
 
 	closeOnce.Do(func() {
-		if c, ok := closeConn.Load().(*websocket.Conn); ok && c != nil {
+		if c, ok := firstConn.Load().(*websocket.Conn); ok && c != nil {
 			_ = c.Close()
 		}
 	})
 
-	// All N waiters should return within a short window.
+	// All N waiters should return within a short window, successfully:
+	// conn drop → retryable error → reconnect (deduped) → retry succeeds.
 	deadline := time.After(5 * time.Second)
 
 	for i := range n {
 		select {
 		case err := <-errs:
-			require.Error(t, err, "call %d should have returned an error after conn drop", i)
+			require.NoError(t, err, "call %d should have succeeded via reconnect+retry after conn drop", i)
 		case <-deadline:
 			t.Fatalf("only %d of %d calls returned after conn drop; reader did not fan out failure", i, n)
 		}
@@ -401,7 +422,7 @@ func TestWS_ReconnectSkipsWhenGenerationAdvanced(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := transport.reconnect(4)
+	err := transport.reconnect(context.Background(), 4)
 	elapsed := time.Since(start)
 
 	require.NoError(t, err, "stale-generation reconnect must no-op: the conn was already replaced")
