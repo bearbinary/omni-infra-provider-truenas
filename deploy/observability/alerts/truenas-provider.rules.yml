@@ -212,3 +212,60 @@ groups:
         annotations:
           summary: "ISO TOFU metadata write failing for property {{ $labels.property }}"
           description: "Companion property write ({{ $labels.property }}) is failing at upload-time. Cache-hit re-verification will degrade for this field. Check TrueNAS user-property quota and provider WS health."
+
+      # A long-lived transport goroutine panicked. The recover wrapper caught
+      # + logged + counted + re-panicked; the process is in a crash-loop.
+      # This is the signal that would have surfaced the WaitGroup-reuse
+      # incident within seconds — see docs/concurrency-patterns.md.
+      - alert: TrueNASWSGoroutinePanicRecurrence
+        expr: increase(truenas_ws_goroutine_panics_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WebSocket transport goroutine panicked ({{ $labels.site }})"
+          description: "A wsTransport lifecycle goroutine (site={{ $labels.site }}) panicked and was caught by the recover wrapper. The process re-panicked — expect crash-loop until the underlying race is fixed. Grep provider logs for event=goroutine_panic (or 'ws transport goroutine panicked') + the site label for the panic value and stack. See docs/concurrency-patterns.md for the class."
+          runbook_url: "https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability"
+
+      # Companion to TrueNASWSGoroutinePanicRecurrence: catches the case
+      # where the goroutine panics so quickly the metric endpoint is never
+      # scraped between panic and re-panic. On-call is paged by the process
+      # restart signal even if the panic-counter never gets exported.
+      - alert: TrueNASWSGoroutinePanicCrashLoop
+        expr: changes(process_start_time_seconds{job="truenas-provider"}[5m]) >= 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "truenas-provider crash-looping (>= 2 restarts in 5m)"
+          description: "The pod restarted at least twice in the last 5 minutes. If truenas_ws_goroutine_panics_total is zero at scrape time but the process is restarting, the panic is happening before the metrics endpoint serves — check kubectl logs for panic stack traces. See docs/concurrency-patterns.md."
+          runbook_url: "https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability"
+
+      # Transport close outcomes other than clean should be rare. Alert on
+      # cumulative event count (>= 3 in 10m) rather than instantaneous rate,
+      # because a single close-timeout sustained through a `rate > 0 for 10m`
+      # window would flap noisily on quiet baselines. The `>= 3` shape means:
+      # ignore isolated events, page only on a genuine pattern.
+      - alert: TrueNASWSCloseTimeouts
+        expr: increase(truenas_ws_close_outcome_total{outcome=~"inflight_timeout|close_timeout"}[10m]) >= 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "wsTransport.Close hit {{ $labels.outcome }} >= 3 times in 10 minutes"
+          description: "wsTransport.Close hit the {{ $labels.outcome }} branch. If this exceeds the pod's terminationGracePeriodSeconds, the singleton lease is left dirty and requires stale-heartbeat takeover on next boot. Check the chart's podGracePeriodSeconds value and reconnect() backoff duration."
+          runbook_url: "https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability"
+
+      # Shutdown-ordering canary. wsTransport.Call / UploadFile returning
+      # ErrTransportClosed means a caller is still driving the transport
+      # after Close() has been invoked — a shutdown-order regression in the
+      # caller layer that would otherwise only be visible in structured logs.
+      - alert: TrueNASWSCallRejectedAfterClose
+        expr: rate(truenas_ws_call_rejected_total{reason="closed"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WS calls rejected because transport is closed"
+          description: "wsTransport.Call/UploadFile is returning ErrTransportClosed. Sustained rate indicates a shutdown-ordering bug — a caller is still issuing calls after Close() has been called. Grep logs (event=call_rejected) or query Loki: {job=\"truenas-provider\", event=\"call_rejected\"}. See docs/concurrency-patterns.md."
+          runbook_url: "https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability"
