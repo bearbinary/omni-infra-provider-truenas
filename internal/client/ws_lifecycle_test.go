@@ -790,26 +790,36 @@ func TestWS_ConcurrentCloseAllWaitForDrain(t *testing.T) {
 	// Give closers a beat to enter Close and race for the connMu.Lock.
 	time.Sleep(100 * time.Millisecond)
 
-	// Now release the in-flight calls and record when the FIRST call
-	// returns (which is what the FIRST Close's wg.Wait is waiting for).
+	// The drain-owning Close must still be blocked on wg.Wait — if all
+	// closers already returned, nobody waited for the in-flight calls.
+	require.Less(t, len(closeReturned), closers,
+		"at least one Close must still be blocked in wg.Wait while calls are in flight")
+
+	// Now release the in-flight calls. Capture the release timestamp:
+	// the happens-before chain close(release) → middleware responds →
+	// Call returns → wg.Done → wg.Wait returns → drain-owning Close
+	// returns guarantees latestClose is strictly after releaseTime.
+	//
+	// NOTE: do NOT compare Close-return times against test-side
+	// timestamps taken after <-callDone. wg.Done fires via defer INSIDE
+	// Call, before the caller goroutine sends on callDone, so Close can
+	// legitimately return microseconds before the test's post-Call
+	// timestamp lands (flaked on loaded CI runners with 73–115µs skew).
+	releaseTime := time.Now()
 	close(release)
 
-	callReturnTimes := make([]time.Time, 0, n)
+	// All in-flight calls must complete.
 	for range n {
 		<-callDone
-		callReturnTimes = append(callReturnTimes, time.Now())
 	}
 
-	// The FIRST Close (the one that flipped t.closed = true) must return
-	// AFTER all in-flight calls have returned. Subsequent concurrent
-	// Closes are allowed to short-circuit early.
 	closeReturnTimes := make([]time.Time, 0, closers)
 	for range closers {
 		closeReturnTimes = append(closeReturnTimes, <-closeReturned)
 	}
 
 	// The last-returning Close is the one that took the write lock and
-	// waited on wg.Wait. It must be AFTER all in-flight calls returned.
+	// waited on wg.Wait. It cannot have returned before release.
 	var latestClose time.Time
 	for _, ct := range closeReturnTimes {
 		if ct.After(latestClose) {
@@ -817,14 +827,7 @@ func TestWS_ConcurrentCloseAllWaitForDrain(t *testing.T) {
 		}
 	}
 
-	var latestCall time.Time
-	for _, ct := range callReturnTimes {
-		if ct.After(latestCall) {
-			latestCall = ct
-		}
-	}
-
-	assert.True(t, !latestClose.Before(latestCall),
-		"the drain-owning Close (last return) must be at-or-after all in-flight calls returned; latestClose=%s latestCall=%s",
-		latestClose, latestCall)
+	assert.True(t, latestClose.After(releaseTime),
+		"the drain-owning Close (last return) must return after release unblocked the in-flight calls; latestClose=%s releaseTime=%s",
+		latestClose, releaseTime)
 }
