@@ -7,11 +7,14 @@ TAG ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 build:
 	CGO_ENABLED=0 go build -o _out/$(BINARY) ./cmd/$(BINARY)
 
+# NOTE: vet enable-all lives in .golangci.yml (see govet.enable-all).
+# Do NOT re-enable -vet=all here — running vet twice is redundant and
+# makes the two configs drift.
 test:
-	go test -race -vet=all ./... -count=1
+	go test -race ./... -count=1
 
 test-v:
-	go test -race -vet=all ./... -v -count=1
+	go test -race ./... -v -count=1
 
 test-stress:  ## Deterministic race stress: iterate concurrency-heavy packages 30× to surface probabilistic races (Emil's WaitGroup class)
 	# No -run filter: the previous `Test.*(Concurrent|Race|Lifecycle|Stress)` regex
