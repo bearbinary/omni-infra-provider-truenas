@@ -259,17 +259,26 @@ groups:
           runbook_url: "https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability"
 
       # Companion to TrueNASWSGoroutinePanicRecurrence: catches the case
-      # where the goroutine panics so quickly the metric endpoint is never
-      # scraped between panic and re-panic. On-call is paged by the process
-      # restart signal even if the panic-counter never gets exported.
+      # where the goroutine panics so quickly the panic counter is never
+      # exported between panic and re-panic. On-call is paged by the process
+      # restart signal even if the panic-counter never lands in the TSDB.
+      #
+      # Keyed on the provider-owned truenas.provider.start_time_seconds
+      # gauge, NOT process_start_time_seconds: metrics flow OTLP → collector
+      # → Prometheus scrape of the collector, so the Prometheus-Go-client
+      # process_start_time_seconds series for the provider never exists in
+      # this pipeline (an earlier revision matched it with
+      # job="truenas-provider" — a silent no-op on both metric name and
+      # label). Every restart re-observes a new start timestamp, so
+      # changes() >= 2 in 5m = at least two restarts.
       - alert: TrueNASWSGoroutinePanicCrashLoop
-        expr: changes(process_start_time_seconds{job="truenas-provider"}[5m]) >= 2
+        expr: changes(truenas_provider_start_time_seconds[5m]) >= 2
         for: 2m
         labels:
           severity: critical
         annotations:
           summary: "truenas-provider crash-looping (>= 2 restarts in 5m)"
-          description: "The pod restarted at least twice in the last 5 minutes. If truenas_ws_goroutine_panics_total is zero at scrape time but the process is restarting, the panic is happening before the metrics endpoint serves — check kubectl logs for panic stack traces. See docs/concurrency-patterns.md."
+          description: "The provider process restarted at least twice in the last 5 minutes. If truenas_ws_goroutine_panics_total is zero but the process is restarting, the panic is happening before the first metric export — check kubectl logs for panic stack traces. See docs/concurrency-patterns.md."
           runbook_url: "https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability"
 
       # Transport close outcomes other than clean should be rare. Alert on

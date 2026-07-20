@@ -89,6 +89,44 @@ tests:
               runbook_url: 'https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability'
 
   # ------------------------------------------------------------------
+  # Test 4b: crash-loop detector fires on >= 2 restarts within 5m.
+  # The series is the provider-owned start-time gauge (OTLP-pushed);
+  # each restart re-observes a new unix timestamp. Three restarts in
+  # the first 4 minutes keep changes[5m] >= 2 long enough to survive
+  # the 2m for: clause. Regression pin for the earlier no-op expr that
+  # matched process_start_time_seconds{job="truenas-provider"} — a
+  # series that never exists in the OTLP → collector pipeline.
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'truenas_provider_start_time_seconds'
+        values: '100 100 200 300 400 400 400 400 400'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: TrueNASWSGoroutinePanicCrashLoop
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              alertname: TrueNASWSGoroutinePanicCrashLoop
+            exp_annotations:
+              summary: 'truenas-provider crash-looping (>= 2 restarts in 5m)'
+              description: "The provider process restarted at least twice in the last 5 minutes. If truenas_ws_goroutine_panics_total is zero but the process is restarting, the panic is happening before the first metric export — check kubectl logs for panic stack traces. See docs/concurrency-patterns.md."
+              runbook_url: 'https://github.com/BearBinary/omni-infra-provider-truenas/blob/main/docs/concurrency-patterns.md#runtime-observability'
+
+  # ------------------------------------------------------------------
+  # Test 4c: a single restart must NOT fire the crash-loop alert —
+  # ordinary deploys and node reboots restart the process once.
+  # ------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'truenas_provider_start_time_seconds'
+        values: '100 100 100 200 200 200 200 200'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: TrueNASWSGoroutinePanicCrashLoop
+        exp_alerts: []
+
+  # ------------------------------------------------------------------
   # Test 4: sustained call-rejected-after-close rate fires the alert.
   # ------------------------------------------------------------------
   - interval: 1m

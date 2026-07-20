@@ -160,8 +160,10 @@ turns "silent crash-loop" into "warn log + counter + page":
   goroutines (`close_wait`, `read_loop`, `close_conn`).
 - Prometheus alert on `increase(truenas_ws_goroutine_panics_total[5m]) > 0`
   — pages immediately on recurrence. Alert on
-  `changes(process_start_time_seconds[5m]) >= 2` as a companion to catch
-  sub-scrape-interval crashes where the metric never gets exported.
+  `changes(truenas_provider_start_time_seconds[5m]) >= 2` as a companion to
+  catch sub-export crashes where the panic counter never gets exported.
+  (The gauge is provider-owned and OTLP-pushed; the Prometheus-client
+  `process_start_time_seconds` series never exists in this pipeline.)
 
 The recover-log-metric block is inline per goroutine site — see
 *Rejected patterns* for why we do NOT extract a shared `safeGo` helper.

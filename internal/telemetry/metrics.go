@@ -1,10 +1,18 @@
 package telemetry
 
 import (
+	"context"
+	"time"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
+
+// processStartTime backs the truenas.provider.start_time_seconds observable
+// gauge. Package-level so it captures process start regardless of when
+// initMetrics runs.
+var processStartTime = time.Now()
 
 // WithMethod returns a metric option with the method attribute.
 func WithMethod(method string) metric.MeasurementOption {
@@ -275,6 +283,22 @@ func initMetrics() {
 	)
 	WSGoroutinePanics, _ = meter.Int64Counter("truenas.ws.goroutine_panics",
 		metric.WithDescription("Recovered panics in wsTransport goroutines, labelled by site (close_wait, read_loop, close_conn)"),
+	)
+	// Restart/crash-loop detection. Metrics flow OTLP → collector → Prometheus
+	// scrape of the collector, so the Prometheus-Go-client series
+	// process_start_time_seconds for THIS process never exists in the TSDB
+	// (the collector's own self-metrics port isn't scraped either). The
+	// TrueNASWSGoroutinePanicCrashLoop alert therefore keys on this
+	// provider-owned gauge: changes() >= 2 within 5m = crash-loop, even when
+	// the panic counter never survives long enough to be exported.
+	_, _ = meter.Int64ObservableGauge("truenas.provider.start_time_seconds",
+		metric.WithDescription("Unix timestamp this provider process started — restart detector for crash-loop alerting"),
+		metric.WithUnit("s"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(processStartTime.Unix())
+
+			return nil
+		}),
 	)
 	RateLimitQueueSize, _ = meter.Int64Gauge("truenas.ratelimit.queue_size",
 		metric.WithDescription("Current number of API calls waiting for a rate limit slot"),
