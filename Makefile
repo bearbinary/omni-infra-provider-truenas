@@ -2,16 +2,29 @@ BINARY := omni-infra-provider-truenas
 IMAGE := ghcr.io/bearbinary/$(BINARY)
 TAG ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build test test-v test-integration test-e2e test-record lint lint-helm scan setup-hooks image clean
+.PHONY: build test test-v test-integration test-e2e test-record test-stress lint lint-concurrency lint-helm scan setup-hooks image clean
 
 build:
 	CGO_ENABLED=0 go build -o _out/$(BINARY) ./cmd/$(BINARY)
 
 test:
-	go test -race ./... -count=1
+	go test -race -vet=all ./... -count=1
 
 test-v:
-	go test -race ./... -v -count=1
+	go test -race -vet=all ./... -v -count=1
+
+test-stress:  ## Deterministic race stress: iterate concurrency-heavy packages 30× to surface probabilistic races (Emil's WaitGroup class)
+	# No -run filter: the previous `Test.*(Concurrent|Race|Lifecycle|Stress)` regex
+	# quietly excluded real concurrency tests (ReaderGoroutineExitsOnClose,
+	# CallAfterCloseReturnsErrTransportClosed, WSChaos_*, every noderotation test).
+	# Iteration is the sole source of truth: `-count=30` catches Emil-class
+	# regressions >99% (per test-body comments) at a fraction of the prior
+	# 100× wall time. Package list stays scoped to the concurrency-heavy
+	# subtrees so the job stays under ~45 min on GHA runners.
+	go test -race -count=30 -timeout=1200s \
+		./internal/client/... \
+		./internal/singleton/... \
+		./internal/noderotation/...
 
 test-integration:  ## Run client integration tests against a real TrueNAS
 	go test -tags=integration ./internal/client/... -v -count=1 -timeout=120s
@@ -27,6 +40,9 @@ test-record:  ## Re-record cassettes from live TrueNAS (requires TRUENAS_TEST_HO
 
 lint:
 	golangci-lint run ./...
+
+lint-concurrency:  ## Enforce: every long-lived goroutine owner (sync.WaitGroup on struct) has a *_lifecycle_test.go companion
+	@bash hack/check-goroutine-owners.sh
 
 lint-helm:  ## Lint and validate Helm chart
 	helm lint deploy/helm/omni-infra-provider-truenas

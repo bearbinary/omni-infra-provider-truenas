@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -609,66 +608,63 @@ func TestWS_CloseDoesNotRaceWithConcurrentCalls(t *testing.T) {
 	t.Parallel()
 
 	// The Add-during-Wait race is probabilistic. A single-shot invocation
-	// can pass under a lucky scheduler even against the pre-fix code. 20
-	// iterations catches the regression >99% of the time within ~600ms
-	// (each iter is ~25-50ms). Fresh transport per iter so a hung goroutine
-	// doesn't leak state between subtests.
-	for iter := range 20 {
-		t.Run(fmt.Sprintf("iter-%d", iter), func(t *testing.T) {
-			m := &controllableMiddleware{}
-			host := startControllable(t, m)
+	// can pass under a lucky scheduler even against the pre-fix code. The
+	// former 20× inner loop was removed once `make test-stress` gained a
+	// -count=30 outer driver — single source of truth for iteration lives
+	// in the Makefile, so this test body runs once per `go test` invocation
+	// and the stress job pays for the repetition.
+	m := &controllableMiddleware{}
+	host := startControllable(t, m)
 
-			transport, err := newWSTransport(host, NewSecretString("test-key"), true)
-			require.NoError(t, err)
+	transport, err := newWSTransport(host, NewSecretString("test-key"), true)
+	require.NoError(t, err)
 
-			var wg sync.WaitGroup
+	var wg sync.WaitGroup
 
-			// Keep issuing calls until the transport reports closed.
-			for range 8 {
-				wg.Add(1)
+	// Keep issuing calls until the transport reports closed.
+	for range 8 {
+		wg.Add(1)
 
-				go func() {
-					defer wg.Done()
+		go func() {
+			defer wg.Done()
 
-					for {
-						ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-						var out map[string]any
-						callErr := transport.Call(ctx, "system.info", nil, &out)
-						cancel()
+			for {
+				ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+				var out map[string]any
+				callErr := transport.Call(ctx, "system.info", nil, &out)
+				cancel()
 
-						if callErr != nil {
-							return
-						}
-					}
-				}()
+				if callErr != nil {
+					return
+				}
 			}
+		}()
+	}
 
-			// Race multiple concurrent Close callers — Close must be idempotent
-			// and must never panic no matter how many goroutines race it.
-			for range 4 {
-				wg.Add(1)
+	// Race multiple concurrent Close callers — Close must be idempotent
+	// and must never panic no matter how many goroutines race it.
+	for range 4 {
+		wg.Add(1)
 
-				go func() {
-					defer wg.Done()
+		go func() {
+			defer wg.Done()
 
-					assert.NoError(t, transport.Close())
-				}()
-			}
+			assert.NoError(t, transport.Close())
+		}()
+	}
 
-			done := make(chan struct{})
-			go func() { wg.Wait(); close(done) }()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
 
-			// Deadlock timer tightened 30s → 5s. Under the pre-fix code a
-			// panic surfaces well within 5s; a latency regression that
-			// pushes Close past 5s (e.g. wg.Wait blocking behind a stuck
-			// in-flight call) will now trip the timer instead of hiding
-			// under a 30s ceiling.
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-				t.Fatal("Close/Call race did not converge — possible deadlock or latency regression")
-			}
-		})
+	// Deadlock timer tightened 30s → 5s. Under the pre-fix code a
+	// panic surfaces well within 5s; a latency regression that
+	// pushes Close past 5s (e.g. wg.Wait blocking behind a stuck
+	// in-flight call) will now trip the timer instead of hiding
+	// under a 30s ceiling.
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close/Call race did not converge — possible deadlock or latency regression")
 	}
 }
 
