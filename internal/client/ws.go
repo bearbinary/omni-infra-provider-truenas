@@ -84,6 +84,16 @@ type wsTransport struct {
 	conn   *websocket.Conn
 	authed bool
 
+	// connGen counts successful reconnects (guarded by connMu). Callers
+	// snapshot it before a call; reconnect() no-ops when the snapshot is
+	// stale, i.e. another caller already replaced the connection since the
+	// failure was observed. Without this, N calls failing on the same dead
+	// conn queue N sequential reconnects, and every one after the first
+	// sleeps the ~30s circuit-breaker cooldown while holding connMu's write
+	// lock — freezing the whole transport for N×cooldown (observed as a
+	// 180s "deadlock" in TestWS_ConcurrentCallRaceStress on loaded runners).
+	connGen uint64
+
 	// writeSem is a 1-slot semaphore gating writes to conn (gorilla/websocket
 	// forbids concurrent writes). Implemented as a channel rather than a
 	// sync.Mutex so acquisition can honor ctx cancellation in a single
@@ -516,12 +526,20 @@ func (t *wsTransport) sleepInterruptible(d time.Duration) bool {
 // sleepInterruptible so a concurrent Close aborts the reconnect and gets the
 // lock promptly; the residual hold is bounded by one dial+handshake (~10s
 // handshake timeout), not the full backoff budget.
-func (t *wsTransport) reconnect() error {
+// observedGen is the connGen snapshot the caller took before its failed
+// call; when it is stale the connection has already been replaced by a
+// concurrent reconnect and this call returns nil immediately so the caller
+// retries against the fresh conn (see connGen field comment).
+func (t *wsTransport) reconnect(observedGen uint64) error {
 	t.connMu.Lock()
 	defer t.connMu.Unlock()
 
 	if t.closed {
 		return ErrTransportClosed
+	}
+
+	if t.connGen != observedGen {
+		return nil
 	}
 
 	slog.Info("truenas websocket reconnect initiated",
@@ -595,6 +613,7 @@ func (t *wsTransport) reconnect() error {
 		t.pendingMu.Unlock()
 
 		t.startReader()
+		t.connGen++
 
 		return nil
 	}
@@ -703,6 +722,7 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 		return ErrTransportClosed
 	}
 	t.wg.Add(1)
+	gen := t.connGen
 	t.connMu.RUnlock()
 	defer t.wg.Done()
 
@@ -723,7 +743,7 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 		return err
 	}
 
-	if reconnErr := t.reconnect(); reconnErr != nil {
+	if reconnErr := t.reconnect(gen); reconnErr != nil {
 		return errors.Join(
 			fmt.Errorf("call failed: %w", err),
 			fmt.Errorf("reconnect failed: %w", reconnErr),

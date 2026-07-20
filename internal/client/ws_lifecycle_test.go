@@ -382,6 +382,33 @@ func TestWS_ConcurrentCallRaceStress(t *testing.T) {
 	}
 }
 
+// TestWS_ReconnectSkipsWhenGenerationAdvanced pins the reconnect-dedupe
+// contract: a caller whose connGen snapshot is stale (the connection was
+// already replaced by a concurrent reconnect) gets an immediate nil from
+// reconnect() — no dial, no circuit-breaker cooldown sleep. Without this,
+// N calls failing on one dead conn queued N sequential reconnects, each
+// sleeping the ~30s cooldown under connMu's write lock; the transport froze
+// for N×cooldown and TestWS_ConcurrentCallRaceStress hit its 180s deadlock
+// guard on loaded CI runners.
+func TestWS_ReconnectSkipsWhenGenerationAdvanced(t *testing.T) {
+	t.Parallel()
+
+	transport := &wsTransport{
+		connGen: 5,
+		// Fresh lastReconnect: if the stale-gen short-circuit regressed,
+		// reconnect would sleep the full 30s cooldown before dialing.
+		lastReconnect: time.Now(),
+	}
+
+	start := time.Now()
+	err := transport.reconnect(4)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "stale-generation reconnect must no-op: the conn was already replaced")
+	assert.Less(t, elapsed, time.Second,
+		"stale-generation reconnect must return without cooldown/backoff sleeps; took %s", elapsed)
+}
+
 // TestWS_CloseDuringReconnectDoesNotBlockPastGrace pins the contract that
 // Close returns within a bounded budget even when reconnect() is holding
 // connMu.Lock across a dial retry cycle. Close closes closeCh before
