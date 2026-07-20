@@ -270,6 +270,7 @@ func (t *wsTransport) readLoop(conn *websocket.Conn, done chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("truenas websocket goroutine panic",
+				slog.String("event", "goroutine_panic"),
 				slog.String("site", "read_loop"),
 				slog.String("host", t.host),
 				slog.Any("panic", r),
@@ -394,6 +395,7 @@ func (t *wsTransport) Close() error {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("truenas websocket goroutine panic",
+					slog.String("event", "goroutine_panic"),
 					slog.String("site", "close_wait"),
 					slog.String("host", t.host),
 					slog.Any("panic", r),
@@ -436,6 +438,7 @@ func (t *wsTransport) Close() error {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("truenas websocket goroutine panic",
+					slog.String("event", "goroutine_panic"),
 					slog.String("site", "close_conn"),
 					slog.String("host", t.host),
 					slog.Any("panic", r),
@@ -646,6 +649,12 @@ func (t *wsTransport) Call(ctx context.Context, method string, params any, resul
 	t.connMu.RLock()
 	if t.closed {
 		t.connMu.RUnlock()
+		slog.Warn("truenas websocket call rejected",
+			slog.String("event", "call_rejected"),
+			slog.String("reason", "closed"),
+			slog.String("op", "call"),
+			slog.String("method", method),
+			slog.String("host", t.host))
 		if telemetry.WSCallRejected != nil {
 			telemetry.WSCallRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "closed")))
 		}
@@ -831,6 +840,12 @@ func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.R
 		t.connMu.RUnlock()
 		span.RecordError(ErrTransportClosed)
 		span.SetStatus(codes.Error, ErrTransportClosed.Error())
+		slog.Warn("truenas websocket call rejected",
+			slog.String("event", "call_rejected"),
+			slog.String("reason", "closed"),
+			slog.String("op", "upload_file"),
+			slog.String("dest_path", destPath),
+			slog.String("host", t.host))
 		if telemetry.WSCallRejected != nil {
 			telemetry.WSCallRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "closed")))
 		}
