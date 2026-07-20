@@ -24,10 +24,12 @@ test-stress:  ## Deterministic race stress: iterate concurrency-heavy packages 3
 	# regressions >99% (per test-body comments) at a fraction of the prior
 	# 100× wall time. Package list stays scoped to the concurrency-heavy
 	# subtrees so the job stays under ~45 min on GHA runners.
+	# NOTE: re-add ./internal/noderotation/... when the node-rotation
+	# package lands on main — referencing it before it exists fails the
+	# whole stress job with "[setup failed]".
 	go test -race -count=30 -timeout=1200s \
 		./internal/client/... \
-		./internal/singleton/... \
-		./internal/noderotation/...
+		./internal/singleton/...
 
 test-integration:  ## Run client integration tests against a real TrueNAS
 	go test -tags=integration ./internal/client/... -v -count=1 -timeout=120s

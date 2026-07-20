@@ -62,10 +62,10 @@ var wantDirect = map[string]string{
 	// owners.sh was replaced by a typed analyzer). Not linked into the
 	// provider binary — the driver lives under internal/hack/... and is
 	// invoked from `make lint-concurrency`.
-	"golang.org/x/tools": "v0.48.0",
-	"google.golang.org/grpc":                                            "v1.82.1",
-	"google.golang.org/protobuf":                                        "v1.36.12-0.20260120151049-f2248ac996af",
-	"gopkg.in/yaml.v3":                                                  "v3.0.1",
+	"golang.org/x/tools":         "v0.48.0",
+	"google.golang.org/grpc":     "v1.82.1",
+	"google.golang.org/protobuf": "v1.36.12-0.20260120151049-f2248ac996af",
+	"gopkg.in/yaml.v3":           "v3.0.1",
 }
 
 // TestDirectDepVersions asserts that every direct require line in the
