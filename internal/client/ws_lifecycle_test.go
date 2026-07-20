@@ -384,16 +384,18 @@ func TestWS_ConcurrentCallRaceStress(t *testing.T) {
 
 // TestWS_CloseDuringReconnectDoesNotBlockPastGrace pins the contract that
 // Close returns within a bounded budget even when reconnect() is holding
-// connMu.Lock across a dial retry cycle. reconnect can hold connMu.Lock
-// for up to (initialBackoff × 1 + 2 + 4 + 3 × HandshakeTimeout) ≈ 37s in
-// the worst case — Close waiting behind that lock is a hang from the
+// connMu.Lock across a dial retry cycle. Close closes closeCh before
+// blocking on connMu, and every reconnect sleep (cooldown + backoff) goes
+// through sleepInterruptible — so a concurrent Close aborts the reconnect
+// and acquires the lock with at most one in-flight dial (~10s handshake
+// timeout, immediate refusal in practice) of residual hold. Before that
+// mechanism, reconnect held the lock for the full budget (cooldown 30s +
+// backoff ≈ 37s) and Close waiting behind it was a hang from the
 // operator's perspective.
 //
-// Budget: 5s. Rationale: initialBackoff (1s) + one HandshakeTimeout (10s
-// under the pessimistic case, but in practice the redial fails immediately
-// against a closed server) should not exceed the grace budget. If this
-// test surfaces a real latency-past-budget, it is skipped and the contract
-// question is documented in the skip message rather than silently mutated.
+// Budget: 5s — generous against the immediate connection-refused redial
+// this test sets up, tight against any regression back to sleeping
+// non-interruptibly under the lock.
 func TestWS_CloseDuringReconnectDoesNotBlockPastGrace(t *testing.T) {
 	t.Parallel()
 

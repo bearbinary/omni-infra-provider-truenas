@@ -106,6 +106,16 @@ type wsTransport struct {
 	lastReconnect      time.Time    // Circuit breaker: minimum time between reconnect bursts
 	uploadClient       *http.Client // Reused for file uploads to benefit from connection pooling
 	closed             bool         // guarded by connMu (write side)
+
+	// closeCh is closed by Close() BEFORE it blocks on connMu, so that
+	// reconnect() — which holds connMu's write lock across its cooldown and
+	// backoff sleeps (up to ~67s worst case) — can observe the shutdown and
+	// release the lock early instead of making Close wait out the full
+	// reconnect budget. closeOnce guards only the close(closeCh) call;
+	// idempotent-Close semantics still live on the closed flag (sync.Once
+	// alone is not a close gate — see docs/concurrency-patterns.md).
+	closeCh   chan struct{}
+	closeOnce sync.Once
 }
 
 // TrueNAS WebSocket message types.
@@ -208,6 +218,7 @@ func newWSTransport(host string, apiKey SecretString, insecureSkipVerify bool) (
 		insecureSkipVerify: insecureSkipVerify,
 		pending:            make(map[string]chan *wsResponse),
 		writeSem:           make(chan struct{}, 1),
+		closeCh:            make(chan struct{}),
 		uploadClient: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
@@ -371,6 +382,13 @@ func (t *wsTransport) Name() string {
 func (t *wsTransport) Close() error {
 	ctx := context.Background()
 
+	// Signal reconnect (which holds connMu's write lock across its sleeps)
+	// to abort BEFORE blocking on that same lock. Nil check: tests that
+	// construct wsTransport literals without newWSTransport never reconnect.
+	if t.closeCh != nil {
+		t.closeOnce.Do(func() { close(t.closeCh) })
+	}
+
 	t.connMu.Lock()
 	if t.closed {
 		t.connMu.Unlock()
@@ -474,10 +492,30 @@ func (t *wsTransport) Close() error {
 	}
 }
 
+// sleepInterruptible sleeps for d unless Close signals shutdown first (via
+// closeCh). Returns false when the transport is closing. reconnect holds
+// connMu's write lock across its sleeps and Close closes closeCh before
+// blocking on that lock — this select is the only way the sleep can observe
+// the shutdown and let reconnect release the lock early.
+func (t *wsTransport) sleepInterruptible(d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-t.closeCh:
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // reconnect closes the current connection, waits for the reader goroutine to
 // drain (failing all pending calls), and establishes a new connection with
 // exponential backoff. Takes connMu write lock for the duration so no caller
-// can observe a half-transition.
+// can observe a half-transition. All sleeps (cooldown + backoff) go through
+// sleepInterruptible so a concurrent Close aborts the reconnect and gets the
+// lock promptly; the residual hold is bounded by one dial+handshake (~10s
+// handshake timeout), not the full backoff budget.
 func (t *wsTransport) reconnect() error {
 	t.connMu.Lock()
 	defer t.connMu.Unlock()
@@ -493,7 +531,9 @@ func (t *wsTransport) reconnect() error {
 	// Circuit breaker: prevent rapid reconnect cycling under persistent failures.
 	if sinceLastReconnect := time.Since(t.lastReconnect); sinceLastReconnect < reconnectCooldown {
 		wait := reconnectCooldown - sinceLastReconnect
-		time.Sleep(wait)
+		if !t.sleepInterruptible(wait) {
+			return ErrTransportClosed
+		}
 	}
 
 	t.lastReconnect = time.Now()
@@ -518,7 +558,9 @@ func (t *wsTransport) reconnect() error {
 
 	for attempt := range maxReconnectAttempts {
 		if attempt > 0 {
-			time.Sleep(backoff)
+			if !t.sleepInterruptible(backoff) {
+				return ErrTransportClosed
+			}
 			backoff *= 2
 			if backoff > maxBackoff {
 				backoff = maxBackoff
