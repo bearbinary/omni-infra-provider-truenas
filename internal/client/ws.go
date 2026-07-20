@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/telemetry"
@@ -39,6 +41,13 @@ const (
 	// multi-GiB frames to OOM the provider.
 	wsMaxMessageBytes = 16 << 20
 )
+
+// ErrTransportClosed is returned by Call and UploadFile when the transport
+// has been shut down. Exposed as a sentinel so callers can errors.Is()
+// rather than substring-matching on the error message — the three sites
+// (Close reentry, Call, UploadFile) previously all built the same string
+// via fmt.Errorf and were one keystroke away from drifting apart.
+var ErrTransportClosed = errors.New("transport is closed")
 
 // isLoopbackHost / validateHost / normalizeParams previously lived here
 // and were copy-pasted into the operator probe (scripts/verify-api-key-roles)
@@ -258,6 +267,23 @@ func (t *wsTransport) startReader() {
 // all pending calls with that error. A new reader is started on reconnect.
 func (t *wsTransport) readLoop(conn *websocket.Conn, done chan struct{}) {
 	defer close(done)
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("truenas websocket goroutine panic",
+				slog.String("site", "read_loop"),
+				slog.String("host", t.host),
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())))
+			if telemetry.WSGoroutinePanics != nil {
+				telemetry.WSGoroutinePanics.Add(context.Background(), 1,
+					metric.WithAttributes(attribute.String("site", "read_loop")))
+			}
+			// Re-panic to preserve fail-fast crash-loop behavior. The log +
+			// metric above make the next same-class regression diagnosable
+			// from Grafana instead of a raw pod log.
+			panic(r)
+		}
+	}()
 
 	for {
 		var resp wsResponse
@@ -320,23 +346,81 @@ func (t *wsTransport) Name() string {
 // Close waits for in-flight calls to complete (up to 10s), then closes the connection.
 // The final close itself is bounded so a half-open TCP (no RST, no FIN) can't wedge
 // shutdown — we set SO_LINGER=0 and then run Close under a short deadline.
+//
+// closed is flipped under connMu's write lock BEFORE wg.Wait() runs, and
+// Call/UploadFile check closed under connMu's read lock before wg.Add(1).
+// This ordering matters: sync.WaitGroup forbids a positive Add from
+// starting concurrently with a Wait that observes the counter at zero.
+// Previously closed was set only after Wait() returned, so a Call/UploadFile
+// could Add(1) at the exact moment Wait's internal counter reached zero —
+// "panic: sync: WaitGroup is reused before previous Wait has returned".
+// Serializing the closed-check-then-Add against the closed-flip-then-Wait
+// via the same mutex makes that interleaving impossible: any Add that's
+// already past the check holds the read lock, so Close's write lock (and
+// therefore its Wait) can't proceed until that Add has landed.
+//
+// Idempotency + concurrent-Close semantic: the FIRST Close (the one that
+// wins the connMu.Lock and flips t.closed to true) owns the drain — it
+// runs wg.Wait, applies SO_LINGER=0, and calls conn.Close. Subsequent
+// Close callers (sequential or concurrent) hit the t.closed short-circuit
+// and return nil immediately without waiting. This is intentional: the
+// drain contract belongs to one caller, and racing goroutines should not
+// each pay a 10s grace budget. Pinned by TestWS_CloseIsIdempotent and
+// TestWS_ConcurrentCloseAllWaitForDrain.
 func (t *wsTransport) Close() error {
+	ctx := context.Background()
+
+	t.connMu.Lock()
+	if t.closed {
+		t.connMu.Unlock()
+		if telemetry.WSCloseOutcome != nil {
+			telemetry.WSCloseOutcome.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "already_closed")))
+		}
+		slog.Debug("truenas websocket Close short-circuited (already closed)",
+			slog.String("host", t.host))
+		return nil
+	}
+	t.closed = true
+	conn := t.conn
+	t.connMu.Unlock()
+
+	slog.Info("truenas websocket Close initiated",
+		slog.String("host", t.host),
+		slog.Duration("budget", closeTimeout))
+
 	done := make(chan struct{})
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("truenas websocket goroutine panic",
+					slog.String("site", "close_wait"),
+					slog.String("host", t.host),
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())))
+				if telemetry.WSGoroutinePanics != nil {
+					telemetry.WSGoroutinePanics.Add(context.Background(), 1,
+						metric.WithAttributes(attribute.String("site", "close_wait")))
+				}
+				// Re-panic — the WaitGroup-reuse panic that motivated the fix
+				// was here; keep crash-loop semantics so a same-class regression
+				// is still loud, but leave a Grafana breadcrumb this time.
+				panic(r)
+			}
+		}()
 		t.wg.Wait()
 		close(done)
 	}()
 
+	inflightTimedOut := false
 	select {
 	case <-done:
 	case <-time.After(closeTimeout):
+		inflightTimedOut = true
+		slog.Warn("truenas websocket Close in-flight drain timed out",
+			slog.String("host", t.host),
+			slog.Duration("budget", closeTimeout))
 	}
-
-	t.connMu.Lock()
-	t.closed = true
-	conn := t.conn
-	t.connMu.Unlock()
 
 	// Drop unsent bytes immediately (SO_LINGER=0) on the underlying TCP socket
 	// so a dead peer doesn't block the Close call.
@@ -349,13 +433,40 @@ func (t *wsTransport) Close() error {
 	closeDone := make(chan error, 1)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("truenas websocket goroutine panic",
+					slog.String("site", "close_conn"),
+					slog.String("host", t.host),
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())))
+				if telemetry.WSGoroutinePanics != nil {
+					telemetry.WSGoroutinePanics.Add(context.Background(), 1,
+						metric.WithAttributes(attribute.String("site", "close_conn")))
+				}
+				panic(r)
+			}
+		}()
 		closeDone <- conn.Close()
 	}()
 
 	select {
 	case err := <-closeDone:
+		outcome := "clean"
+		if inflightTimedOut {
+			outcome = "inflight_timeout"
+		}
+		if telemetry.WSCloseOutcome != nil {
+			telemetry.WSCloseOutcome.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+		}
 		return err
 	case <-time.After(closeTimeout):
+		slog.Warn("truenas websocket Close underlying conn close timed out",
+			slog.String("host", t.host),
+			slog.Duration("budget", closeTimeout))
+		if telemetry.WSCloseOutcome != nil {
+			telemetry.WSCloseOutcome.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", "close_timeout")))
+		}
 		return fmt.Errorf("websocket close timed out after %s", closeTimeout)
 	}
 }
@@ -369,8 +480,12 @@ func (t *wsTransport) reconnect() error {
 	defer t.connMu.Unlock()
 
 	if t.closed {
-		return fmt.Errorf("transport is closed")
+		return ErrTransportClosed
 	}
+
+	slog.Info("truenas websocket reconnect initiated",
+		slog.String("host", t.host),
+		slog.Int("max_attempts", maxReconnectAttempts))
 
 	// Circuit breaker: prevent rapid reconnect cycling under persistent failures.
 	if sinceLastReconnect := time.Since(t.lastReconnect); sinceLastReconnect < reconnectCooldown {
@@ -406,6 +521,11 @@ func (t *wsTransport) reconnect() error {
 				backoff = maxBackoff
 			}
 		}
+
+		slog.Debug("truenas websocket reconnect attempt",
+			slog.String("host", t.host),
+			slog.Int("attempt", attempt+1),
+			slog.Int("max_attempts", maxReconnectAttempts))
 
 		conn, err := dialWebSocket(t.host, t.insecureSkipVerify)
 		if err != nil {
@@ -523,7 +643,16 @@ func nextWSRequestID() string {
 // mutex, so a slow call on one goroutine can't stall unrelated calls on
 // other goroutines, and ctx cancellation unblocks the waiter immediately.
 func (t *wsTransport) Call(ctx context.Context, method string, params any, result any) error {
+	t.connMu.RLock()
+	if t.closed {
+		t.connMu.RUnlock()
+		if telemetry.WSCallRejected != nil {
+			telemetry.WSCallRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "closed")))
+		}
+		return ErrTransportClosed
+	}
 	t.wg.Add(1)
+	t.connMu.RUnlock()
 	defer t.wg.Done()
 
 	// Fast-path: try once, reconnect + retry on connection errors.
@@ -685,9 +814,10 @@ func isAPIError(err error, target **APIError) bool {
 // filesystem.put requires pipe-based upload which isn't available over WebSocket calls,
 // so we fall back to the HTTP multipart upload endpoint.
 func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.Reader, size int64) error {
-	t.wg.Add(1)
-	defer t.wg.Done()
-
+	// Start the span BEFORE the closed-check. Upload-during-shutdown must
+	// still produce a trace with codes.Error so the failure is not invisible
+	// on the dashboard — the RLock+closed-check path is exactly where an
+	// unlucky-timed shutdown surfaces to the caller.
 	ctx, span := tracer.Start(ctx, "truenas.upload_file",
 		trace.WithAttributes(
 			attribute.String("file.path", destPath),
@@ -695,6 +825,20 @@ func (t *wsTransport) UploadFile(ctx context.Context, destPath string, data io.R
 		),
 	)
 	defer span.End()
+
+	t.connMu.RLock()
+	if t.closed {
+		t.connMu.RUnlock()
+		span.RecordError(ErrTransportClosed)
+		span.SetStatus(codes.Error, ErrTransportClosed.Error())
+		if telemetry.WSCallRejected != nil {
+			telemetry.WSCallRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "closed")))
+		}
+		return ErrTransportClosed
+	}
+	t.wg.Add(1)
+	t.connMu.RUnlock()
+	defer t.wg.Done()
 
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)

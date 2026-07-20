@@ -4,6 +4,9 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Reliability
+- **WebSocket `Close()` no longer races with in-flight `Call`/`UploadFile`.** Reported and fixed by Emil Larsson ([@emil-jacero](https://github.com/emil-jacero)) in a downstream fork ([`emil-jacero/omni-infra-provider-truenas@b7d9475`](https://github.com/emil-jacero/omni-infra-provider-truenas/commit/b7d9475e40250627e21abc56a2fa866520ca745a)); cherry-picked with author attribution preserved. `Close` flipped `t.closed = true` only *after* `wg.Wait()` returned, so a concurrent `Call` or `UploadFile` could `wg.Add(1)` at the exact moment `Wait`'s counter hit zero — the interleaving `sync.WaitGroup` forbids, panicking the provider with `sync: WaitGroup is reused before previous Wait has returned` in a loop shortly after reconnects. Fix flips `closed` under `connMu`'s write lock *before* `Wait`, and gates `wg.Add(1)` in `Call`/`UploadFile` on the same flag under the read lock so an in-flight `Add` is guaranteed to land before `Close`'s `Wait` can start. `Close` is idempotent now (repeated/concurrent calls no-op after the first). Ships with `TestWS_CloseDoesNotRaceWithConcurrentCalls`.
+
 ## [v0.16.2] — 2026-05-23 — Two-batch SAST hardening sweep + Go toolchain bump
 
 Combined outcome of two SAST-driven hardening passes against `v0.16.1` plus

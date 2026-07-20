@@ -91,6 +91,34 @@ var (
 	WSReconnects       metric.Int64Counter
 	RateLimitQueueSize metric.Int64Gauge
 
+	// WSCloseOutcome tracks the exit path of every wsTransport.Close call:
+	// clean (wg.Wait drained before deadline + underlying Close returned),
+	// inflight_timeout (wg.Wait hit the closeTimeout — Call/UploadFile were
+	// still in-flight when Close's grace budget expired), close_timeout
+	// (underlying conn.Close hit the closeTimeout — TCP was half-open or
+	// otherwise wedged), already_closed (second-or-later Close on the same
+	// transport — no-op short-circuit).
+	//
+	// Before this counter existed, the WaitGroup-reuse panic that motivated
+	// the concurrency-model fix was not observable in telemetry — there was
+	// no way to see from Grafana that Close was even being called during a
+	// panic loop.
+	WSCloseOutcome metric.Int64Counter
+
+	// WSCallRejected counts Call/UploadFile rejections at the
+	// closed-transport gate. Label `reason=closed` today; leaves room for
+	// future gates (e.g. reason=not_authed) without a breaking rename.
+	// A sustained non-zero rate here means callers are still driving the
+	// transport after shutdown — often a shutdown-order bug in the caller.
+	WSCallRejected metric.Int64Counter
+
+	// WSGoroutinePanics counts recovered panics in the three long-lived
+	// wsTransport goroutines (label `site=close_wait|read_loop|close_conn`).
+	// The recover site re-panics after logging + incrementing this counter
+	// so the process still crash-loops — but the next same-class regression
+	// is now diagnosable from Grafana instead of a raw pod log.
+	WSGoroutinePanics metric.Int64Counter
+
 	// Cleanup
 	CleanupISOsRemoved metric.Int64Counter
 	CleanupOrphanVMs   metric.Int64Counter
@@ -231,6 +259,15 @@ func initMetrics() {
 	// Connection & resilience
 	WSReconnects, _ = meter.Int64Counter("truenas.ws.reconnects",
 		metric.WithDescription("Total WebSocket reconnection attempts"),
+	)
+	WSCloseOutcome, _ = meter.Int64Counter("truenas.ws.close_outcome",
+		metric.WithDescription("wsTransport.Close outcomes by exit path (clean, inflight_timeout, close_timeout, already_closed)"),
+	)
+	WSCallRejected, _ = meter.Int64Counter("truenas.ws.call_rejected",
+		metric.WithDescription("Call/UploadFile rejected at the transport gate, labelled by reason (closed)"),
+	)
+	WSGoroutinePanics, _ = meter.Int64Counter("truenas.ws.goroutine_panics",
+		metric.WithDescription("Recovered panics in wsTransport goroutines, labelled by site (close_wait, read_loop, close_conn)"),
 	)
 	RateLimitQueueSize, _ = meter.Int64Gauge("truenas.ratelimit.queue_size",
 		metric.WithDescription("Current number of API calls waiting for a rate limit slot"),
