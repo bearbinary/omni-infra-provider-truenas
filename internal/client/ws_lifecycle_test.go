@@ -460,15 +460,27 @@ func TestWS_CloseDuringReconnectDoesNotBlockPastGrace(t *testing.T) {
 		assert.Less(t, elapsed, grace,
 			"Close must return within grace budget even while reconnect holds connMu.Lock")
 	case <-time.After(grace):
-		// If we get here it means reconnect is blocking Close past the
-		// grace budget. That is a real contract question the current
-		// implementation does not resolve — reconnect() takes connMu.Lock
-		// for the duration of backoff + up to 3 dial retries, and Close()
-		// waits behind that lock. Fixing it (e.g. by having reconnect
-		// re-check t.closed inside its backoff loop) is out of scope for
-		// this change. Document the outstanding contract question and
-		// skip.
-		t.Skip("A5 — Close-during-reconnect latency issue: reconnect() holds connMu.Lock across backoff and dial retries, so Close() can block for up to ~37s. Tracked separately.")
+		// Reaching this branch is the failure mode: reconnect() takes
+		// connMu.Lock for the duration of backoff + up to 3 dial retries
+		// (~37s worst case), and Close() waits behind that lock. The
+		// contract we assert is `elapsed < grace`; if Close is still
+		// blocked at grace, that is a regression, not an expected skip.
+		//
+		// The previous t.Skip("A5 — …") here hid the regression as a
+		// silent PASS. Un-skipping means when the underlying reconnect-
+		// holds-connMu-across-backoff issue surfaces, this test fails
+		// loudly instead of the operator only finding out post-deploy.
+		//
+		// KNOWN CAVEAT: on the current implementation this test passes
+		// consistently on a warm machine (Close returns in ~5ms) because
+		// the fake middleware closes the current server immediately,
+		// which unblocks reconnect's dial before the connMu.Lock holder
+		// can hit the retry loop. If a future refactor makes reconnect
+		// truly block across dial retries, this branch will trip. Do
+		// not re-add t.Skip — fix the reconnect-holds-connMu contract
+		// instead (see docs/concurrency-patterns.md).
+		elapsed := time.Since(closeStart)
+		t.Errorf("A5 regression: Close blocked for %s (want < %s) — reconnect is holding connMu.Lock across backoff/dial retries", elapsed, grace)
 	}
 
 	<-callDone

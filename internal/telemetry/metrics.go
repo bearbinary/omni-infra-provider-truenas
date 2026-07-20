@@ -117,6 +117,13 @@ var (
 	// The recover site re-panics after logging + incrementing this counter
 	// so the process still crash-loops — but the next same-class regression
 	// is now diagnosable from Grafana instead of a raw pod log.
+	//
+	// Labels: `site` (fixed set: close_wait, read_loop, close_conn).
+	// DO NOT add the panic value or stack as a label — those are
+	// unbounded strings and would explode TSDB cardinality on any
+	// recurring panic. The panic value belongs in the structured log
+	// line at the recover site (as `slog.Any("panic", r)`), not the metric.
+	// See docs/concurrency-patterns.md § Metric-name convention.
 	WSGoroutinePanics metric.Int64Counter
 
 	// Cleanup
