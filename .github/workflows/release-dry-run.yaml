@@ -154,18 +154,23 @@ jobs:
           # Both forms (v-prefix and bare-semver) must always be there.
           # The original "metadata-action filters pattern=v{{version}} for
           # prereleases" bug surfaced here.
-          echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:${TAG}" \
+          #
+          # NOTE: `grep -qxF` (exact whole-line match) is load-bearing.
+          # Plain `grep -qF` is substring, so `:0.16` would falsely match
+          # `:0.16.2-rc.1` — masking the very "MAJOR_MINOR emitted for
+          # prerelease" regression this step is supposed to catch.
+          printf '%s\n' "$TAGS_OUT" | grep -qxF "ghcr.io/${REPO}:${TAG}" \
             || { echo "::error::missing v-prefixed tag :${TAG}"; exit 1; }
-          echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:${BARE}" \
+          printf '%s\n' "$TAGS_OUT" | grep -qxF "ghcr.io/${REPO}:${BARE}" \
             || { echo "::error::missing bare-semver tag :${BARE}"; exit 1; }
 
           # Stable-only tags must be ABSENT for prereleases.
           if [ "$IS_PRE" = "true" ]; then
-            if echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:latest"; then
+            if printf '%s\n' "$TAGS_OUT" | grep -qxF "ghcr.io/${REPO}:latest"; then
               echo "::error:::latest emitted for prerelease — would displace stable"
               exit 1
             fi
-            if echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:${MAJOR_MINOR}"; then
+            if printf '%s\n' "$TAGS_OUT" | grep -qxF "ghcr.io/${REPO}:${MAJOR_MINOR}"; then
               echo "::error:::${MAJOR_MINOR} emitted for prerelease — would displace stable"
               exit 1
             fi
@@ -173,16 +178,16 @@ jobs:
 
           # Stable tags must be PRESENT for stable.
           if [ "$IS_PRE" = "false" ]; then
-            echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:latest" \
+            printf '%s\n' "$TAGS_OUT" | grep -qxF "ghcr.io/${REPO}:latest" \
               || { echo "::error:::latest missing for stable release"; exit 1; }
-            echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:${MAJOR_MINOR}" \
+            printf '%s\n' "$TAGS_OUT" | grep -qxF "ghcr.io/${REPO}:${MAJOR_MINOR}" \
               || { echo "::error:::${MAJOR_MINOR} missing for stable release"; exit 1; }
           fi
 
           # :preview is gated by is_newest (forced true in dry-run); MUST
           # be present here. In production release.yaml it's gated by
           # the real semver comparison.
-          echo "$TAGS_OUT" | grep -qF "ghcr.io/${REPO}:preview" \
+          printf '%s\n' "$TAGS_OUT" | grep -qxF "ghcr.io/${REPO}:preview" \
             || { echo "::error:::preview missing — is_newest gate misconfigured"; exit 1; }
 
           echo "OK: tag matrix is correct for tag=$TAG (is_prerelease=$IS_PRE)"
