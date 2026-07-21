@@ -195,10 +195,17 @@ jobs:
       #   - After v0.16.2 stable cut: :preview = :v0.16.2 (newer than -rc.N)
       #
       # We push :preview ONLY if THIS release is the newest by semver
-      # order — `sort -rV` correctly handles "stable > its-own-rc" AND
-      # "next-minor-rc > current-stable". Without this guard, a hot-fix
-      # cut on an OLDER branch (e.g. v0.15.6 while v0.16.x is current)
-      # would silently overwrite :preview backward.
+      # order. Without this guard, a hot-fix cut on an OLDER branch
+      # (e.g. v0.15.6 while v0.16.x is current) would silently
+      # overwrite :preview backward.
+      #
+      # NOTE on the sed pipeline: GNU `sort -V` does NOT implement
+      # semver prerelease ordering — under plain -V, `v0.16.1-rc.5`
+      # sorts ABOVE `v0.16.1` (extra suffix = greater), which is the
+      # opposite of semver. Transforming `-` → `~` before sort works
+      # because `~` sorts LOWER than the end-of-string in -V order,
+      # so `v0.16.1~rc.5` correctly ranks below `v0.16.1`. We reverse
+      # the transform after selecting the winner.
       #
       # is_newest output is consumed by the metadata-action `enable=`
       # gate on the `:preview` tag rule below.
@@ -210,15 +217,15 @@ jobs:
         run: |
           # Get all existing release tags from GitHub. The CURRENT tag's
           # release hasn't been created yet at this workflow stage, so
-          # we add it to the comparison set explicitly. `sort -rV`
-          # handles semver ordering correctly:
+          # we add it to the comparison set explicitly. The `sed`
+          # tilde-transform gives semver-correct ordering:
           #   v0.16.2-rc.1 > v0.16.1 (newer minor RC beats older stable)
           #   v0.16.1 > v0.16.1-rc.5 (stable beats its own RCs)
           NEWEST=$(
             (
               gh release list --limit 100 --json tagName --jq '.[].tagName' || true
               echo "$CURRENT"
-            ) | sort -rV -u | head -1
+            ) | sed 's/-/~/' | sort -rV -u | head -1 | sed 's/~/-/'
           )
           if [ "$NEWEST" = "$CURRENT" ]; then
             echo "is_newest=true" >> "$GITHUB_OUTPUT"

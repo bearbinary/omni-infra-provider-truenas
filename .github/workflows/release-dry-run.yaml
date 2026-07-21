@@ -93,16 +93,18 @@ jobs:
         run: echo "is_newest=true" >> "$GITHUB_OUTPUT"
 
       # Independently exercise the semver-newest algorithm with synthetic
-      # tag sets. Catches regressions in the sort -rV invocation (e.g.,
-      # forgetting -V, missing -u, wrong tail/head) without needing a
-      # real release.
+      # tag sets. Catches regressions in the sort pipeline (e.g.,
+      # dropping the tilde transform, forgetting -V, missing -u, wrong
+      # tail/head) without needing a real release. See the NOTE in
+      # release.yaml's is_newest step for why we transform `-` → `~`
+      # before sort — plain `sort -V` gets prerelease ordering wrong.
       - name: Assert is_newest algorithm
         run: |
           # Helper: returns "true" if CURRENT is the newest of (CURRENT + EXISTING…).
           newest() {
             local current="$1"; shift
             local newest
-            newest=$( ( for t in "$@"; do echo "$t"; done; echo "$current" ) | sort -rV -u | head -1 )
+            newest=$( ( for t in "$@"; do echo "$t"; done; echo "$current" ) | sed 's/-/~/' | sort -rV -u | head -1 | sed 's/~/-/' )
             [ "$newest" = "$current" ] && echo "true" || echo "false"
           }
 
