@@ -141,9 +141,9 @@ prevent races, the rotation engine takes a string-annotation lock
 (`node-rotation.omni/rotation-state`) on the MachineSet for the
 duration of a step (in-place) or the whole cycle (surge).
 
-The autoscaler reads this annotation in
-[`internal/autoscaler/rotation_lock.go`](../internal/autoscaler/rotation_lock.go)
-and, if the lock is within TTL, returns the node group to Cluster
+The autoscaler reads this annotation (see
+`internal/autoscaler/rotation_lock.go` in the source tree) and, if the
+lock is within TTL, returns the node group to Cluster
 Autoscaler with `Min == Max == CurrentSize`. CAS treats the group as
 at-cap-and-at-floor and skips it for that refresh cycle.
 

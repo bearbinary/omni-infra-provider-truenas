@@ -53,7 +53,7 @@ All notable changes to this project are documented here.
   CI and the state-machine invariants are locked in, but the feature is
   not yet approved for production use. The gate will be removed when
   the feature is promoted to experimental. New docs at
-  [docs/node-rotation.md](docs/node-rotation.md).
+  [docs/node-rotation.md](node-rotation.md).
 - **Autoscaler / node-rotation coupling** — the autoscaler subcommand
   now reads the `node-rotation.omni/rotation-state` lock annotation on
   MachineSets and pauses scaling (returns `min == max == current`) for
