@@ -2,7 +2,7 @@ BINARY := omni-infra-provider-truenas
 IMAGE := ghcr.io/bearbinary/$(BINARY)
 TAG ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build test test-v test-integration test-e2e test-record test-stress lint lint-concurrency lint-helm scan setup-hooks image clean
+.PHONY: build test test-v test-integration test-e2e test-record test-stress lint lint-concurrency lint-helm scan setup-hooks image clean dev-setup dev-doctor dev-diff
 
 build:
 	CGO_ENABLED=0 go build -o _out/$(BINARY) ./cmd/$(BINARY)
@@ -69,3 +69,16 @@ generate:
 
 clean:
 	rm -rf _out/
+
+# ─── Developer environment (jarvy.dev) ────────────────────────────────
+# Declarative dev-tool provisioning. Config in ./jarvy.toml; keep in
+# sync with CLAUDE.md § Prerequisites.
+
+dev-setup:  ## Install/update every dev tool declared in jarvy.toml
+	jarvy setup --file ./jarvy.toml
+
+dev-diff:  ## Preview what dev-setup would install (dry-run)
+	jarvy diff --file ./jarvy.toml
+
+dev-doctor:  ## Diagnose local dev environment against jarvy.toml
+	jarvy doctor --file ./jarvy.toml

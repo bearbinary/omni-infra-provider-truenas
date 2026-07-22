@@ -1,0 +1,91 @@
+# jarvy.toml — omni-infra-provider-truenas
+#
+# Declarative dev-environment spec for the TrueNAS Omni provider.
+# Run `jarvy setup` to install; `jarvy diff` to preview; `jarvy doctor`
+# to diagnose; `jarvy validate` to sanity-check this file.
+#
+# Prerequisites tracked here mirror CLAUDE.md's Prerequisites section.
+# Keep the two in sync when adding/removing tools.
+
+[privileges]
+# macOS installs go through Homebrew (no sudo). Linux CI installs may
+# need sudo for apt/dnf paths. Windows unused.
+use_sudo = true
+
+[privileges.per_os]
+linux = true
+macos = false
+windows = false
+
+# ─── Toolchain ────────────────────────────────────────────────────────
+# All tools jarvy will ensure are installed. `latest` means "whatever
+# brew/apt has today" — CI still pins via workflow files, this is
+# local-dev only. Project's minimum Go version (1.26+) is enforced by
+# go.mod's toolchain directive, not here.
+[provisioner]
+# Build & language core
+go = "latest"                # Go 1.26+ required (see go.mod toolchain)
+git = "latest"
+make = "latest"
+docker = "latest"
+gh = "latest"                # release workflow + PR ops
+
+# Lint / security (both required by CLAUDE.md prereqs)
+golangci-lint = "latest"     # v2+ required; upgrade if "unsupported version"
+betterleaks = "latest"       # pre-push git hook + CI secret scan
+
+# Go dev extras
+delve = "latest"             # dlv debugger
+
+# Ops / container inspection
+lazydocker = "latest"        # container TUI for local runs
+kubectl = "latest"           # provider targets Talos/Omni clusters
+helm = "latest"              # TrueNAS apps catalog chart bumps
+k9s = "latest"               # cluster TUI for soak-window observation
+stern = "latest"             # multi-pod log tail (release soak signal)
+
+# General shell productivity — used across scripts, workflows, docs
+ripgrep = "latest"
+fd = "latest"
+jq = "latest"                # JSON-RPC response inspection
+yq = "latest"                # workflow yaml edits
+
+# ─── Environment variables ────────────────────────────────────────────
+# The provider loads .env at startup (see cmd/.../main.go). Copy
+# .env.example → .env before first run; this section only manages
+# jarvy-scoped vars, NOT provider runtime config.
+[env.vars]
+JARVY_SANDBOX = "0"          # respect the auto-detected seamless mode
+
+[env.config]
+generate_dotenv = false      # provider owns .env, do not overwrite
+update_rc = false            # do not touch shell rc from this project
+add_to_gitignore = true      # .env is already gitignored, but be safe
+
+# ─── Hooks ────────────────────────────────────────────────────────────
+# Reminders after setup. Kept intentionally lightweight — jarvy should
+# not run project builds automatically; that is `make build`'s job.
+[hooks]
+post_setup = """
+echo ''
+echo 'Jarvy setup complete. Next steps:'
+echo '  1. cp .env.example .env && edit .env (OMNI + TRUENAS creds)'
+echo '  2. make build           # build binary to _out/'
+echo '  3. make test            # unit tests'
+echo '  4. make lint            # golangci-lint (requires v2+)'
+echo ''
+echo 'Release process: see CLAUDE.md § Release Process.'
+echo 'Every push requires explicit authorization — read CONTRIBUTING.md.'
+"""
+
+[hooks.config]
+shell = "zsh"
+timeout = 60
+continue_on_error = false
+
+# ─── MCP registration ────────────────────────────────────────────────
+# Registers the Jarvy MCP server with Claude Code so the assistant can
+# call jarvy_wizard_plan / jarvy_discover_apply / jarvy_validate_config
+# from inside a conversation. Idempotent: re-runs are no-ops.
+[mcp_register]
+agents = ["claude-code"]

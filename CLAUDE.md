@@ -14,6 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **golangci-lint v2+** — must be built with the same major Go version. If you see `unsupported version` errors from the linter, upgrade: `brew upgrade golangci-lint`
 - **betterleaks** — secret scanner, runs as a pre-push git hook and in CI. Install: `brew install betterleaks`. Config: `.betterleaks.toml`, baseline: `.betterleaks-baseline.json`
 
+Fastest path to a working env: `make dev-setup` (drives [jarvy](https://jarvy.dev) via `jarvy.toml`). `make dev-diff` previews, `make dev-doctor` diagnoses. Manual install works too — the tool list above is authoritative; jarvy.toml mirrors it.
+
 ## Build & Test Commands
 
 ```bash
@@ -65,7 +67,7 @@ All via environment variables (`.env` file loaded automatically). Key ones: `OMN
 - **`docs/architecture.md`** — Detailed architecture with Mermaid diagrams (system context, provision sequence, transport detection)
 - **`docs/troubleshooting.md`** — Common issues and solutions (startup failures, provisioning, debugging)
 - **`docs/testing.md`** — Unit, integration, and E2E test setup
-- **`docs/storage.md`** — Storage guide: Longhorn (recommended default) setup, decision matrix vs NFS/democratic-csi, trade-offs.
+- **`docs/storage.md`** — Storage guide: Longhorn (recommended default) and NFS auto-storage. democratic-csi was previously listed as advanced; dropped from the supported list 2026-06-03 (no project movement, no active development).
 - **`docs/sizing.md`** — Control plane sizing guide: triggers (apiserver p99, etcd slow fsync, OOM, kubectl top pressure), sizing table by cluster scale, HA resize via MachineSet rolling, single-CP in-place on TrueNAS, ZFS/SLOG considerations for etcd.
 - **`docs/cni.md`** — CNI selection guide: Flannel (default), Cilium, Calico with Talos-specific setup steps
 - **`docs/networking.md`** — Networking guide: bridges, DHCP reservations, MetalLB, VIP, UniFi/pfSense/OPNsense/Mikrotik setup
