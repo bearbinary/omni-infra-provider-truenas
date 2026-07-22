@@ -12,9 +12,11 @@ import (
 	"github.com/cosi-project/runtime/pkg/state"
 	"github.com/siderolabs/omni/client/pkg/client"
 	"github.com/siderolabs/omni/client/pkg/client/omni"
+	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/bearbinary/omni-infra-provider-truenas/internal/autoscaler"
 	truenasclient "github.com/bearbinary/omni-infra-provider-truenas/internal/client"
@@ -43,10 +45,36 @@ func runAutoscaler(baseCtx context.Context) error {
 
 	defer func() { _ = logger.Sync() }()
 
-	// Register OTel instruments early so every subsequent decision
-	// emits metrics. Safe to call before config load — InitMetrics
-	// uses the global MeterProvider which is either the real OTLP
-	// exporter (when OTEL_EXPORTER_OTLP_ENDPOINT is set) or a no-op.
+	// Telemetry first so InitMetrics() below binds to the real OTLP
+	// MeterProvider rather than the no-op global. Without this, every
+	// truenas.autoscaler.* metric is silently dropped — leaving on-call
+	// without visibility when scaling decisions go wrong.
+	otelHeaders := consumeSecretEnv("OTEL_EXPORTER_OTLP_HEADERS")
+
+	telemetryShutdown, telemErr := telemetry.Init(baseCtx, telemetry.Config{
+		OTELEndpoint:   os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		OTELInsecure:   envBool("OTEL_EXPORTER_OTLP_INSECURE", true),
+		OTELHeaders:    parseHeaders(otelHeaders),
+		OTELProtocol:   envString("OTEL_EXPORTER_OTLP_PROTOCOL", defaultOTELProtocol),
+		OTELConsole:    envBool("OTEL_CONSOLE_EXPORT", false),
+		ServiceName:    envString("OTEL_SERVICE_NAME", "omni-infra-provider-truenas-autoscaler"),
+		ServiceVersion: version,
+	})
+	if telemErr != nil {
+		return fmt.Errorf("initialize telemetry: %w", telemErr)
+	}
+
+	defer func() { _ = telemetryShutdown(baseCtx) }()
+
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		otelCore := otelzap.NewCore("omni-infra-provider-truenas-autoscaler")
+		logger = logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+			return zapcore.NewTee(core, otelCore)
+		}))
+	}
+
+	// Register OTel instruments now that the MeterProvider is the real
+	// OTLP one. Safe to call multiple times via the sync.Once guard.
 	autoscaler.InitMetrics()
 
 	cfg, err := autoscaler.LoadSubcommandConfig()
@@ -243,14 +271,14 @@ func acquireAutoscalerLease(ctx, baseCtx context.Context, logger *zap.Logger, om
 // the provisioner consumes (OMNI_ENDPOINT, OMNI_SERVICE_ACCOUNT_KEY,
 // PROVIDER_ID, OMNI_INSECURE_SKIP_VERIFY). Kept as a subcommand-
 // private helper rather than calling main.go's client-build path
-// because the subcommands have different defaults — the autoscaler
-// doesn't need PROVIDER_ID at all but does need a valid endpoint +
-// service-account key. Keeping the two paths separate lets each
-// subcommand fail with error messages scoped to its own requirements.
+// because the subcommands have different defaults. The PROVIDER_ID
+// guard mirrors the provisioner: refusing a non-localhost endpoint
+// with empty PROVIDER_ID prevents cross-tenant lease collisions and
+// the LeaseHeldError identity leak on SaaS Omni.
 func newOmniClient(logger *zap.Logger) (*client.Client, error) {
 	omniEndpoint := os.Getenv("OMNI_ENDPOINT")
 	if omniEndpoint == "" {
-		return nil, errors.New("OMNI_ENDPOINT is required for the autoscaler subcommand — set it to the Omni cluster-API endpoint the provisioner uses")
+		return nil, errors.New("OMNI_ENDPOINT is required — set it to the Omni cluster-API endpoint the provisioner uses")
 	}
 
 	sa := truenasclient.NewSecretString(consumeSecretEnv("OMNI_SERVICE_ACCOUNT_KEY"))
@@ -258,6 +286,15 @@ func newOmniClient(logger *zap.Logger) (*client.Client, error) {
 	providerID := os.Getenv("PROVIDER_ID")
 	if providerID != "" {
 		meta.ProviderID = providerID
+	} else if !isLocalOmniEndpoint(omniEndpoint) {
+		// Two tenants that both default to PROVIDER_ID=truenas on the
+		// same SaaS Omni would share lease keys and the singleton's
+		// LeaseHeldError.OtherInstanceID would leak the other tenant's
+		// instance UUID. The node-rotation subcommand additionally reads
+		// MachineRequests by LabelInfraProviderID, so a collision could
+		// cross-tear-down requests across tenants. Fail fast — same
+		// posture as cmd/.../main.go for the provisioner.
+		return nil, errors.New("PROVIDER_ID is required when OMNI_ENDPOINT is not localhost — set PROVIDER_ID=<unique-per-tenant-value>")
 	}
 
 	opts := []client.Option{
@@ -274,7 +311,7 @@ func newOmniClient(logger *zap.Logger) (*client.Client, error) {
 		return nil, fmt.Errorf("new Omni client: %w", err)
 	}
 
-	logger.Debug("autoscaler: Omni client connected",
+	logger.Debug("Omni client connected",
 		zap.String("endpoint", omniEndpoint),
 		zap.Bool("has_service_account", !sa.IsEmpty()),
 	)

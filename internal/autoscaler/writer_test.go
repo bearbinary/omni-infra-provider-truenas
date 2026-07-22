@@ -3,7 +3,9 @@ package autoscaler
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/siderolabs/omni/client/api/omni/specs"
@@ -139,6 +141,94 @@ func TestScaleWriter_IncreaseMachineCount_RechecksMaxAgainstLiveState(t *testing
 	_, err = writer.IncreaseMachineCount(context.Background(), group, 3)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAtOrAboveMax), "live re-check must fire even when stale pre-check passed")
+}
+
+// TestIncreaseMachineCount_RefusedWhenLockHeld covers the
+// Discover→CAS TOCTOU closure: the CAS callback observes a fresh
+// rotation-state lock and refuses to write, even though the caller's
+// NodeGroup snapshot was taken when the lock was absent. Without this
+// guard, the autoscaler would scale during a surge cycle and trigger
+// an unplanned SurgeAborted on the rotation reconciler's next tick.
+func TestIncreaseMachineCount_RefusedWhenLockHeld(t *testing.T) {
+	t.Parallel()
+
+	st := newInMemOmniState(t)
+
+	seedMachineClass(t, st, "workers", map[string]string{
+		AnnotationAutoscaleMin: "1",
+		AnnotationAutoscaleMax: "5",
+	})
+
+	ms := seedMachineSet(t, st, "talos-home", "talos-home-workers", "workers", 2, false, specs.MachineSetSpec_MachineAllocation_Static)
+
+	// Stamp a fresh rotation lock AFTER the caller would have done their
+	// Discover call. Simulates the race window between Discover and the
+	// CAS write.
+	lockTS := time.Now().Unix()
+	_, err := safe.StateUpdateWithConflicts[*omni.MachineSet](
+		context.Background(), st,
+		omni.NewMachineSet(ms.Metadata().ID()).Metadata(),
+		func(m *omni.MachineSet) error {
+			m.Metadata().Annotations().Set(rotationLockAnnotation, "deadbeef:"+strconv.FormatInt(lockTS, 10))
+			return nil
+		},
+	)
+	require.NoError(t, err)
+
+	writer := NewScaleWriter(st)
+
+	group := NodeGroup{
+		ID:          ms.Metadata().ID(),
+		CurrentSize: 2,
+		Config:      &Config{Min: 1, Max: 5},
+	}
+
+	_, err = writer.IncreaseMachineCount(context.Background(), group, 1)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRotationLockHeld), "expected ErrRotationLockHeld, got: %v", err)
+
+	live, err := safe.StateGetByID[*omni.MachineSet](context.Background(), st, ms.Metadata().ID())
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), live.TypedSpec().Value.MachineAllocation.MachineCount, "count should not have moved while lock was held")
+}
+
+// TestIncreaseMachineCount_AllowsScaleWhenLockExpired pins the
+// inverse: an expired lock annotation must not block scaling, or a
+// crashed rotation reconciler would freeze autoscaling forever.
+func TestIncreaseMachineCount_AllowsScaleWhenLockExpired(t *testing.T) {
+	t.Parallel()
+
+	st := newInMemOmniState(t)
+
+	seedMachineClass(t, st, "workers", map[string]string{
+		AnnotationAutoscaleMin: "1",
+		AnnotationAutoscaleMax: "5",
+	})
+
+	ms := seedMachineSet(t, st, "talos-home", "talos-home-workers", "workers", 2, false, specs.MachineSetSpec_MachineAllocation_Static)
+
+	staleTS := time.Now().Add(-2 * rotationLockTTL).Unix()
+	_, err := safe.StateUpdateWithConflicts[*omni.MachineSet](
+		context.Background(), st,
+		omni.NewMachineSet(ms.Metadata().ID()).Metadata(),
+		func(m *omni.MachineSet) error {
+			m.Metadata().Annotations().Set(rotationLockAnnotation, "deadbeef:"+strconv.FormatInt(staleTS, 10))
+			return nil
+		},
+	)
+	require.NoError(t, err)
+
+	writer := NewScaleWriter(st)
+
+	group := NodeGroup{
+		ID:          ms.Metadata().ID(),
+		CurrentSize: 2,
+		Config:      &Config{Min: 1, Max: 5},
+	}
+
+	newSize, err := writer.IncreaseMachineCount(context.Background(), group, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 3, newSize)
 }
 
 // TestScaleWriter_IncreaseMachineCount_MissingMachineSet surfaces

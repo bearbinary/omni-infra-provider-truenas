@@ -14,6 +14,22 @@ linters:
     - gocritic
     - misspell
   settings:
+    govet:
+      # Enable all analyzers, including shadow. Shadowing masked the wsTransport
+      # `closed` bool observability gap; keeping all vet analyzers on catches the
+      # broader class.
+      enable-all: true
+      disable:
+        # fieldalignment is noise on struct definitions we've already sized
+        # deliberately (e.g. cache-line hot fields first). Re-enable if we
+        # measure a per-instance allocation problem.
+        - fieldalignment
+    staticcheck:
+      # SA2000 (sync.WaitGroup misuse) is the specific analyzer that flags the
+      # class of bug this file's history has bitten us with. Keep the full SA
+      # set on; SA and QF families are the correctness-load-bearing ones.
+      checks:
+        - "all"
     depguard:
       rules:
         main:

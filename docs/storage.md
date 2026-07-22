@@ -158,30 +158,21 @@ Longhorn's Helm install creates two StorageClasses: `longhorn` (dynamic provisio
 
 ---
 
-## Advanced: democratic-csi
+## Previously Discussed: democratic-csi (NOT supported)
 
-For users who want per-PV ZFS dataset isolation with dynamic provisioning, [democratic-csi](https://github.com/democratic-csi/democratic-csi) is purpose-built for TrueNAS. Each PV gets its own ZFS dataset (NFS) or zvol (iSCSI).
+[democratic-csi](https://github.com/democratic-csi/democratic-csi) was
+previously listed as an advanced option for per-PV ZFS dataset
+isolation. **As of 2026-06-03 it is no longer on the supported list.**
 
-This is more complex to set up than Longhorn but gives you:
-- Per-PV ZFS dataset/zvol isolation
-- ZFS snapshots exposed as Kubernetes VolumeSnapshots
-- Both NFS and iSCSI protocols
+Reason: insufficient project movement and no active development.
+Bear Binary's recommended set must point at maintained projects. The
+provider team will not test against democratic-csi, will not ship
+rotation drain-modes that target it, and will not accept issues that
+depend on it. Operators running it do so at their own risk.
 
-| Mode | Auth | Notes |
-|---|---|---|
-| SSH-based (`freenas-nfs`, `freenas-iscsi`) | SSH to TrueNAS | Stable, battle-tested. Requires SSH access with root/sudo. |
-| API-based (`freenas-api-nfs`, `freenas-api-iscsi`) | REST API | Experimental. 1 GB minimum volume size. REST v2.0 compatibility with TrueNAS 25.04+ should be verified. |
-
-**iSCSI mode** requires the `iscsi-tools` Talos extension:
-
-```yaml
-machine:
-  install:
-    extensions:
-      - image: ghcr.io/siderolabs/iscsi-tools:latest
-```
-
-See the [democratic-csi documentation](https://github.com/democratic-csi/democratic-csi) for setup instructions.
+If you need per-PV block storage on TrueNAS today, use **Longhorn**
+(recommended). If you need shared file storage, use **NFS auto-storage**
+(simple, but read the software-incompatibility caveats above).
 
 ---
 
@@ -190,7 +181,7 @@ See the [democratic-csi documentation](https://github.com/democratic-csi/democra
 | Storage Option | Extensions Needed |
 |---|---|
 | Longhorn | None (uses standard block devices) |
-| democratic-csi (iSCSI) | `iscsi-tools` |
+| NFS auto-storage | None |
 
 ---
 
@@ -198,4 +189,3 @@ See the [democratic-csi documentation](https://github.com/democratic-csi/democra
 
 - [Longhorn Talos Support](https://longhorn.io/docs/1.9.0/advanced-resources/os-distro-specific/talos-linux-support/) -- Longhorn on Talos Linux
 - [Siderolabs CSI Storage Guide](https://docs.siderolabs.com/kubernetes-guides/csi/storage) -- Talos-specific CSI documentation
-- [democratic-csi](https://github.com/democratic-csi/democratic-csi) -- TrueNAS-native CSI driver

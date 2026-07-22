@@ -16,6 +16,151 @@ All notable changes to this project are documented here.
 
 ### Build
 - **Go toolchain 1.26.3 → 1.26.5** and full `go get -u ./... && go mod tidy` sweep against the current module graph. This is a routine hygiene sweep — no forced CVE trigger, unlike the `v0.16.2` toolchain bump. Direct-dep highlights: `github.com/siderolabs/omni/client` v1.6.4 → v1.9.3, `github.com/cosi-project/runtime` v1.14.1 → v1.16.2, `github.com/grafana/pyroscope-go` v1.2.8 → v1.4.1, OpenTelemetry stable exporters v1.43.0 → v1.44.0, OTel log signals v0.19.0 → v0.20.0, `google.golang.org/grpc` v1.80.0 → v1.82.1, `go.uber.org/zap` v1.27.1 → v1.28.0, `golang.org/x/{crypto,net,sys,text,sync,term}` refreshed. Also picks up cleanups on the k8s side (`k8s.io/{api,apimachinery,client-go}` v0.35.x → v0.36.2, adds `k8s.io/cli-runtime`, `sigs.k8s.io/cli-utils`, and `sigs.k8s.io/kustomize/{api,kyaml}` — all transitively via `siderolabs/omni/client` v1.9.3; the provider does not import these packages directly). `github.com/gorilla/websocket` stays on the `v1.5.4-0.20250319...` pseudo-version because that is what `k8s.io/client-go` v0.36.2 pins — the go.mod line now carries an inline comment to that effect so a future maintainer does not "clean it up" to `v1.5.3` and break the transitive graph. Dropped `github.com/pkg/errors` from the transitive surface (unmaintained since 2021; upstream deps have all migrated to `errors.Join` / `%w`). All packages build, `go vet` clean, full `-race` test suite green.
+### Removed
+- **democratic-csi dropped from supported storage list (2026-06-03).**
+  Previously listed in `docs/storage.md` as an advanced option and
+  referenced from `docs/truenas-setup.md`, `docs/backup.md`,
+  `docs/getting-started.md`, `docs/index.md`, `README.md`, `AGENT.md`,
+  `CLAUDE.md`, `llms.txt`, `llms-full.txt`, and `schema.json`. Reason:
+  insufficient project movement and no active development — the team
+  will not test against it, will not ship rotation drain-modes that
+  target it, and will not accept issues that depend on it. The
+  supported set is now Longhorn (recommended default) and the
+  built-in NFS auto-storage flow. Operators currently running
+  democratic-csi can continue to do so at their own risk; no code
+  change in the provider blocks them.
+- **TrueNAS Setup guide trimmed.** Sections 3 (iSCSI for democratic-csi)
+  and 4 (SSH access for democratic-csi SSH mode) removed from
+  `docs/truenas-setup.md`. API key is now Section 3. Verification
+  checklist no longer asks operators to enable iSCSI / SSH services.
+
+### Added
+- **Node rotation (DARK LAUNCH — NOT RELEASED)** — new `node-rotation`
+  subcommand that watches MachineClass spec changes and rotates members
+  of the matching MachineSets one at a time so they boot against the new
+  spec. Supports both `in-place` (worker) and `surge` (worker +
+  control-plane) strategies. `in-place` is refused for control-plane to
+  protect etcd quorum. Surge advances a four-step state machine
+  (`idle → wait-up → wait-down → idle`) in a single MachineSet CAS per
+  step — annotation, phase, AND `MachineCount` land atomically so a
+  crash mid-step is unreachable rather than requiring the next tick to
+  abort-and-replan. Operator-edit drift detection still fires on
+  external MachineCount changes and aborts cleanly. Opt-in via
+  `node-rotation.omni/{enabled,role,strategy,min-healthy}` annotations
+  on the MachineClass. **Dark launch:** the subcommand refuses to
+  start unless `NODE_ROTATION_DARK_LAUNCH=true` is set; the reconciler
+  code ships in the binary so the autoscaler coupling is exercised in
+  CI and the state-machine invariants are locked in, but the feature is
+  not yet approved for production use. The gate will be removed when
+  the feature is promoted to experimental. New docs at
+  [docs/node-rotation.md](docs/node-rotation.md).
+- **Autoscaler / node-rotation coupling** — the autoscaler subcommand
+  now reads the `node-rotation.omni/rotation-state` lock annotation on
+  MachineSets and pauses scaling (returns `min == max == current`) for
+  the affected node group while the lock is fresh. The lock is
+  refreshed every tick during a surge cycle, so the pause covers the
+  multi-minute boot window. New metric
+  `truenas.autoscaler.paused.for.rotation` (labeled
+  `cluster` + `machineset`). The autoscaler's
+  `IncreaseMachineCount` writer also re-checks the lock annotation
+  inside its CAS callback (`ErrRotationLockHeld`) to close the
+  Discover→write TOCTOU window — scaling can no longer land during a
+  surge cycle. The gRPC handler maps `ErrRotationLockHeld` to
+  `codes.FailedPrecondition` (with `result=deferred_rotation` on
+  `truenas_autoscaler_scaleup_requests`) so the Cluster Autoscaler
+  backs off and re-polls capacity later rather than retrying on a
+  tight loop and defeating the lock.
+- **Node rotation observability surface** — new histograms
+  `truenas.node_rotation.tick.duration` and
+  `truenas.node_rotation.surge.cycle.duration`, plus a
+  `role_mismatch_refused` counter. Decision logs gain a `tick_id`
+  correlation field so on-call can filter for one reconciler pass;
+  generation-change decisions carry the prior hash as
+  `previous_generation` instead of regex-parsing the reason string.
+  Surge aborts are categorized via a structured `abort_kind` label
+  (`count-drift-waitup`, `count-drift-waitdown`, `unknown-phase`).
+- **Node rotation health endpoint** — `/healthz` + `/readyz` on
+  `NODE_ROTATION_HEALTH_LISTEN_ADDR` (default `:8082`). Reports
+  unhealthy when no tick has completed in 3× the refresh interval —
+  catches wedged tick goroutines that the singleton lease alone would
+  not detect for five minutes.
+
+### Changed
+- **Telemetry actually exports for `autoscaler` and `node-rotation`
+  subcommands.** Both subcommands now call `telemetry.Init` at
+  startup and wire the `otelzap` log-trace bridge, matching the
+  provisioner. Previously every `truenas.autoscaler.*` and
+  `truenas.node_rotation.*` sample was silently dropped because the
+  global MeterProvider was the no-op default.
+- **Subcommands enforce `PROVIDER_ID` against non-localhost Omni
+  endpoints** — same posture as the provisioner. Prevents
+  cross-tenant lease collisions and the `LeaseHeldError` identity
+  leak on shared SaaS Omni instances.
+
+### Security
+- **CP role-mismatch refusal.** A MachineSet carrying
+  `LabelControlPlaneRole` whose MachineClass declares
+  `node-rotation.omni/role: worker` is now refused at discovery time
+  (previously: logged a warning and proceeded with worker defaults,
+  which would tear CP members down via in-place rotation with
+  `MinHealthy=1` and drop etcd below quorum). The escape hatch is
+  `NODE_ROTATION_TRUST_DECLARED_ROLE=true` for hand-crafted clusters.
+- **`AnnotationStrategy` typo fix.** The constant value was
+  `node-rotation.omni/strategyegy` (a typo introduced when the
+  feature was first scaffolded); operators following the docs would
+  silently fail to opt in because the parser looked at the typo'd
+  key. The constant now matches the documented
+  `node-rotation.omni/strategy` and a new
+  `annotation_keys_test.go` pins every key against its literal so a
+  future drift fails CI.
+- **`NODE_ROTATION_LOCK_TTL` is clamped to a 30-second floor.** An
+  operator typo like `1` (`time.ParseDuration` accepts as `1ns`)
+  would otherwise defeat the autoscaler-pause coupling — the lock
+  would read as expired on the very next autoscaler tick.
+- **Disabling the node-rotation singleton requires a double opt-out.**
+  Setting `NODE_ROTATION_SINGLETON_ENABLED=false` alone now refuses
+  to start; the operator must additionally set
+  `NODE_ROTATION_SINGLETON_FORCE_DISABLE=true` to acknowledge the
+  duplicate-write race they're consciously accepting.
+- **Defense-in-depth on `teardownRequest`.** The rotation engine
+  refetches a MachineRequest before destroying it and refuses when
+  the live `LabelInfraProviderID` or `LabelMachineRequestSet`
+  doesn't match the values Plan saw. Closes the small window where
+  an operator relabels a request between Plan and Execute.
+
+### Performance
+- **Per-tick allocation drag in the node-rotation reconciler removed.**
+  `MachineRequestStatus` lookups are now one `ListAll` per tick
+  scoped by provider label (was N+1 `StateGetByID` calls — at 30
+  requests on a 30-second cadence that was ~120 extra Omni
+  round-trips per minute). `ComputeGeneration` pools the encoder +
+  buffer via `sync.Pool` and `fmt.Sprintf("%d=%s", …)` in
+  `metaValuesToStringSlice` becomes `strconv.Itoa(...) + "=" + …`.
+  Parsing reads the annotation map directly via
+  `mc.Metadata().Annotations().Raw()` instead of a per-tick
+  shallow copy.
+- **Tick jitter.** A randomized per-process offset (±10% of the
+  configured interval) scatters tick boundaries so multiple
+  reconcilers deployed across clusters don't hit Omni at identical
+  instants.
+
+### Maintainability
+- **`engine.go` split.** Action constants and `Decision` live in
+  `actions.go`, the plan switch lives in `plan.go`, the execute
+  dispatch + write helpers stay in `engine.go`. Pure file split —
+  no exported surface change.
+
+### Testing
+- New golden-hash test pins
+  `ComputeGeneration` byte-for-byte against three canonical inputs;
+  encoder regressions now fail loudly instead of silently rehashing
+  every Machine in production. New reconciler-level tests cover the
+  tick metrics fan-out, the role-mismatch matrix (5 cases),
+  `MinHealthy=0`, the in-place-no-lock-refresh contract, multi-stale
+  chained surge cycles, and the wait-down operator-edit drift
+  branch. New autoscaler-side tests pin the
+  `ErrRotationLockHeld` TOCTOU closure and the lock-expired
+  scale-through case. `go test -race ./...` clean.
 
 ## [v0.16.2] — 2026-05-23 — Two-batch SAST hardening sweep + Go toolchain bump
 

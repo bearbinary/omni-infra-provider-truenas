@@ -49,9 +49,9 @@ flowchart TD
 
 - :material-rocket-launch: **[Getting Started](getting-started.md)** — From NAS to running cluster, no experience required
 - :material-cog: **[Quick Start](quickstart.md)** — Configuration reference and deployment options
-- :material-nas: **[TrueNAS Setup](truenas-setup.md)** — Step-by-step NFS, iSCSI, SSH, bridges, and jumbo frames
+- :material-nas: **[TrueNAS Setup](truenas-setup.md)** — Step-by-step NFS, bridges, and jumbo frames
 - :material-lan: **[Networking](networking.md)** — Bridges, DHCP, MetalLB, VIP, router-specific guides
-- :material-harddisk: **[Storage](storage.md)** — CSI options: NFS, iSCSI, democratic-csi, Longhorn
+- :material-harddisk: **[Storage](storage.md)** — Supported CSI options: Longhorn (default), NFS auto-storage
 - :material-resize: **[Sizing Control Planes](sizing.md)** — When and how to make CP nodes bigger
 - :material-wrench: **[Troubleshooting](troubleshooting.md)** — Common issues and solutions
 

@@ -111,112 +111,12 @@ showmount -e <truenas-ip>
 # Should show: /mnt/tank/k8s-nfs <your-subnet>
 ```
 
-You can now use this share with [democratic-csi](storage.md#advanced-democratic-csi) or manual NFS PV definitions.
+You can now use this share with the provider's NFS auto-storage flow
+or with manual NFS PV definitions.
 
 ---
 
-## 3. iSCSI Service (for Block Storage)
-
-iSCSI provides block-level storage — significantly faster than NFS for databases and random I/O workloads. Used with democratic-csi in iSCSI mode.
-
-### Enable the iSCSI Service
-
-1. Go to **System > Services**
-2. Find **iSCSI** in the list
-3. Toggle it **on**
-4. Check **Start Automatically**
-
-### Configure iSCSI (for democratic-csi)
-
-If using democratic-csi in iSCSI mode, the driver creates targets and zvols automatically. You just need the service running. The driver handles:
-
-- Creating a zvol for each PersistentVolume
-- Creating an iSCSI target and extent
-- Mapping the zvol to the target
-
-No manual target or extent configuration is needed — democratic-csi does it all via SSH or API.
-
-### Talos Extension
-
-Your Talos nodes need the `iscsi-tools` extension to connect to iSCSI targets. Add it to your MachineClass:
-
-```yaml
-extensions:
-  - siderolabs/iscsi-tools
-```
-
-Or via Omni config patch:
-
-```yaml
-machine:
-  install:
-    extensions:
-      - image: ghcr.io/siderolabs/iscsi-tools:latest
-```
-
----
-
-## 4. SSH Access (for democratic-csi SSH Mode)
-
-democratic-csi's SSH-based drivers execute ZFS commands directly on TrueNAS. This is the most battle-tested mode.
-
-### Create a Dedicated User
-
-Don't use `root` — create a dedicated service account:
-
-1. Go to **Credentials > Local Users**
-2. Click **Add**
-3. **Username**: `csi`
-4. **Full Name**: `CSI Storage Driver`
-5. **Password**: set a strong password (or use SSH key auth — see below)
-6. **Home Directory**: `/nonexistent`
-7. **Shell**: `bash`
-8. Click **Save**
-
-### Grant Sudo Access
-
-The CSI driver needs to run ZFS commands as root:
-
-1. Go to **System > Advanced > Allowed Sudo Commands**
-2. Add a sudoers entry for the `csi` user. On TrueNAS SCALE 25.04+:
-    - Go to **Credentials > Local Users** > click `csi` > **Edit**
-    - Enable **Permit Sudo**
-    - Or add to the sudoers group
-
-Alternatively, use SSH key authentication (more secure):
-
-### SSH Key Authentication (Recommended)
-
-1. Generate an SSH key pair on the machine where democratic-csi will run (or use your existing key):
-   ```bash
-   ssh-keygen -t ed25519 -f ~/.ssh/csi-truenas -N ""
-   ```
-2. Copy the **public key** (`~/.ssh/csi-truenas.pub`)
-3. In TrueNAS: **Credentials > Local Users** > click `csi` > **Edit**
-4. Paste the public key into the **SSH Public Key** field
-5. Click **Save**
-
-### Enable SSH Service
-
-1. Go to **System > Services**
-2. Find **SSH** in the list
-3. Toggle it **on**
-4. Check **Start Automatically**
-5. Click the pencil icon:
-    - **Allow TCP Port Forwarding**: disable (not needed)
-    - **Password Login Groups**: leave empty if using key auth only
-6. Click **Save**
-
-### Verify
-
-```bash
-ssh -i ~/.ssh/csi-truenas csi@<truenas-ip> "sudo zfs list"
-# Should show your ZFS pools and datasets
-```
-
----
-
-## 5. API Key
+## 3. API Key
 
 The provider connects to TrueNAS via WebSocket with an API key — required in all deployments (as of v0.14.0 / TrueNAS 25.10, which removed implicit Unix-socket auth).
 
@@ -309,8 +209,6 @@ Before deploying the provider, verify everything is set up:
 | Network bridge | **Network > Interfaces** | Bridge has an IP, VMs can reach it |
 | NFS service | **System > Services** | Running, auto-start enabled |
 | NFS share | **Shares > NFS** | Share visible, path correct |
-| iSCSI service (if needed) | **System > Services** | Running, auto-start enabled |
-| SSH service (if needed) | **System > Services** | Running, CSI user can connect |
 | API key (if remote) | **Credentials > API Keys** | Key created and saved |
 
 Once everything checks out, proceed to [install the provider](getting-started.md#step-3-install-the-provider).
@@ -325,6 +223,5 @@ Once everything checks out, proceed to [install the provider](getting-started.md
 | Bridge not created | VMs have no network | Create a bridge under **Network > Interfaces** |
 | NFS service not running | Pods stuck in `ContainerCreating` | Enable NFS under **System > Services** |
 | NFS share not authorized for cluster subnet | `mount: permission denied` | Add your cluster subnet to **Authorized Networks** on the share |
-| SSH key not added to CSI user | democratic-csi can't connect | Paste public key into the user's SSH Public Key field |
 | MTU mismatch | Dropped packets, poor storage performance | Set the same MTU on the bridge, switch ports, and VM NIC config |
 | Using TrueNAS SCALE < 25.04 | Provider fails at startup | Upgrade to 25.04+ (Fangtooth) |

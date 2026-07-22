@@ -107,10 +107,16 @@ func (d *Discoverer) Discover(ctx context.Context) ([]NodeGroup, error) {
 
 	groups := make([]NodeGroup, 0, sets.Len())
 
+	// Snapshot now once per Discover pass: the lock-staleness check
+	// inside classify only needs second-resolution accuracy and a
+	// per-MachineSet time.Now() syscall would scale linearly with
+	// fleet size.
+	now := time.Now()
+
 	for i := 0; i < sets.Len(); i++ {
 		ms := sets.Get(i)
 
-		group, err := d.classify(ctx, ms)
+		group, err := d.classify(ctx, ms, now)
 		if err != nil {
 			d.logger.Warn("skipping MachineSet: classification failed",
 				zap.String("machineset", ms.Metadata().ID()),
@@ -149,7 +155,11 @@ func (d *Discoverer) Discover(ctx context.Context) ([]NodeGroup, error) {
 // scaling; annotating a CP MachineClass would be either a typo or an
 // operator expecting a behavior we don't deliver, and silently
 // ignoring it surfaces in logs.
-func (d *Discoverer) classify(ctx context.Context, ms *omni.MachineSet) (*NodeGroup, error) {
+//
+// now is the Discover-pass-wide timestamp used for rotation-lock
+// staleness checks; passed in so each tick takes one time.Now() call
+// rather than one per MachineSet.
+func (d *Discoverer) classify(ctx context.Context, ms *omni.MachineSet, now time.Time) (*NodeGroup, error) {
 	if _, isCP := ms.Metadata().Labels().Get(omni.LabelControlPlaneRole); isCP {
 		return nil, nil
 	}
@@ -196,13 +206,62 @@ func (d *Discoverer) classify(ctx context.Context, ms *omni.MachineSet) (*NodeGr
 		// MachineSet in the out-of-bounds state with no autoscaling.
 	}
 
-	return &NodeGroup{
+	current := int(allocation.MachineCount)
+
+	// node-rotation coupling: if the MachineSet carries an active
+	// (within-TTL) rotation lock annotation written by the
+	// internal/noderotation reconciler, pause scaling for this group
+	// by reporting Min == Max == CurrentSize. CAS will treat the group
+	// as at-cap-and-at-floor and skip it this cycle. Keeps the two
+	// controllers from racing on MachineCount writes.
+	//
+	// Lock format and TTL match the rotation engine's contract; see
+	// internal/noderotation/discovery.go::HasActiveLock for the parser.
+	// We re-implement the parse here (rather than import the rotation
+	// package) so the autoscaler subcommand can be deployed without
+	// pulling in the rotation reconciler code — the lock is a string
+	// annotation, not a Go-type contract.
+	//
+	// DARK LAUNCH: the reconciler that WRITES this annotation is gated
+	// behind NODE_ROTATION_DARK_LAUNCH (see cmd/.../noderotation.go),
+	// so this branch is inert on main in practice. Left active so
+	// operators who manually stamp the annotation for testing still get
+	// the pause behavior — and so this code is exercised in CI as soon
+	// as the dark-launch gate is lifted.
+	pausedForRotation := false
+
+	if raw, ok := ms.Metadata().Annotations().Get(rotationLockAnnotation); ok {
+		if isRotationLockActive(raw, now, rotationLockTTL) {
+			pausedForRotation = true
+
+			d.logger.Debug("MachineSet paused for node-rotation step",
+				zap.String("machineset", ms.Metadata().ID()),
+				zap.String("lock", raw),
+			)
+
+			recordRotationPause(ctx, ms.Metadata().ID(), d.cluster)
+		}
+	}
+
+	group := &NodeGroup{
 		ID:               ms.Metadata().ID(),
 		MachineClassName: allocation.Name,
 		Pool:             cfg.Pool, // May be empty; write path resolves via env fallback.
-		CurrentSize:      int(allocation.MachineCount),
+		CurrentSize:      current,
 		Config:           cfg,
-	}, nil
+	}
+
+	if pausedForRotation {
+		// Shadow-copy the Config so we mutate Min/Max without bleeding
+		// into the underlying parsed annotations. CAS will see a fixed
+		// window equal to the current size and decline to scale.
+		shadow := *cfg
+		shadow.Min = current
+		shadow.Max = current
+		group.Config = &shadow
+	}
+
+	return group, nil
 }
 
 // allAnnotations returns a shallow copy of the resource's annotation

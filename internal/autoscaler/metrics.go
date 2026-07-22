@@ -32,7 +32,7 @@ var (
 	// Labels:
 	//   - result: "succeeded" | "denied_capacity" | "rejected_bounds" |
 	//             "rejected_invalid" | "rejected_not_found" |
-	//             "errored_internal"
+	//             "deferred_rotation" | "errored_internal"
 	// Intentionally mirrors the gRPC status codes the server returns
 	// so an operator can correlate metric labels with log lines.
 	ScaleUpRequests metric.Int64Counter
@@ -77,6 +77,10 @@ func InitMetrics() {
 			// reuse the existing bucket-aware panels.
 			metric.WithExplicitBucketBoundaries(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
 		)
+
+		AutoscalerPausedForRotation, _ = meter.Int64Counter("truenas.autoscaler.paused.for.rotation",
+			metric.WithDescription("MachineSet observations clamped to Min==Max==CurrentSize because a node-rotation step holds the lock annotation"),
+		)
 	})
 }
 
@@ -97,6 +101,7 @@ const (
 	ResultRejectedBounds   = "rejected_bounds"
 	ResultRejectedInvalid  = "rejected_invalid"
 	ResultRejectedNotFound = "rejected_not_found"
+	ResultDeferredRotation = "deferred_rotation"
 	ResultErroredInternal  = "errored_internal"
 )
 

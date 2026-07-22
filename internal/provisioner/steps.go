@@ -85,13 +85,14 @@ func generatePassphrase() (string, error) {
 // Default extensions included in every TrueNAS VM.
 //
 // iscsi-tools is required for Longhorn (the default storage) — Longhorn uses
-// iSCSI internally to attach replicas to pods. It's also needed for democratic-csi
-// iSCSI mode. Adding it by default avoids a "PVC stuck Pending" failure mode that
-// only surfaces after the user tries to use persistent storage.
+// iSCSI internally to attach replicas to pods. Adding it by default avoids a
+// "PVC stuck Pending" failure mode that only surfaces after the user tries
+// to use persistent storage.
 //
 // nfs-utils was previously included, but was removed in v0.14.0 alongside the
-// provider-managed NFS auto-storage. Users who want democratic-csi in NFS mode or
-// manual NFS mounts can add it to their MachineClass `extensions` field.
+// provider-managed NFS auto-storage. Users who need NFS client support beyond
+// the built-in auto-storage flow can add it to their MachineClass `extensions`
+// field.
 var defaultExtensions = []string{
 	"siderolabs/qemu-guest-agent",
 	"siderolabs/util-linux-tools",
@@ -122,8 +123,8 @@ func (p *Provisioner) stepCreateSchematic(ctx context.Context, logger *zap.Logge
 
 	// Merge default extensions with any extras from MachineClass config
 	var data Data
-	if err := pctx.UnmarshalProviderData(&data); err != nil {
-		return fmt.Errorf(errUnmarshalProviderData, err)
+	if unmarshalErr := pctx.UnmarshalProviderData(&data); unmarshalErr != nil {
+		return fmt.Errorf(errUnmarshalProviderData, unmarshalErr)
 	}
 
 	extensions := make([]string, 0, len(defaultExtensions)+len(data.Extensions))
@@ -182,15 +183,15 @@ func (p *Provisioner) stepUploadISO(ctx context.Context, logger *zap.Logger, pct
 	pctx.State.TypedSpec().Value.TalosVersion = pctx.GetTalosVersion()
 
 	var data Data
-	if err := pctx.UnmarshalProviderData(&data); err != nil {
-		return fmt.Errorf(errUnmarshalProviderData, err)
+	if unmarshalErr := pctx.UnmarshalProviderData(&data); unmarshalErr != nil {
+		return fmt.Errorf(errUnmarshalProviderData, unmarshalErr)
 	}
 
 	data.ApplyDefaults(p.config)
 
 	// Validate pool before any operations
-	if err := p.validatePool(ctx, data.Pool); err != nil {
-		return err
+	if poolErr := p.validatePool(ctx, data.Pool); poolErr != nil {
+		return poolErr
 	}
 
 	arch := data.Architecture
@@ -243,8 +244,8 @@ func (p *Provisioner) downloadOrReuseISO(ctx context.Context, logger *zap.Logger
 	}
 
 	if stat != nil {
-		if err := p.verifyCachedISO(ctx, logger, ref, stat); err != nil {
-			return err
+		if verifyErr := p.verifyCachedISO(ctx, logger, ref, stat); verifyErr != nil {
+			return verifyErr
 		}
 
 		logger.Debug("ISO already exists, skipping download", zap.String("path", ref.path))
@@ -254,8 +255,8 @@ func (p *Provisioner) downloadOrReuseISO(ctx context.Context, logger *zap.Logger
 		return nil
 	}
 
-	if err := p.ensureISODatasets(ctx, data, ref.dataset); err != nil {
-		return err
+	if datasetErr := p.ensureISODatasets(ctx, data, ref.dataset); datasetErr != nil {
+		return datasetErr
 	}
 
 	if telemetry.ISOCacheMisses != nil {
@@ -424,13 +425,13 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	}
 
 	var data Data
-	if err := pctx.UnmarshalProviderData(&data); err != nil {
-		return fmt.Errorf(errUnmarshalProviderData, err)
+	if unmarshalErr := pctx.UnmarshalProviderData(&data); unmarshalErr != nil {
+		return fmt.Errorf(errUnmarshalProviderData, unmarshalErr)
 	}
 
 	// Check for unrecognized fields in MachineClass config
 	var rawData map[string]any
-	if err := pctx.UnmarshalProviderData(&rawData); err == nil {
+	if rawErr := pctx.UnmarshalProviderData(&rawData); rawErr == nil {
 		if unknown := UnknownFields(rawData); len(unknown) > 0 {
 			logger.Warn("MachineClass config contains unrecognized fields — these will be ignored",
 				zap.Strings("unknown_fields", unknown),
@@ -442,8 +443,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	data.ApplyDefaults(p.config)
 
 	// Validate all user-provided names before using them in paths or API calls
-	if err := data.Validate(); err != nil {
-		return fmt.Errorf("invalid MachineClass config: %w", err)
+	if validateErr := data.Validate(); validateErr != nil {
+		return fmt.Errorf("invalid MachineClass config: %w", validateErr)
 	}
 
 	// Pre-check: verify pools have enough free space for all zvols
@@ -494,8 +495,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	//     `[ENOMEM] Cannot guarantee memory for guest`. Subtracting the
 	//     RUNNING-guest commitment up-front turns that infinite-retry
 	//     pattern into an immediate, actionable provision error.
-	if err := p.preflightHostMemory(ctx, logger, span, data); err != nil {
-		return err
+	if memErr := p.preflightHostMemory(ctx, logger, span, data); memErr != nil {
+		return memErr
 	}
 
 	// Create zvol for the VM disk
@@ -508,17 +509,17 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 
 	// Ensure parent dataset hierarchy exists
 	if data.DatasetPrefix != "" {
-		if err := p.client.EnsureDataset(ctx, basePath); err != nil {
-			return fmt.Errorf("failed to ensure dataset prefix %q: %w", basePath, err)
+		if dsErr := p.client.EnsureDataset(ctx, basePath); dsErr != nil {
+			return fmt.Errorf("failed to ensure dataset prefix %q: %w", basePath, dsErr)
 		}
 	}
 
-	if err := p.client.EnsureDataset(ctx, basePath+"/omni-vms"); err != nil {
-		return fmt.Errorf("failed to ensure omni-vms dataset: %w", err)
+	if dsErr := p.client.EnsureDataset(ctx, basePath+"/omni-vms"); dsErr != nil {
+		return fmt.Errorf("failed to ensure omni-vms dataset: %w", dsErr)
 	}
 
-	if err := p.ensureZvol(ctx, logger, zvolPath, data.DiskSize, data.Encrypted, omniProps); err != nil {
-		return err
+	if zvolErr := p.ensureZvol(ctx, logger, zvolPath, data.DiskSize, data.Encrypted, omniProps); zvolErr != nil {
+		return zvolErr
 	}
 
 	state.ZvolPath = zvolPath
@@ -571,8 +572,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	// gets bound to the VM. Drift here POISON-marks the hash and aborts
 	// the create so we never boot from tampered bytes.
 	isoDataset := basePath + "/talos-iso"
-	if err := p.reverifyISOBeforeAttach(ctx, logger, isoDataset, isoPath, state.ImageId); err != nil {
-		return err
+	if reverifyErr := p.reverifyISOBeforeAttach(ctx, logger, isoDataset, isoPath, state.ImageId); reverifyErr != nil {
+		return reverifyErr
 	}
 
 	cdrom, err := p.client.AddCDROM(ctx, vm.ID, isoPath)
@@ -583,13 +584,13 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 	state.CdromDeviceId = int32(cdrom.ID)
 
 	// Attach root disk
-	if _, err := p.client.AddDisk(ctx, vm.ID, zvolPath); err != nil {
-		return fmt.Errorf("failed to attach root disk: %w", err)
+	if _, diskErr := p.client.AddDisk(ctx, vm.ID, zvolPath); diskErr != nil {
+		return fmt.Errorf("failed to attach root disk: %w", diskErr)
 	}
 
 	state.AdditionalZvolPaths = nil // Reset to avoid duplicates on retry
-	if err := p.attachAdditionalDisks(ctx, logger, vm.ID, requestID, data, state); err != nil {
-		return err
+	if attachErr := p.attachAdditionalDisks(ctx, logger, vm.ID, requestID, data, state); attachErr != nil {
+		return attachErr
 	}
 
 	if telemetry.AdditionalDisksTotal != nil && len(data.AdditionalDisks) > 0 {
@@ -643,8 +644,8 @@ func (p *Provisioner) stepCreateVM(ctx context.Context, logger *zap.Logger, pctx
 		}
 	}
 
-	if err := p.attachPrimaryNIC(ctx, logger, vm.ID, vmName, requestID, data); err != nil {
-		return err
+	if nicErr := p.attachPrimaryNIC(ctx, logger, vm.ID, vmName, requestID, data); nicErr != nil {
+		return nicErr
 	}
 
 	mtuPatches, attachedMACs, err := p.attachAdditionalNICs(ctx, logger, vm.ID, vmName, requestID, data)

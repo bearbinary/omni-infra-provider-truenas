@@ -285,7 +285,6 @@ If your CSI driver supports the Kubernetes `VolumeSnapshot` API, Velero can take
 | Driver | VolumeSnapshot Support | Notes |
 |---|---|---|
 | **Longhorn** | Yes | Native CSI snapshot support. Recommended. |
-| **democratic-csi** | Yes | ZFS-native snapshots exposed as VolumeSnapshots |
 | **NFS (nfs-subdir-external-provisioner)** | No | NFS has no snapshot capability -- file-system backup only |
 
 ### Prerequisites
@@ -293,7 +292,7 @@ If your CSI driver supports the Kubernetes `VolumeSnapshot` API, Velero can take
 - **Velero v1.14+** -- CSI plugin is built-in (no separate plugin install needed)
 - **VolumeSnapshot CRDs** installed in the cluster
 - **CSI snapshot controller** running in the cluster
-- A CSI driver that supports VolumeSnapshots (Longhorn or democratic-csi)
+- A CSI driver that supports VolumeSnapshots (Longhorn)
 
 ### Setup with Longhorn
 
@@ -360,23 +359,6 @@ velero backup create csi-test --include-namespaces default --wait
 # Check the backup used CSI snapshots
 velero backup describe csi-test --details | grep -A5 "CSI Snapshots"
 ```
-
-### Setup with democratic-csi
-
-democratic-csi exposes ZFS snapshots as Kubernetes VolumeSnapshots. Create a VolumeSnapshotClass for your driver:
-
-```yaml
-apiVersion: snapshot.storage.k8s.io/v1
-kind: VolumeSnapshotClass
-metadata:
-  name: zfs-snapshot
-  labels:
-    velero.io/csi-volumesnapshot-class: "true"
-driver: org.democratic-csi.nfs  # or org.democratic-csi.iscsi
-deletionPolicy: Delete
-```
-
-The rest of the Velero setup is identical to the Longhorn steps above.
 
 ### CSI Snapshot Data Movement (Recommended)
 

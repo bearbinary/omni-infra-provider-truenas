@@ -347,21 +347,16 @@ func (s *Server) NodeGroupIncreaseSize(ctx context.Context, req *pb.NodeGroupInc
 		return nil, status.Errorf(codes.NotFound, "NodeGroupIncreaseSize: node group %q not found", id)
 	}
 
-	if err := s.evaluateCapacityGate(ctx, group, id, delta); err != nil {
-		return nil, err
+	if gateErr := s.evaluateCapacityGate(ctx, group, id, delta); gateErr != nil {
+		return nil, gateErr
 	}
 
 	newSize, err := s.writer.IncreaseMachineCount(ctx, *group, delta)
 	if err != nil {
-		if errors.Is(err, ErrAtOrAboveMax) {
-			recordScaleUpResult(ctx, ResultRejectedBounds)
+		result, statusErr := mapWriterError(err)
+		recordScaleUpResult(ctx, result)
 
-			return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
-		}
-
-		recordScaleUpResult(ctx, ResultErroredInternal)
-
-		return nil, status.Errorf(codes.Unavailable, "increase machine count: %v", err)
+		return nil, statusErr
 	}
 
 	s.logger.Info("NodeGroupIncreaseSize: scaled up",
@@ -374,6 +369,29 @@ func (s *Server) NodeGroupIncreaseSize(ctx context.Context, req *pb.NodeGroupInc
 	recordScaleUpResult(ctx, ResultSucceeded)
 
 	return &pb.NodeGroupIncreaseSizeResponse{}, nil
+}
+
+// mapWriterError translates a ScaleWriter error into a metric label +
+// gRPC status. Extracted so the mapping is testable without spinning
+// up a gRPC server AND without racing the Discover→CAS TOCTOU window
+// that the writer's ErrRotationLockHeld branch exists to close.
+//
+// Codes are chosen for Cluster Autoscaler semantics:
+//   - ResourceExhausted → CAS stops retrying this group for a cool-off
+//   - FailedPrecondition → CAS backs off and re-polls capacity later
+//   - Unavailable → CAS retries immediately (transient)
+//
+// Rotation lock must NOT map to Unavailable — that would loop-retry
+// through the lock and defeat the point of the surge-cycle guard.
+func mapWriterError(err error) (string, error) {
+	switch {
+	case errors.Is(err, ErrAtOrAboveMax):
+		return ResultRejectedBounds, status.Errorf(codes.ResourceExhausted, "%v", err)
+	case errors.Is(err, ErrRotationLockHeld):
+		return ResultDeferredRotation, status.Errorf(codes.FailedPrecondition, "%v", err)
+	default:
+		return ResultErroredInternal, status.Errorf(codes.Unavailable, "increase machine count: %v", err)
+	}
 }
 
 // evaluateCapacityGate runs the optional capacity gate for an increase

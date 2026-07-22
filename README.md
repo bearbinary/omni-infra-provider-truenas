@@ -415,9 +415,9 @@ Every VM automatically includes these extensions:
 
 - `siderolabs/qemu-guest-agent` — hypervisor-to-guest communication
 - `siderolabs/util-linux-tools` — mount/block device operations
-- `siderolabs/iscsi-tools` — iSCSI initiator (required by Longhorn; also used by democratic-csi iSCSI mode)
+- `siderolabs/iscsi-tools` — iSCSI initiator (required by Longhorn)
 
-If you need NFS client support (for democratic-csi NFS mode or manual NFS mounts), add `siderolabs/nfs-utils` to your MachineClass `extensions` field.
+If you need NFS client support for manual NFS mounts beyond the built-in auto-storage flow, add `siderolabs/nfs-utils` to your MachineClass `extensions` field.
 
 Add more via the `extensions` field in MachineClass config:
 

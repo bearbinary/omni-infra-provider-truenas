@@ -260,7 +260,7 @@ These are included in every VM automatically — users do NOT need to add them:
 - `siderolabs/util-linux-tools`
 - `siderolabs/iscsi-tools` (required by Longhorn)
 
-If you need NFS client support (for democratic-csi NFS mode), add `siderolabs/nfs-utils` to the MachineClass `extensions` field.
+If you need NFS client support beyond the built-in auto-storage flow, add `siderolabs/nfs-utils` to the MachineClass `extensions` field.
 
 ## Enabling Metrics Server (HPA / `kubectl top`)
 
@@ -343,6 +343,10 @@ The health check pings TrueNAS, verifies the pool exists, and validates the NIC.
 2. The configured pool still exists
 3. The configured NIC interface still exists
 4. Restart the provider container
+
+### What Happens if the TrueNAS Connection Drops Mid-Operation?
+
+The WebSocket transport detects the drop, fails all in-flight calls with a retryable error, reconnects automatically (with a 30s circuit-breaker cooldown against rapid cycling), and transparently retries each call once against the fresh connection. Reconnect waits are bounded by the caller's context deadline and aborted immediately on shutdown, so a dead TrueNAS never wedges the provider. Restart storms are caught by the `TrueNASWSGoroutinePanicCrashLoop` Prometheus alert (keyed on the `truenas_provider_start_time_seconds` gauge).
 
 ### Detailed Debugging
 

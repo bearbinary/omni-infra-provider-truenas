@@ -179,8 +179,8 @@ func main() {
 
 	p := &probe{conn: conn, host: host, apiKey: truenasclient.NewSecretString(apiKey)}
 
-	if _, err := p.call("auth.login_with_api_key", []string{apiKey}); err != nil {
-		fmt.Fprintf(os.Stderr, "auth failed: %v — the API key is invalid or the user is disabled\n", err)
+	if _, authErr := p.call("auth.login_with_api_key", []string{apiKey}); authErr != nil {
+		fmt.Fprintf(os.Stderr, "auth failed: %v — the API key is invalid or the user is disabled\n", authErr)
 		_ = conn.Close()
 		os.Exit(1) //nolint:gocritic // conn already closed above
 	}
@@ -211,8 +211,8 @@ func main() {
 	probeDs := fmt.Sprintf("%s/omni-role-probe-%d", pool, ts)
 	probePath := "/mnt/" + probeDs
 
-	if _, err := p.call("pool.dataset.create", map[string]any{"name": probeDs}); err != nil {
-		add("pool.dataset.create", "DATASET_WRITE", err)
+	if _, createErr := p.call("pool.dataset.create", map[string]any{"name": probeDs}); createErr != nil {
+		add("pool.dataset.create", "DATASET_WRITE", createErr)
 	} else {
 		add("pool.dataset.create", "DATASET_WRITE", nil)
 		defer func() { _, _ = p.call("pool.dataset.delete", []any{probeDs}) }()
@@ -412,12 +412,12 @@ func uploadFile(uploadClient *http.Client, host, bearer, destPath string, data [
 		return err
 	}
 
-	if _, err := fw.Write(data); err != nil {
-		return err
+	if _, writeErr := fw.Write(data); writeErr != nil {
+		return writeErr
 	}
 
-	if err := mw.Close(); err != nil {
-		return err
+	if closeErr := mw.Close(); closeErr != nil {
+		return closeErr
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, uploadURL, &body)

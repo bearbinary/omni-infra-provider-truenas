@@ -41,7 +41,13 @@ func TestSwapCDROMForUpgrade_UpdatesExistingCDROM(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 10, dev.ID)
 	assert.Contains(t, updatedPath, "newimage123")
-	_ = state // Verify state fields are the right types
+
+	// State fixture doubles as a compile-time type check on the spec
+	// fields the upgrade path reads. Asserting the values keeps govet's
+	// unusedwrite happy and pins that the fixture matches the API call.
+	assert.Equal(t, int32(42), state.VmId)
+	assert.Equal(t, int32(10), state.CdromDeviceId)
+	assert.Equal(t, "newimage123", state.ImageId)
 }
 
 func TestSwapCDROM_NoCDROMExists_CreatesNew(t *testing.T) {

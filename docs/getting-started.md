@@ -139,7 +139,7 @@ base64-encoded-key-that-is-very-long...
 
 ## Step 2: Prepare Your TrueNAS Server
 
-> **Need more detail?** This section covers the basics. For the complete TrueNAS setup reference (NFS shares, iSCSI, SSH for democratic-csi, jumbo frames, storage bridges), see the [TrueNAS Setup Guide](truenas-setup.md).
+> **Need more detail?** This section covers the basics. For the complete TrueNAS setup reference (NFS shares, jumbo frames, storage bridges), see the [TrueNAS Setup Guide](truenas-setup.md).
 
 ### Check Your TrueNAS Version
 

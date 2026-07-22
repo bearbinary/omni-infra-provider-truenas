@@ -247,7 +247,7 @@ These are included in every VM automatically — users do NOT need to add them:
 - `siderolabs/util-linux-tools`
 - `siderolabs/iscsi-tools` (required by Longhorn, the default storage)
 
-Users who need NFS client support (for democratic-csi NFS mode) can add `siderolabs/nfs-utils` to their MachineClass `extensions` field.
+Users who need NFS client support beyond the built-in auto-storage flow can add `siderolabs/nfs-utils` to their MachineClass `extensions` field.
 
 ## Enabling Metrics Server (HPA / `kubectl top`)
 
@@ -372,6 +372,9 @@ A: Talos Linux is an immutable, minimal operating system purpose-built for Kuber
 
 Q: How does the provider connect to TrueNAS?
 A: The provider connects via WebSocket (wss://<host>/websocket) using a JSON-RPC 2.0 API key. When running the container on the TrueNAS host itself, set TRUENAS_HOST=localhost and TRUENAS_INSECURE_SKIP_VERIFY=true. Unix socket support was removed in v0.14.0 because TrueNAS 25.10 requires authentication on every call.
+
+Q: What happens if the TrueNAS connection drops mid-operation?
+A: The WebSocket transport detects the drop, fails all in-flight calls with a retryable error, reconnects automatically (with a 30s circuit-breaker cooldown against rapid cycling), and transparently retries each call once against the fresh connection. Reconnect waits are bounded by the caller's context deadline and aborted immediately on shutdown, so a dead TrueNAS never wedges the provider. Restart storms are caught by the TrueNASWSGoroutinePanicCrashLoop Prometheus alert (keyed on the truenas_provider_start_time_seconds gauge).
 
 Q: What ZFS features does this provider use?
 A: VM disks are created as ZFS zvols on your specified pool. ISOs are cached on the pool filesystem with SHA-256 deduplication. You can target different pools per MachineClass (e.g., NVMe for control plane, HDD for workers).

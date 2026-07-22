@@ -361,7 +361,8 @@ func TestData_AdditionalDisks_PoolDefaultsToEmpty(t *testing.T) {
 		AdditionalDisks: []AdditionalDisk{{Size: 50}},
 	}
 
-	assert.Empty(t, d.AdditionalDisks[0].Pool)
+	assert.Equal(t, "tank", d.Pool, "primary pool must be preserved on the parent Data")
+	assert.Empty(t, d.AdditionalDisks[0].Pool, "additional disk pool must be empty so runtime can default to primary")
 }
 
 func TestData_EmptyAdditionalDisks(t *testing.T) {

@@ -77,6 +77,19 @@ func main() {
 			}
 
 			os.Exit(0)
+		case "node-rotation":
+			// Experimental subcommand. Watches opted-in MachineClasses
+			// and rotates Machines whose backing MachineRequest no
+			// longer matches the class spec. v1 ships in-place rotation
+			// for worker MachineSets only; surge + CP rotation are
+			// roadmap items. See internal/noderotation/ and
+			// docs/node-rotation.md.
+			if err := runNodeRotation(context.Background()); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+
+			os.Exit(0)
 		}
 	}
 
@@ -296,8 +309,8 @@ func run() error {
 		return fmt.Errorf("failed to create infra provider: %w", err)
 	}
 
-	if err := runStartupChecks(ctx, logger, tnClient, defaultPool, defaultNetworkInterface); err != nil {
-		return err
+	if checkErr := runStartupChecks(ctx, logger, tnClient, defaultPool, defaultNetworkInterface); checkErr != nil {
+		return checkErr
 	}
 
 	// Start host health monitor (publishes OTEL gauges)
@@ -310,8 +323,8 @@ func run() error {
 	healthSrv := health.NewServer(newHealthCheck(tnClient, defaultPool, defaultNetworkInterface), logger)
 
 	go func() {
-		if err := healthSrv.Run(ctx, healthAddr); err != nil {
-			logger.Error("health server failed", zap.Error(err))
+		if healthErr := healthSrv.Run(ctx, healthAddr); healthErr != nil {
+			logger.Error("health server failed", zap.Error(healthErr))
 		}
 	}()
 
@@ -358,10 +371,10 @@ func run() error {
 	// deletion this cycle — never mass-delete on transient Omni read
 	// failures. The cleanup function handles that fallback explicitly.
 	liveRequestIDs := func(ctx context.Context) (map[string]bool, error) {
-		list, err := safe.StateListAll[*infraresources.MachineRequest](ctx, omniState,
+		list, listErr := safe.StateListAll[*infraresources.MachineRequest](ctx, omniState,
 			state.WithLabelQuery(resource.LabelEqual(omniresources.LabelInfraProviderID, meta.ProviderID)))
-		if err != nil {
-			return nil, fmt.Errorf("list MachineRequests: %w", err)
+		if listErr != nil {
+			return nil, fmt.Errorf("list MachineRequests: %w", listErr)
 		}
 
 		out := make(map[string]bool, list.Len())

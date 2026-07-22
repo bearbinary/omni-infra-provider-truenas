@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/cosi-project/runtime/pkg/state"
@@ -46,6 +47,16 @@ var ErrAtOrAboveMax = errors.New("target size would exceed node group max")
 // documenting.
 var ErrBelowMin = errors.New("current size is below node group min — cluster-autoscaler should correct before scaling")
 
+// ErrRotationLockHeld is returned when the CAS callback observes a
+// fresh rotation-state annotation on the MachineSet. Closes the
+// Discover→write TOCTOU window: discovery captures the lock-absent
+// view, the rotation reconciler acquires the lock + bumps MachineCount
+// before the write lands, and without this recheck the autoscaler
+// would scale during a surge cycle and cause an unplanned
+// ActionSurgeAborted. Mapped to codes.Aborted by the gRPC handler so
+// CAS retries on the next refresh cycle.
+var ErrRotationLockHeld = errors.New("rotation-state lock held by node-rotation reconciler; scaling deferred")
+
 // IncreaseMachineCount writes MachineAllocation.MachineCount =
 // currentSize + delta for the given MachineSet, conditioned on:
 //
@@ -82,6 +93,17 @@ func (w *ScaleWriter) IncreaseMachineCount(ctx context.Context, group NodeGroup,
 
 		if spec.MachineAllocation == nil {
 			return fmt.Errorf("group %q: MachineAllocation missing on MachineSet — out-of-band edit?", group.ID)
+		}
+
+		// Defense-in-depth against the Discover→CAS TOCTOU. Discover
+		// snapshots the lock state, but a rotation reconciler can
+		// acquire the lock between Discover and this callback; without
+		// re-reading we'd scale during a surge cycle. Reading the live
+		// annotation closes the window.
+		if raw, ok := ms.Metadata().Annotations().Get(rotationLockAnnotation); ok {
+			if isRotationLockActive(raw, time.Now(), rotationLockTTL) {
+				return fmt.Errorf("%w: group %q lock=%q", ErrRotationLockHeld, group.ID, raw)
+			}
 		}
 
 		// Re-check the Max bound against the live MachineCount inside

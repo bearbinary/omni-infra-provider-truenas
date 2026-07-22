@@ -57,6 +57,12 @@ Tracked improvements for future releases.
 - **Velero CSI Snapshots & DR Runbook** — Extended [backup guide](backup.md) with Velero CSI snapshot integration and 5 disaster recovery scenarios (v0.13.0)
 - **Grafana Cloud Observability** — OTEL exporters support `OTEL_EXPORTER_OTLP_HEADERS` for authenticated endpoints. Pyroscope supports `PYROSCOPE_BASIC_AUTH_USER` / `PYROSCOPE_BASIC_AUTH_PASSWORD` for Grafana Cloud Profiles (unreleased)
 - **Cassette Coverage Backfill** — Recorded the 6 missing integration cassettes (`TestIntegration_{Ping,PoolExists,NetworkInterfaceValid,DatasetLifecycle,ZvolLifecycle,NIC_DeterministicMAC}`) and flipped `CI_REQUIRE_CASSETTES=1` from advisory → required in both `ci.yaml` and `release.yaml`. Missing cassettes now fail CI instead of skipping silently (unreleased)
+- **WebSocket Transport Concurrency Hardening** — Four coupled fixes to `internal/client` shutdown/reconnect semantics, each surfaced by the 30× CI race-stress job: (1) `Close` closes a `closeCh` signal before taking `connMu` and all reconnect sleeps go through `sleepInterruptible`, so Close no longer waits behind a full cooldown+backoff cycle (~67s worst case); (2) `connGen` generation counter dedupes reconnects — N calls failing on one dead conn no longer queue N sequential 30s cooldown sleeps under the write lock; (3) conn-drop errors are consistently retryable — the fan-out's synthetic response used to decode as a non-retryable `*APIError` while the `readerDone` wake-up path retried, a select-race coin flip; (4) reconnect sleeps also select on the caller's `ctx.Done()`, so a reconnecting caller never holds the write lock past its own deadline (unreleased)
+- **Crash-Loop Alert Actually Fires** — `TrueNASWSGoroutinePanicCrashLoop` matched `process_start_time_seconds{job="truenas-provider"}`, a series that never exists in the OTLP → collector → Prometheus pipeline (double no-op: wrong metric and wrong label). Provider now exports `truenas.provider.start_time_seconds` observable gauge; alert keys on `changes(...[5m]) >= 2`. Promtool tests cover firing + single-restart must-not-fire (unreleased)
+- **Race-Stress CI De-Flake** — `TestWS_ConcurrentCloseAllWaitForDrain` compared Close-return timestamps against cross-goroutine post-`Call` timestamps recorded after `wg.Done` already fired (73–115µs skew on loaded runners); now anchored on the `close(release)` happens-before chain. `TestWS_ReaderFailsAllPendingOnConnDrop` now pins transparent recovery (all in-flight calls succeed via reconnect+retry). Race-stress job green for the first time since introduction (unreleased)
+- **Release Gate Hardening — Semver Sort + Tag-Matrix Match** — Two latent bugs in the release-workflow gates, both exposed the moment the first was fixed: (1) `is_newest` used `sort -rV` for semver ordering, but GNU version-sort ranks `v0.16.1-rc.5` ABOVE `v0.16.1` (extra suffix = greater), the opposite of semver. A stable cut immediately following an rc of the same version would have marked `is_newest=false` and skipped the `:preview` Docker tag update — silently keeping `:preview` on the RC. Fixed with a `sed 's/-/~/'` transform before sort (`~` sorts LOWER than end-of-string in `-V`). (2) The dry-run's tag-matrix assertion used `grep -qF` (substring), so `:0.16` falsely matched `:0.16.2-rc.1` — masking the very "MAJOR_MINOR emitted for prerelease" regression the step exists to catch. Switched every tag check to `grep -qxF` (exact whole-line match) piped via `printf '%s\n'`. Verified with dry-run on both `v0.16.2-rc.1` (prerelease) and `v0.16.2` (stable) — both green (unreleased)
+- **Declarative Dev-Env via jarvy** — `jarvy.toml` at repo root declares the 15-tool dev toolchain (Go 1.26+, golangci-lint v2+, betterleaks, delve, docker, gh, git, make, kubectl, helm, k9s, stern, ripgrep, fd, jq, yq, lazydocker) mirroring CLAUDE.md § Prerequisites plus the ops CLIs release-testing.md soak windows actually use. `make dev-setup` / `dev-diff` / `dev-doctor` wrap the jarvy CLI. Jarvy MCP server registered so the assistant can drive `jarvy_wizard_plan` / `jarvy_validate_config` from a session (unreleased)
+- **CI Dependency Sweep** — Rebased and squash-merged 10 stale-base dependabot PRs (actions/checkout 6.0.2→7.0.1, actions/setup-go 6.4.0→7.0.0, actions/setup-python→7.0.0, docker/setup-buildx-action→4.2.0, golangci-lint-action→9.3.0, docker/metadata-action→6.2.0, docker/login-action→4.4.0, docker/build-push-action→7.3.0, docker/setup-qemu-action→4.2.0, sigstore/cosign-installer→4.1.2). Closed 3 superseded ones (omni client, zap, opentelemetry group — already covered by main's earlier sweep). All post-merge CI runs on `main` green (unreleased)
 
 ## Upstream Issues
 
@@ -109,6 +115,21 @@ Opens an issue when cassette responses differ from what's committed.
 ## Might Implement
 
 Items that are possible but niche — will implement if there's demand.
+
+### Node Rotation — etcd Health Gate Between CP Steps
+
+The v0.17.0 `node-rotation` reconciler supports both `in-place`
+(worker) and `surge` (worker + control-plane) strategies. One
+follow-up remains:
+
+- **etcd health gate for CP rotation**: between surge cycles on a CP
+  set, the reconciler currently relies on `min-healthy` + the surge
+  state machine's `wait-up` PROVISIONED check. A stronger gate would
+  query etcd directly (member list, leader stability) before
+  approving the next cycle. Not load-bearing today — surge already
+  keeps the cluster above quorum by adding before removing — but a
+  belt-and-suspenders check would catch transient etcd partitions
+  before they compound.
 
 ### Multi-Host Provider
 Support multiple TrueNAS hosts behind a single provider instance. Enables HA and load distribution. Most users have a single NAS — this targets the rare multi-host setup.

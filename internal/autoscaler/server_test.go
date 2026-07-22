@@ -2,6 +2,8 @@ package autoscaler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -435,6 +437,62 @@ func TestServer_NodeGroupIncreaseSize_UnknownGroupReturnsNotFound(t *testing.T) 
 	st2, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st2.Code())
+}
+
+// TestMapWriterError pins the ScaleWriter-error → gRPC-status
+// mapping. The rotation-lock arm is the load-bearing case: without
+// the explicit errors.Is(ErrRotationLockHeld) branch, the writer's
+// wrapped defense-in-depth error falls into the default arm and CAS
+// gets codes.Unavailable — which it interprets as "transient, retry
+// immediately", defeating the surge-cycle lock. FailedPrecondition
+// tells CAS to back off and re-poll capacity later.
+//
+// Tested at the helper level (not through gRPC) because the
+// Discoverer already pauses locked groups by reporting Min==Max, so
+// the writer-level check is a TOCTOU-window guard that only fires
+// when a lock lands between Discover and the writer's live CAS read
+// — unreachable from a synchronous RPC test without race injection.
+func TestMapWriterError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		err        error
+		wantResult string
+		wantCode   codes.Code
+	}{
+		{
+			name:       "AtOrAboveMax → ResourceExhausted (bounds)",
+			err:        fmt.Errorf("wrapped: %w", ErrAtOrAboveMax),
+			wantResult: ResultRejectedBounds,
+			wantCode:   codes.ResourceExhausted,
+		},
+		{
+			name:       "RotationLockHeld → FailedPrecondition (deferred)",
+			err:        fmt.Errorf("wrapped: %w", ErrRotationLockHeld),
+			wantResult: ResultDeferredRotation,
+			wantCode:   codes.FailedPrecondition,
+		},
+		{
+			name:       "unknown error → Unavailable (transient)",
+			err:        errors.New("state client broke"),
+			wantResult: ResultErroredInternal,
+			wantCode:   codes.Unavailable,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotResult, gotErr := mapWriterError(tc.err)
+			assert.Equal(t, tc.wantResult, gotResult)
+
+			st, ok := status.FromError(gotErr)
+			require.True(t, ok, "returned error must carry a gRPC status")
+			assert.Equal(t, tc.wantCode, st.Code())
+		})
+	}
 }
 
 // --- evaluateCapacityGate switch-arm coverage ----------------------------

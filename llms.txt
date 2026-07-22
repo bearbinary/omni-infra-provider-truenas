@@ -11,7 +11,7 @@ Automatically provisions and manages Talos Linux virtual machines on TrueNAS SCA
 - Author: Bear Binary
 - Requires: TrueNAS SCALE 25.04+ (Fangtooth), Sidero Omni instance
 - API: TrueNAS JSON-RPC 2.0 (NOT REST v2.0)
-- Transport: WebSocket JSON-RPC 2.0 (API key required; Unix socket dropped in v0.14.0 because TrueNAS 25.10 removed implicit local auth)
+- Transport: WebSocket JSON-RPC 2.0 (API key required; Unix socket dropped in v0.14.0 because TrueNAS 25.10 removed implicit local auth). Automatic reconnect with transparent single retry on connection drops, circuit-breaker cooldown, deadline-bounded
 - Container: ghcr.io/bearbinary/omni-infra-provider-truenas
 - Architectures: amd64, arm64
 
@@ -98,7 +98,7 @@ Includes: Windows/macOS/Linux instructions, inline troubleshooting at each step,
 - CHANGELOG.md: Curated release history (v0.1.0 through current)
 - docs/architecture.md: Detailed architecture with Mermaid diagrams
 - docs/networking.md: Networking guide — bridges, DHCP reservations, MetalLB, VIP, UniFi/pfSense/OPNsense/Mikrotik
-- docs/storage.md: Storage guide — Longhorn (recommended default) setup, democratic-csi as advanced alternative
+- docs/storage.md: Storage guide — Longhorn (recommended default) and NFS auto-storage. democratic-csi previously listed; dropped from supported list 2026-06-03.
 - docs/cni.md: CNI selection guide — Flannel, Cilium, Calico with Talos-specific setup
 - docs/troubleshooting.md: Common issues and solutions
 - docs/testing.md: Unit, integration, and E2E test setup
@@ -131,6 +131,9 @@ A: Talos Linux is an immutable, minimal operating system purpose-built for Kuber
 
 Q: How does transport auto-detection work?
 A: The provider connects to TrueNAS via WebSocket (wss://<host>/websocket) using a JSON-RPC 2.0 API key. When running the container on the TrueNAS host itself, set TRUENAS_HOST=localhost and TRUENAS_INSECURE_SKIP_VERIFY=true. Unix socket auth was dropped in v0.14.0 because TrueNAS 25.10 requires authentication on every call.
+
+Q: What happens if the TrueNAS connection drops mid-operation?
+A: The WebSocket transport detects the drop, fails all in-flight calls with a retryable error, reconnects automatically (with a 30s circuit-breaker cooldown against rapid cycling), and transparently retries each call once against the fresh connection. Reconnect waits are bounded by the caller's context deadline and aborted immediately on shutdown, so a dead TrueNAS never wedges the provider. Restart storms are caught by the TrueNASWSGoroutinePanicCrashLoop Prometheus alert (keyed on the truenas_provider_start_time_seconds gauge).
 
 Q: What ZFS features does this provider use?
 A: VM disks are created as ZFS zvols on your specified pool. ISOs are cached on the pool filesystem with SHA-256 deduplication. You can target different pools per MachineClass (e.g., NVMe for control plane, HDD for workers).
