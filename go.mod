@@ -6,7 +6,7 @@ require (
 	github.com/cosi-project/runtime v1.16.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // upstream master, matches k8s.io/client-go v0.36.2 pin — revisit when v1.5.4 tag lands
-	github.com/grafana/pyroscope-go v1.4.1
+	github.com/grafana/pyroscope-go v1.4.2
 	github.com/joho/godotenv v1.5.1
 	github.com/siderolabs/omni/client v1.9.3
 	github.com/stretchr/testify v1.11.1
